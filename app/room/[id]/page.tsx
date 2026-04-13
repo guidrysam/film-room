@@ -20,17 +20,21 @@ import {
 } from "firebase/database";
 import type { YouTubePlayer } from "react-youtube";
 import YouTube from "react-youtube";
-import { database } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
+
+const HOST_SPEEDS = [0.25, 0.5, 1] as const;
+const DEFAULT_PLAYBACK_RATE = 1;
 
 type RoomState = {
   videoId: string;
   isPlaying: boolean;
   currentTime: number;
+  playbackRate: number;
   updatedAt: number;
 };
 
 function stableKey(s: RoomState): string {
-  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.updatedAt}`;
+  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}`;
 }
 
 function safeDecodeVideoId(id: string): string {
@@ -38,6 +42,43 @@ function safeDecodeVideoId(id: string): string {
     return decodeURIComponent(id);
   } catch {
     return id;
+  }
+}
+
+function normalizePlaybackRate(value: unknown): number {
+  if (typeof value === "number" && !Number.isNaN(value) && value > 0) {
+    return value;
+  }
+  return DEFAULT_PLAYBACK_RATE;
+}
+
+async function safeSetPlaybackRate(
+  player: YouTubePlayer,
+  desired: number,
+): Promise<void> {
+  try {
+    const p = player as YouTubePlayer & {
+      getAvailablePlaybackRates?: () => Promise<number[]>;
+      setPlaybackRate?: (r: number) => Promise<unknown> | unknown;
+    };
+    let rate = desired;
+    if (typeof p.getAvailablePlaybackRates === "function") {
+      const available = await p.getAvailablePlaybackRates();
+      if (Array.isArray(available) && available.length > 0) {
+        const has = available.some((r) => Math.abs(r - desired) < 1e-6);
+        if (!has) {
+          rate = available.reduce((best, r) =>
+            Math.abs(r - desired) < Math.abs(best - desired) ? r : best,
+            available[0],
+          );
+        }
+      }
+    }
+    if (typeof p.setPlaybackRate === "function") {
+      await p.setPlaybackRate(rate);
+    }
+  } catch {
+    /* unsupported or not ready */
   }
 }
 
@@ -57,7 +98,7 @@ function RoomContent() {
     roomStateRef.current = roomState;
   }, [roomState]);
 
-  const roomRef = roomId ? ref(database, `rooms/${roomId}`) : null;
+  const roomRef = roomId ? ref(db, `rooms/${roomId}`) : null;
 
   useEffect(() => {
     if (!roomRef || !isHost || !videoFromUrl) return;
@@ -68,6 +109,7 @@ function RoomContent() {
           videoId: vid,
           isPlaying: false,
           currentTime: 0,
+          playbackRate: DEFAULT_PLAYBACK_RATE,
           updatedAt: serverTimestamp(),
         });
       }
@@ -88,6 +130,7 @@ function RoomContent() {
           videoId: v.videoId,
           isPlaying: v.isPlaying,
           currentTime: v.currentTime,
+          playbackRate: normalizePlaybackRate(v.playbackRate),
           updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : 0,
         });
       } else {
@@ -106,12 +149,17 @@ function RoomContent() {
     if (key === lastAppliedKey.current) return;
     lastAppliedKey.current = key;
 
-    const localT = await player.getCurrentTime();
-    if (Math.abs(localT - state.currentTime) > 0.5) {
-      await player.seekTo(state.currentTime, true);
+    try {
+      const localT = await player.getCurrentTime();
+      if (Math.abs(localT - state.currentTime) > 0.5) {
+        await player.seekTo(state.currentTime, true);
+      }
+      await safeSetPlaybackRate(player, state.playbackRate);
+      if (state.isPlaying) player.playVideo();
+      else player.pauseVideo();
+    } catch {
+      lastAppliedKey.current = "";
     }
-    if (state.isPlaying) player.playVideo();
-    else player.pauseVideo();
   }, []);
 
   useEffect(() => {
@@ -163,12 +211,19 @@ function RoomContent() {
     });
   };
 
+  const handleSpeed = (rate: (typeof HOST_SPEEDS)[number]) => {
+    if (!isHost) return;
+    writeUpdate({ playbackRate: rate });
+  };
+
   const handlePlayerReady = () => {
     const s = roomStateRef.current;
     if (s) void applyRoomStateToPlayer(s);
   };
 
   const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
+  const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+  const roleLabel = isHost ? "Host" : "Viewer";
 
   if (!videoFromUrl) {
     return (
@@ -204,6 +259,14 @@ function RoomContent() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 py-8 text-white">
       <div className="w-full max-w-3xl">
+        <p className="mb-2 text-center text-sm text-gray-400">
+          Role: <span className="text-gray-200">{roleLabel}</span>
+          {" · "}
+          Speed:{" "}
+          <span className="text-gray-200">
+            {displayRate === 1 ? "1×" : `${displayRate}×`}
+          </span>
+        </p>
         <div className="overflow-hidden rounded-lg">
           <YouTube
             ref={playerRef}
@@ -219,28 +282,50 @@ function RoomContent() {
           />
         </div>
         {isHost ? (
-          <div className="mt-6 flex flex-wrap justify-center gap-3">
-            <button
-              type="button"
-              onClick={handlePlay}
-              className="rounded bg-green-600 px-6 py-3 font-semibold hover:bg-green-500"
-            >
-              Play
-            </button>
-            <button
-              type="button"
-              onClick={handlePause}
-              className="rounded bg-amber-600 px-6 py-3 font-semibold hover:bg-amber-500"
-            >
-              Pause
-            </button>
-            <button
-              type="button"
-              onClick={handleSeekBack}
-              className="rounded bg-gray-700 px-6 py-3 font-semibold hover:bg-gray-600"
-            >
-              -10s
-            </button>
+          <div className="mt-6 space-y-4">
+            <p className="text-center text-xs uppercase tracking-wide text-gray-500">
+              Host controls
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {HOST_SPEEDS.map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  onClick={() => handleSpeed(rate)}
+                  className={`rounded px-4 py-2 text-sm font-medium ${
+                    Math.abs((roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) - rate) <
+                    1e-6
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-800 text-gray-200 hover:bg-gray-700"
+                  }`}
+                >
+                  {rate === 1 ? "1×" : `${rate}×`}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={handlePlay}
+                className="rounded bg-green-600 px-6 py-3 font-semibold hover:bg-green-500"
+              >
+                Play
+              </button>
+              <button
+                type="button"
+                onClick={handlePause}
+                className="rounded bg-amber-600 px-6 py-3 font-semibold hover:bg-amber-500"
+              >
+                Pause
+              </button>
+              <button
+                type="button"
+                onClick={handleSeekBack}
+                className="rounded bg-gray-700 px-6 py-3 font-semibold hover:bg-gray-600"
+              >
+                -10s
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
