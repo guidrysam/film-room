@@ -10,7 +10,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { MutableRefObject } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -62,13 +61,16 @@ function sameDbClock(a: number, b: number): boolean {
 
 /** Paused: keep picture aligned with DB. */
 const SEEK_DRIFT_PAUSED_S = 0.4;
+/** Firebase time step over this = explicit host transport (-10s, scrub, etc.). */
+const PLAYBACK_EXPLICIT_STEP_S = 3.0;
 /**
- * Playing, heartbeat-style updates: tiered forward catch-up (smooth viewer).
- * Behind under IGNORE: coast. Between IGNORE and LARGE: 3 consecutive qualifying updates.
- * Behind over LARGE: seek immediately.
+ * While playing: only seek if local is this far behind remote (no backward seek, no small/medium seeks).
  */
-const PLAYBACK_DRIFT_IGNORE_S = 1.25;
-const PLAYBACK_DRIFT_LARGE_S = 3.0;
+const SEEK_WHILE_PLAYING_LARGE_S = 2.5;
+/** Within this drift (seconds), viewer uses exact host playbackRate. */
+const RATE_SYNC_DEADBAND_S = 0.5;
+/** Nudge magnitude relative to host rate when moderately ahead/behind (applied to host rate). */
+const RATE_NUDGE_DELTA = 0.25;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -98,25 +100,22 @@ function isUpdatedAtOnlyFirebaseUpdate(
   );
 }
 
-/** drift = localT - remoteT. Only forward catch-up when drift is negative (local behind). */
-function shouldPlaybackCatchUpWhilePlaying(
-  drift: number,
-  streakRef: MutableRefObject<number>,
-): boolean {
-  if (drift >= -PLAYBACK_DRIFT_IGNORE_S) {
-    streakRef.current = 0;
-    return false;
+/**
+ * drift = localT - remoteT. Viewer-only smoothing: nudge playback rate vs host while playing.
+ * Large drift returns host rate (caller seeks first); deadband uses exact host rate.
+ */
+function computeViewerPlaybackRate(hostRate: number, drift: number): number {
+  const a = Math.abs(drift);
+  if (a <= RATE_SYNC_DEADBAND_S) {
+    return hostRate;
   }
-  if (drift < -PLAYBACK_DRIFT_LARGE_S) {
-    streakRef.current = 0;
-    return true;
+  if (a >= SEEK_WHILE_PLAYING_LARGE_S) {
+    return hostRate;
   }
-  streakRef.current += 1;
-  if (streakRef.current >= 3) {
-    streakRef.current = 0;
-    return true;
+  if (drift < 0) {
+    return hostRate + RATE_NUDGE_DELTA;
   }
-  return false;
+  return Math.max(hostRate - RATE_NUDGE_DELTA, 0.25);
 }
 
 function shouldSeekToRemoteTime(params: {
@@ -125,46 +124,41 @@ function shouldSeekToRemoteTime(params: {
   isPlaying: boolean;
   prev: RoomState | null;
   state: RoomState;
-  playbackCatchupStreakRef: MutableRefObject<number>;
 }): boolean {
-  const { localT, remoteT, isPlaying, prev, state, playbackCatchupStreakRef } =
-    params;
+  const { localT, remoteT, isPlaying, prev, state } = params;
   const drift = localT - remoteT;
 
   if (prev === null) {
-    playbackCatchupStreakRef.current = 0;
     return Math.abs(drift) > SEEK_INITIAL_SYNC_S;
   }
 
   if (meaningfulCurrentTimeChange(prev, state)) {
     const timeStep = Math.abs(state.currentTime - prev.currentTime);
-    const explicitTransport = timeStep > PLAYBACK_DRIFT_LARGE_S;
+    const explicitTransport = timeStep > PLAYBACK_EXPLICIT_STEP_S;
 
     if (explicitTransport) {
-      playbackCatchupStreakRef.current = 0;
       return Math.abs(drift) > SEEK_AFTER_TRANSPORT_JUMP_S;
     }
 
     if (!isPlaying) {
-      playbackCatchupStreakRef.current = 0;
       return Math.abs(drift) > SEEK_DRIFT_PAUSED_S;
     }
 
-    /* Playing + small DB time step (typical heartbeat): never seek backward; tiered forward catch-up. */
+    /* Playing + heartbeat-sized step: no seek for small/medium drift; large behind only. */
     if (drift >= 0) {
-      playbackCatchupStreakRef.current = 0;
       return false;
     }
-    return shouldPlaybackCatchUpWhilePlaying(drift, playbackCatchupStreakRef);
+    return drift < -SEEK_WHILE_PLAYING_LARGE_S;
   }
 
   if (!isPlaying) {
-    playbackCatchupStreakRef.current = 0;
     return Math.abs(drift) > SEEK_DRIFT_PAUSED_S;
   }
 
-  /* Playing, same currentTime (within deadband): do not seek backward; tiered forward catch-up. */
-  return shouldPlaybackCatchUpWhilePlaying(drift, playbackCatchupStreakRef);
+  if (drift >= 0) {
+    return false;
+  }
+  return drift < -SEEK_WHILE_PLAYING_LARGE_S;
 }
 
 /**
@@ -352,8 +346,8 @@ function RoomContent() {
   const lastAppliedKey = useRef<string>("");
   /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
   const applyRoomGenRef = useRef(0);
-  /** Consecutive playing heartbeats with moderate behind drift before one forward seek (smooth catch-up). */
-  const playbackCatchupStreakRef = useRef(0);
+  /** Last playback rate applied on the viewer (incl. nudge) — avoids spamming setPlaybackRate. */
+  const lastViewerSyncRateRef = useRef(Number.NaN);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -363,6 +357,10 @@ function RoomContent() {
   useLayoutEffect(() => {
     roomStateRef.current = roomState;
   }, [roomState]);
+
+  useEffect(() => {
+    lastViewerSyncRateRef.current = Number.NaN;
+  }, [roomId]);
 
   useEffect(() => {
     const syncStageFs = () => {
@@ -476,6 +474,9 @@ function RoomContent() {
         if (rateOnly) {
           if (stale()) return;
           await safeSetPlaybackRate(player, state.playbackRate);
+          if (!isHost) {
+            lastViewerSyncRateRef.current = state.playbackRate;
+          }
           if (stale()) return;
           lastAppliedKey.current = key;
           return;
@@ -506,6 +507,7 @@ function RoomContent() {
 
         if (stale()) return;
 
+        let tForDrift = localT;
         let didSeek = false;
         if (
           shouldSeekToRemoteTime({
@@ -514,19 +516,39 @@ function RoomContent() {
             isPlaying: state.isPlaying,
             prev,
             state,
-            playbackCatchupStreakRef,
           })
         ) {
           await player.seekTo(state.currentTime, true);
           didSeek = true;
+          tForDrift = await player.getCurrentTime();
         }
         if (stale()) return;
 
-        const rateChanged =
-          !prev ||
-          Math.abs(prev.playbackRate - state.playbackRate) > 1e-6;
-        if (rateChanged) {
-          await safeSetPlaybackRate(player, state.playbackRate);
+        const drift = tForDrift - state.currentTime;
+        const hostRate = state.playbackRate;
+        const targetPlaybackRate =
+          !isHost && state.isPlaying
+            ? computeViewerPlaybackRate(hostRate, drift)
+            : hostRate;
+
+        if (isHost) {
+          if (
+            !prev ||
+            Math.abs(prev.playbackRate - hostRate) > 1e-6
+          ) {
+            await safeSetPlaybackRate(player, hostRate);
+          }
+        } else {
+          const needRate =
+            !prev ||
+            Math.abs(prev.playbackRate - hostRate) > 1e-6 ||
+            !Number.isFinite(lastViewerSyncRateRef.current) ||
+            Math.abs(lastViewerSyncRateRef.current - targetPlaybackRate) >
+              1e-4;
+          if (needRate) {
+            await safeSetPlaybackRate(player, targetPlaybackRate);
+            lastViewerSyncRateRef.current = targetPlaybackRate;
+          }
         }
         if (stale()) return;
 
