@@ -290,6 +290,11 @@ function RoomContent() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const lastAppliedKey = useRef<string>("");
+  /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
+  const applyRoomGenRef = useRef(0);
+  const applyRoomStateToPlayerRef = useRef<
+    (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
+  >(async () => {});
   const prevRoomRef = useRef<RoomState | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);
 
@@ -390,10 +395,15 @@ function RoomContent() {
   }, [roomRef]);
 
   const applyRoomStateToPlayer = useCallback(
-    async (state: RoomState, prev: RoomState | null) => {
+    async (state: RoomState, prev: RoomState | null, gen: number) => {
+      const stale = () => gen !== applyRoomGenRef.current;
+      if (stale()) return;
+
       const yt = playerRef.current;
       const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
       if (!player) return;
+
+      if (stale()) return;
 
       const key = stableKey(state);
       if (key === lastAppliedKey.current) return;
@@ -402,17 +412,21 @@ function RoomContent() {
 
       try {
         if (rateOnly) {
+          if (stale()) return;
           await safeSetPlaybackRate(player, state.playbackRate);
+          if (stale()) return;
           lastAppliedKey.current = key;
           return;
         }
 
         if (isUpdatedAtOnlyFirebaseUpdate(prev, state)) {
+          if (stale()) return;
           lastAppliedKey.current = key;
           return;
         }
 
         const localT = await player.getCurrentTime();
+        if (stale()) return;
 
         /* Host: periodic heartbeat echoes fresher `currentTime` — do not seek the local player when already in sync. */
         if (
@@ -423,11 +437,12 @@ function RoomContent() {
           prev.videoId === state.videoId &&
           Math.abs(localT - state.currentTime) < 1.25
         ) {
+          if (stale()) return;
           lastAppliedKey.current = key;
           return;
         }
 
-        lastAppliedKey.current = key;
+        if (stale()) return;
 
         if (
           shouldSeekToRemoteTime({
@@ -440,14 +455,33 @@ function RoomContent() {
         ) {
           await player.seekTo(state.currentTime, true);
         }
+        if (stale()) return;
+
         await safeSetPlaybackRate(player, state.playbackRate);
+        if (stale()) return;
+
         await applyPlaybackIfNeeded(player, state.isPlaying);
+        if (stale()) return;
+
+        lastAppliedKey.current = key;
       } catch {
-        lastAppliedKey.current = "";
+        if (!stale()) {
+          lastAppliedKey.current = "";
+          queueMicrotask(() => {
+            const retry = roomStateRef.current;
+            if (!retry || stableKey(retry) !== key) return;
+            const g = ++applyRoomGenRef.current;
+            void applyRoomStateToPlayerRef.current(retry, prev, g);
+          });
+        }
       }
     },
     [isHost],
   );
+
+  useLayoutEffect(() => {
+    applyRoomStateToPlayerRef.current = applyRoomStateToPlayer;
+  });
 
   useEffect(() => {
     if (!roomState) {
@@ -456,7 +490,8 @@ function RoomContent() {
     }
     const prev = prevRoomRef.current;
     prevRoomRef.current = roomState;
-    void applyRoomStateToPlayer(roomState, prev);
+    const gen = ++applyRoomGenRef.current;
+    void applyRoomStateToPlayer(roomState, prev, gen);
   }, [roomState, applyRoomStateToPlayer]);
 
   const getPlayer = () =>
@@ -539,7 +574,8 @@ function RoomContent() {
     /* After iframe remount, re-sync. If we already applied this snapshot, skip (avoids seek/play churn). */
     const key = stableKey(s);
     if (key === lastAppliedKey.current) return;
-    void applyRoomStateToPlayer(s, null);
+    const gen = ++applyRoomGenRef.current;
+    void applyRoomStateToPlayer(s, null, gen);
   }, [applyRoomStateToPlayer]);
 
   const handleClearDrawings = () => {
