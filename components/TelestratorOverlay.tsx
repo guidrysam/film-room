@@ -145,6 +145,23 @@ export function TelestratorOverlay({ roomId, isHost, drawEnabled }: Props) {
     return () => ro.disconnect();
   }, [scheduleDraw]);
 
+  /* Fullscreen toggles layout asynchronously; redraw after the stage/video box settles. */
+  useEffect(() => {
+    const onFullscreenLayout = () => {
+      scheduleDraw();
+      requestAnimationFrame(() => scheduleDraw());
+    };
+    document.addEventListener("fullscreenchange", onFullscreenLayout);
+    document.addEventListener("webkitfullscreenchange", onFullscreenLayout);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenLayout);
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        onFullscreenLayout,
+      );
+    };
+  }, [scheduleDraw]);
+
   const flushStroke = useCallback(() => {
     const pts = currentStrokeRef.current;
     currentStrokeRef.current = null;

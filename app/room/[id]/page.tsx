@@ -39,7 +39,8 @@ const DEFAULT_PLAYBACK_RATE = 1;
 const YOUTUBE_PLAYER_OPTS = {
   width: "100%",
   height: "100%",
-  playerVars: { rel: 0 },
+  /* fs: 0 — hide YT iframe fullscreen; fullscreen must use the stage (video + telestrator). */
+  playerVars: { rel: 0, fs: 0 },
 } as const;
 
 /** Host-issued transport; `sync` is occasional time reference only (not command transport). */
@@ -1141,6 +1142,17 @@ function RoomContent() {
                   className="rounded-lg border border-white/20 bg-blue-600 px-6 py-3 text-center text-sm font-semibold text-white shadow-lg hover:bg-blue-500"
                 >
                   Tap to enable playback
+                </button>
+              </div>
+            ) : null}
+            {!isHost ? (
+              <div className="pointer-events-none absolute bottom-2 right-2 z-30 sm:bottom-3 sm:right-3">
+                <button
+                  type="button"
+                  onClick={() => void toggleStageFullscreen()}
+                  className={`pointer-events-auto ${hostChip}`}
+                >
+                  {stageFullscreen ? "Exit full" : "Fullscreen"}
                 </button>
               </div>
             ) : null}
