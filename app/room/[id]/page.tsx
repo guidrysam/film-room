@@ -31,6 +31,7 @@ import {
   subscribeToRoomHostStore,
 } from "@/lib/room-host";
 import { TelestratorOverlay } from "@/components/TelestratorOverlay";
+import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -44,10 +45,22 @@ const YOUTUBE_PLAYER_OPTS = {
 } as const;
 
 /** Host-issued transport; `sync` is occasional time reference only (not command transport). */
-type TransportAction = "init" | "play" | "pause" | "seek" | "rate" | "sync";
+type TransportAction =
+  | "init"
+  | "play"
+  | "pause"
+  | "seek"
+  | "rate"
+  | "sync"
+  | "clip";
+
+type ClipEntry = { videoId: string };
 
 type RoomState = {
   videoId: string;
+  /** In-session queue; active clip is `clips[currentClipIndex]` (kept in sync with `videoId`). */
+  clips: ClipEntry[];
+  currentClipIndex: number;
   isPlaying: boolean;
   currentTime: number;
   playbackRate: number;
@@ -64,11 +77,72 @@ function parseTransportAction(raw: unknown): TransportAction {
     raw === "pause" ||
     raw === "seek" ||
     raw === "rate" ||
-    raw === "sync"
+    raw === "sync" ||
+    raw === "clip"
   ) {
     return raw;
   }
   return "init";
+}
+
+function parseClipEntries(raw: unknown): ClipEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ClipEntry[] = [];
+  for (const row of raw) {
+    if (
+      row &&
+      typeof row === "object" &&
+      typeof (row as ClipEntry).videoId === "string"
+    ) {
+      out.push({ videoId: (row as ClipEntry).videoId });
+    }
+  }
+  return out;
+}
+
+/** Normalize clip list + index; `videoId` from RTDB is authoritative for the active clip. */
+function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null {
+  if (!val) return null;
+  const videoIdRaw = val.videoId;
+  const isPlaying = val.isPlaying;
+  const currentTime = val.currentTime;
+  if (
+    typeof videoIdRaw !== "string" ||
+    typeof isPlaying !== "boolean" ||
+    typeof currentTime !== "number"
+  ) {
+    return null;
+  }
+
+  let clips = parseClipEntries(val.clips);
+  if (clips.length === 0) {
+    clips = [{ videoId: videoIdRaw }];
+  }
+
+  let idx =
+    typeof val.currentClipIndex === "number" && Number.isFinite(val.currentClipIndex)
+      ? Math.floor(val.currentClipIndex)
+      : 0;
+  const matchIdx = clips.findIndex((c) => c.videoId === videoIdRaw);
+  if (matchIdx >= 0) {
+    idx = matchIdx;
+  } else if (idx < 0 || idx >= clips.length) {
+    idx = 0;
+  }
+
+  const activeVideoId = clips[idx]?.videoId ?? videoIdRaw;
+
+  return {
+    videoId: activeVideoId,
+    clips,
+    currentClipIndex: idx,
+    isPlaying,
+    currentTime,
+    playbackRate: normalizePlaybackRate(val.playbackRate),
+    updatedAt: typeof val.updatedAt === "number" ? val.updatedAt : 0,
+    action: parseTransportAction(val.action),
+    actionId: typeof val.actionId === "number" ? val.actionId : 0,
+  };
 }
 
 function stableKey(s: RoomState): string {
@@ -548,6 +622,7 @@ function RoomContent() {
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
   const [copied, setCopied] = useState(false);
+  const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
   const [stageFullscreen, setStageFullscreen] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -584,7 +659,8 @@ function RoomContent() {
 
   useEffect(() => {
     viewerPlaybackUnlockedRef.current = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset unlock UI when room changes
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset draft when room changes
+    setClipUrlDraft("");
     setViewerPlaybackUnlocked(false);
   }, [roomId]);
 
@@ -658,6 +734,8 @@ function RoomContent() {
       if (!snap.exists()) {
         void set(roomRef, {
           videoId: vid,
+          clips: [{ videoId: vid }],
+          currentClipIndex: 0,
           isPlaying: false,
           currentTime: 0,
           playbackRate: DEFAULT_PLAYBACK_RATE,
@@ -666,8 +744,23 @@ function RoomContent() {
           actionId: 1,
         });
       } else {
-        const d = snap.val() as { actionId?: unknown } | null;
-        if (d && typeof d.actionId !== "number") {
+        const d = snap.val() as Record<string, unknown> | null;
+        const needsClipMigration =
+          !d ||
+          !Array.isArray(d.clips) ||
+          (d.clips as unknown[]).length === 0;
+        const legacyAction =
+          d && typeof (d as { actionId?: unknown }).actionId !== "number";
+        if (needsClipMigration && d && typeof d.videoId === "string") {
+          void update(roomRef, {
+            clips: [{ videoId: d.videoId as string }],
+            currentClipIndex: 0,
+            updatedAt: serverTimestamp(),
+            ...(legacyAction
+              ? { action: "init", actionId: 1 }
+              : {}),
+          });
+        } else if (legacyAction) {
           void update(roomRef, {
             action: "init",
             actionId: 1,
@@ -681,25 +774,9 @@ function RoomContent() {
   useEffect(() => {
     if (!roomRef) return;
     const unsub = onValue(roomRef, (snap) => {
-      const v = snap.val() as Partial<RoomState> | null;
-      if (
-        v &&
-        typeof v.videoId === "string" &&
-        typeof v.isPlaying === "boolean" &&
-        typeof v.currentTime === "number"
-      ) {
-        setRoomState({
-          videoId: v.videoId,
-          isPlaying: v.isPlaying,
-          currentTime: v.currentTime,
-          playbackRate: normalizePlaybackRate(v.playbackRate),
-          updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : 0,
-          action: parseTransportAction(v.action),
-          actionId: typeof v.actionId === "number" ? v.actionId : 0,
-        });
-      } else {
-        setRoomState(null);
-      }
+      const raw = snap.val() as Record<string, unknown> | null;
+      const parsed = parseRoomFromDb(raw);
+      setRoomState(parsed);
     });
     return () => unsub();
   }, [roomRef]);
@@ -804,6 +881,7 @@ function RoomContent() {
                 lastViewerSyncRateRef,
               );
               break;
+            case "clip":
             case "init":
               await viewerApplyInitialJoin(
                 player,
@@ -948,6 +1026,48 @@ function RoomContent() {
       });
     },
     [],
+  );
+
+  const handleAddClip = useCallback(() => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const id = extractYouTubeVideoId(clipUrlDraft);
+    if (!id) return;
+    const cur = roomStateRef.current;
+    if (!cur) return;
+    const next = [...cur.clips, { videoId: id }];
+    void update(rr, {
+      clips: next,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+    setClipUrlDraft("");
+  }, [isHost, clipUrlDraft]);
+
+  const handleSelectClip = useCallback(
+    (index: number) => {
+      if (!isHost || !roomId) return;
+      const cur = roomStateRef.current;
+      if (!cur || index < 0 || index >= cur.clips.length) return;
+      if (index === cur.currentClipIndex) return;
+      const clip = cur.clips[index];
+      if (!clip) return;
+      lastAppliedKey.current = "";
+      void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+      writeHostTransport(
+        {
+          videoId: clip.videoId,
+          currentClipIndex: index,
+          currentTime: 0,
+          isPlaying: false,
+          playbackRate: DEFAULT_PLAYBACK_RATE,
+        },
+        "clip",
+      );
+    },
+    [isHost, roomId, writeHostTransport],
   );
 
   /**
@@ -1110,6 +1230,50 @@ function RoomContent() {
           ) : null}
         </div>
 
+        {isHost && roomState ? (
+          <div className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
+            <p className="mb-2 text-xs font-medium text-gray-400">Clip queue</p>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {roomState.clips.map((c, i) => {
+                const active = i === roomState.currentClipIndex;
+                return (
+                  <button
+                    key={`${c.videoId}-${i}`}
+                    type="button"
+                    onClick={() => void handleSelectClip(i)}
+                    className={`rounded border px-2 py-1 text-xs ${
+                      active
+                        ? "border-blue-400/60 bg-blue-600/40 text-white"
+                        : "border-white/15 bg-black/50 text-gray-200 hover:bg-black/70"
+                    }`}
+                  >
+                    {active ? "▶ " : ""}Clip {i + 1}{" "}
+                    <span className="font-mono text-[10px] text-gray-400">
+                      {c.videoId.slice(0, 6)}…
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                type="text"
+                placeholder="Paste YouTube link"
+                value={clipUrlDraft}
+                onChange={(e) => setClipUrlDraft(e.target.value)}
+                className="min-w-0 flex-1 rounded border border-white/15 bg-black/60 px-2 py-1.5 text-xs text-white placeholder:text-gray-500"
+              />
+              <button
+                type="button"
+                onClick={() => void handleAddClip()}
+                className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Add clip
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div
           ref={stageRef}
           className={`relative w-full overflow-hidden bg-black ${
@@ -1121,6 +1285,7 @@ function RoomContent() {
           <div className="relative aspect-video w-full">
             <div className="absolute inset-0 overflow-hidden">
               <YouTube
+                key={safeDecodeVideoId(effectiveVideoId)}
                 ref={playerRef}
                 videoId={safeDecodeVideoId(effectiveVideoId)}
                 onReady={handlePlayerReady}
