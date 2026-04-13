@@ -244,13 +244,18 @@ async function applyPlaybackIfNeeded(
 /**
  * Viewer transport: when room says playing, only YT_PLAYING counts as OK — BUFFERING/PAUSED/CUED still
  * get playVideo() so playback actually starts after seek/rate (BUFFERING is not treated as “playing enough”).
+ * Until `unlockedRef` is true (user gesture), do not call playVideo — avoids autoplay spam.
  */
 async function ensureViewerPlaybackIntent(
   player: YouTubePlayer,
   shouldPlay: boolean,
+  unlockedRef: { current: boolean },
 ): Promise<void> {
   if (!shouldPlay) {
     await applyPlaybackIfNeeded(player, false);
+    return;
+  }
+  if (!unlockedRef.current) {
     return;
   }
   const st = await readYoutubePlayerState(player);
@@ -374,6 +379,7 @@ async function viewerApplySyncSnapshot(
   player: YouTubePlayer,
   state: RoomState,
   lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
 ): Promise<void> {
   const localT = await player.getCurrentTime();
   const drift = localT - state.currentTime;
@@ -393,7 +399,7 @@ async function viewerApplySyncSnapshot(
       await safeSetPlaybackRate(player, target);
       lastViewerSyncRateRef.current = target;
     }
-    await ensureViewerPlaybackIntent(player, true);
+    await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
   } else {
     if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
       await player.seekTo(state.currentTime, true);
@@ -411,6 +417,7 @@ async function viewerApplyInitialJoin(
   player: YouTubePlayer,
   state: RoomState,
   lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
 ): Promise<void> {
   const localT = await player.getCurrentTime();
   let tForDrift = localT;
@@ -422,13 +429,18 @@ async function viewerApplyInitialJoin(
   const target = computeViewerPlaybackRate(state.playbackRate, drift);
   await safeSetPlaybackRate(player, target);
   lastViewerSyncRateRef.current = target;
-  await ensureViewerPlaybackIntent(player, state.isPlaying);
+  await ensureViewerPlaybackIntent(
+    player,
+    state.isPlaying,
+    viewerPlaybackUnlockedRef,
+  );
 }
 
 async function viewerApplyPlayCommand(
   player: YouTubePlayer,
   state: RoomState,
   lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
 ): Promise<void> {
   const localT = await player.getCurrentTime();
   const drift = localT - state.currentTime;
@@ -437,7 +449,7 @@ async function viewerApplyPlayCommand(
   if (drift < -SEEK_AFTER_TRANSPORT_JUMP_S) {
     await player.seekTo(state.currentTime, true);
   }
-  await ensureViewerPlaybackIntent(player, true);
+  await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
 }
 
 async function viewerApplyPauseCommand(
@@ -459,11 +471,16 @@ async function viewerApplySeekCommand(
   player: YouTubePlayer,
   state: RoomState,
   lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
 ): Promise<void> {
   await player.seekTo(state.currentTime, true);
   await safeSetPlaybackRate(player, state.playbackRate);
   lastViewerSyncRateRef.current = state.playbackRate;
-  await ensureViewerPlaybackIntent(player, state.isPlaying);
+  await ensureViewerPlaybackIntent(
+    player,
+    state.isPlaying,
+    viewerPlaybackUnlockedRef,
+  );
 }
 
 /** Pre-command rooms (actionId 0): time-driven apply until host migrates or sends commands. */
@@ -472,6 +489,7 @@ async function viewerApplyLegacyTimeDriven(
   state: RoomState,
   prev: RoomState | null,
   lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
   stale: () => boolean,
 ): Promise<void> {
   const localT = await player.getCurrentTime();
@@ -514,7 +532,11 @@ async function viewerApplyLegacyTimeDriven(
   const playbackIntentChanged =
     prev === null || prev.isPlaying !== state.isPlaying;
   if (playbackIntentChanged || didSeek) {
-    await ensureViewerPlaybackIntent(player, state.isPlaying);
+    await ensureViewerPlaybackIntent(
+      player,
+      state.isPlaying,
+      viewerPlaybackUnlockedRef,
+    );
   }
 }
 
@@ -540,10 +562,15 @@ function RoomContent() {
   const applyRoomGenRef = useRef(0);
   /** Last playback rate applied on the viewer (incl. nudge) — avoids spamming setPlaybackRate. */
   const lastViewerSyncRateRef = useRef(Number.NaN);
+  /** Viewer-only: set true after explicit tap so autopolicy allows playVideo (see overlay). */
+  const viewerPlaybackUnlockedRef = useRef(false);
+  const [viewerPlaybackUnlocked, setViewerPlaybackUnlocked] = useState(false);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
   const prevRoomRef = useRef<RoomState | null>(null);
+  /** Last `prev` passed into `applyRoomStateToPlayer` (for unlock resync pair with `roomStateRef`). */
+  const applyPrevSnapshotRef = useRef<RoomState | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);
 
   useLayoutEffect(() => {
@@ -552,6 +579,12 @@ function RoomContent() {
 
   useEffect(() => {
     lastViewerSyncRateRef.current = Number.NaN;
+  }, [roomId]);
+
+  useEffect(() => {
+    viewerPlaybackUnlockedRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset unlock UI when room changes
+    setViewerPlaybackUnlocked(false);
   }, [roomId]);
 
   useEffect(() => {
@@ -711,6 +744,7 @@ function RoomContent() {
               player,
               state,
               lastViewerSyncRateRef,
+              viewerPlaybackUnlockedRef,
             );
             if (stale()) return;
             lastAppliedKey.current = key;
@@ -724,6 +758,7 @@ function RoomContent() {
               state,
               prev,
               lastViewerSyncRateRef,
+              viewerPlaybackUnlockedRef,
               stale,
             );
             if (stale()) return;
@@ -738,6 +773,7 @@ function RoomContent() {
                 player,
                 state,
                 lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
               );
               break;
             case "rate":
@@ -749,6 +785,7 @@ function RoomContent() {
                 player,
                 state,
                 lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
               );
               break;
             case "play":
@@ -756,6 +793,7 @@ function RoomContent() {
                 player,
                 state,
                 lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
               );
               break;
             case "pause":
@@ -770,6 +808,7 @@ function RoomContent() {
                 player,
                 state,
                 lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
               );
               break;
             default:
@@ -777,6 +816,7 @@ function RoomContent() {
                 player,
                 state,
                 lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
               );
           }
           if (stale()) return;
@@ -856,16 +896,41 @@ function RoomContent() {
   useEffect(() => {
     if (!roomState) {
       prevRoomRef.current = null;
+      applyPrevSnapshotRef.current = null;
       return;
     }
     const prev = prevRoomRef.current;
     prevRoomRef.current = roomState;
+    applyPrevSnapshotRef.current = prev;
     const gen = ++applyRoomGenRef.current;
     void applyRoomStateToPlayer(roomState, prev, gen);
   }, [roomState, applyRoomStateToPlayer]);
 
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+
+  const handleViewerPlaybackUnlock = useCallback(() => {
+    viewerPlaybackUnlockedRef.current = true;
+    setViewerPlaybackUnlocked(true);
+    const p = getPlayer();
+    if (p) {
+      try {
+        p.playVideo();
+      } catch {
+        /* autoplay / API */
+      }
+    }
+    const s = roomStateRef.current;
+    if (s) {
+      lastAppliedKey.current = "";
+      const gen = ++applyRoomGenRef.current;
+      void applyRoomStateToPlayerRef.current(
+        s,
+        applyPrevSnapshotRef.current,
+        gen,
+      );
+    }
+  }, []);
 
   const writeHostTransport = useCallback(
     (partial: Record<string, unknown>, action: TransportAction) => {
@@ -1068,6 +1133,17 @@ function RoomContent() {
               isHost={isHost}
               drawEnabled={telDrawOn}
             />
+            {!isHost && !viewerPlaybackUnlocked ? (
+              <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/75 px-4 backdrop-blur-[1px]">
+                <button
+                  type="button"
+                  onClick={handleViewerPlaybackUnlock}
+                  className="rounded-lg border border-white/20 bg-blue-600 px-6 py-3 text-center text-sm font-semibold text-white shadow-lg hover:bg-blue-500"
+                >
+                  Tap to enable playback
+                </button>
+              </div>
+            ) : null}
             {isHost ? (
               <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:bottom-3">
                 <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-black/70 px-2 py-2 shadow-lg backdrop-blur-sm sm:gap-2 sm:px-3">
