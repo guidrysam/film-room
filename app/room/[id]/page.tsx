@@ -42,16 +42,36 @@ const YOUTUBE_PLAYER_OPTS = {
   playerVars: { rel: 0 },
 } as const;
 
+/** Host-issued transport; `sync` is occasional time reference only (not command transport). */
+type TransportAction = "init" | "play" | "pause" | "seek" | "rate" | "sync";
+
 type RoomState = {
   videoId: string;
   isPlaying: boolean;
   currentTime: number;
   playbackRate: number;
   updatedAt: number;
+  action: TransportAction;
+  /** Monotonic per room — viewer applies command when this advances. */
+  actionId: number;
 };
 
+function parseTransportAction(raw: unknown): TransportAction {
+  if (
+    raw === "init" ||
+    raw === "play" ||
+    raw === "pause" ||
+    raw === "seek" ||
+    raw === "rate" ||
+    raw === "sync"
+  ) {
+    return raw;
+  }
+  return "init";
+}
+
 function stableKey(s: RoomState): string {
-  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}`;
+  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}`;
 }
 
 /** Compare Firebase `currentTime` snapshots (often stale during playback). */
@@ -326,6 +346,162 @@ async function safeSetPlaybackRate(
   }
 }
 
+/** Occasional host time ping (~12s): large drift + light rate nudge only — no command transport. */
+async function viewerApplySyncSnapshot(
+  player: YouTubePlayer,
+  state: RoomState,
+  lastViewerSyncRateRef: { current: number },
+): Promise<void> {
+  const localT = await player.getCurrentTime();
+  const drift = localT - state.currentTime;
+  const hostRate = state.playbackRate;
+
+  if (state.isPlaying) {
+    if (drift < -SEEK_WHILE_PLAYING_LARGE_S) {
+      await player.seekTo(state.currentTime, true);
+    }
+    const t2 = await player.getCurrentTime();
+    const d = t2 - state.currentTime;
+    const target = computeViewerPlaybackRate(hostRate, d);
+    if (
+      !Number.isFinite(lastViewerSyncRateRef.current) ||
+      Math.abs(lastViewerSyncRateRef.current - target) > 1e-4
+    ) {
+      await safeSetPlaybackRate(player, target);
+      lastViewerSyncRateRef.current = target;
+    }
+    const st = await readYoutubePlayerState(player);
+    if (
+      st !== undefined &&
+      st !== YT_PLAYING &&
+      st !== YT_BUFFERING
+    ) {
+      await applyPlaybackIfNeeded(player, true);
+    }
+  } else {
+    if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
+      await player.seekTo(state.currentTime, true);
+    }
+    await safeSetPlaybackRate(player, hostRate);
+    lastViewerSyncRateRef.current = hostRate;
+    const st = await readYoutubePlayerState(player);
+    if (st !== undefined && st !== YT_PAUSED) {
+      await applyPlaybackIfNeeded(player, false);
+    }
+  }
+}
+
+async function viewerApplyInitialJoin(
+  player: YouTubePlayer,
+  state: RoomState,
+  lastViewerSyncRateRef: { current: number },
+): Promise<void> {
+  const localT = await player.getCurrentTime();
+  let tForDrift = localT;
+  if (Math.abs(localT - state.currentTime) > SEEK_INITIAL_SYNC_S) {
+    await player.seekTo(state.currentTime, true);
+    tForDrift = await player.getCurrentTime();
+  }
+  const drift = tForDrift - state.currentTime;
+  const target = computeViewerPlaybackRate(state.playbackRate, drift);
+  await safeSetPlaybackRate(player, target);
+  lastViewerSyncRateRef.current = target;
+  await applyPlaybackIfNeeded(player, state.isPlaying);
+}
+
+async function viewerApplyPlayCommand(
+  player: YouTubePlayer,
+  state: RoomState,
+  lastViewerSyncRateRef: { current: number },
+): Promise<void> {
+  const localT = await player.getCurrentTime();
+  const drift = localT - state.currentTime;
+  await safeSetPlaybackRate(player, state.playbackRate);
+  lastViewerSyncRateRef.current = state.playbackRate;
+  if (drift < -SEEK_AFTER_TRANSPORT_JUMP_S) {
+    await player.seekTo(state.currentTime, true);
+  }
+  await applyPlaybackIfNeeded(player, true);
+}
+
+async function viewerApplyPauseCommand(
+  player: YouTubePlayer,
+  state: RoomState,
+  lastViewerSyncRateRef: { current: number },
+): Promise<void> {
+  const localT = await player.getCurrentTime();
+  const drift = localT - state.currentTime;
+  await safeSetPlaybackRate(player, state.playbackRate);
+  lastViewerSyncRateRef.current = state.playbackRate;
+  if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
+    await player.seekTo(state.currentTime, true);
+  }
+  await applyPlaybackIfNeeded(player, false);
+}
+
+async function viewerApplySeekCommand(
+  player: YouTubePlayer,
+  state: RoomState,
+  lastViewerSyncRateRef: { current: number },
+): Promise<void> {
+  await player.seekTo(state.currentTime, true);
+  await safeSetPlaybackRate(player, state.playbackRate);
+  lastViewerSyncRateRef.current = state.playbackRate;
+  await applyPlaybackIfNeeded(player, state.isPlaying);
+}
+
+/** Pre-command rooms (actionId 0): time-driven apply until host migrates or sends commands. */
+async function viewerApplyLegacyTimeDriven(
+  player: YouTubePlayer,
+  state: RoomState,
+  prev: RoomState | null,
+  lastViewerSyncRateRef: { current: number },
+  stale: () => boolean,
+): Promise<void> {
+  const localT = await player.getCurrentTime();
+  if (stale()) return;
+
+  let tForDrift = localT;
+  let didSeek = false;
+  if (
+    shouldSeekToRemoteTime({
+      localT,
+      remoteT: state.currentTime,
+      isPlaying: state.isPlaying,
+      prev,
+      state,
+    })
+  ) {
+    await player.seekTo(state.currentTime, true);
+    didSeek = true;
+    tForDrift = await player.getCurrentTime();
+  }
+  if (stale()) return;
+
+  const drift = tForDrift - state.currentTime;
+  const hostRate = state.playbackRate;
+  const targetPlaybackRate = state.isPlaying
+    ? computeViewerPlaybackRate(hostRate, drift)
+    : hostRate;
+
+  const needRate =
+    !prev ||
+    Math.abs(prev.playbackRate - hostRate) > 1e-6 ||
+    !Number.isFinite(lastViewerSyncRateRef.current) ||
+    Math.abs(lastViewerSyncRateRef.current - targetPlaybackRate) > 1e-4;
+  if (needRate) {
+    await safeSetPlaybackRate(player, targetPlaybackRate);
+    lastViewerSyncRateRef.current = targetPlaybackRate;
+  }
+  if (stale()) return;
+
+  const playbackIntentChanged =
+    prev === null || prev.isPlaying !== state.isPlaying;
+  if (playbackIntentChanged || didSeek) {
+    await applyPlaybackIfNeeded(player, state.isPlaying);
+  }
+}
+
 function RoomContent() {
   const params = useParams();
   const router = useRouter();
@@ -414,6 +590,17 @@ function RoomContent() {
     roomRefForWrite.current = roomRef;
   });
 
+  const hostActionSeqRef = useRef(1);
+
+  useEffect(() => {
+    if (isHost && roomState && typeof roomState.actionId === "number") {
+      hostActionSeqRef.current = Math.max(
+        hostActionSeqRef.current,
+        roomState.actionId,
+      );
+    }
+  }, [isHost, roomState]);
+
   useEffect(() => {
     if (!roomRef || !isHost || !videoFromUrl) return;
     const vid = decodeURIComponent(videoFromUrl);
@@ -425,7 +612,18 @@ function RoomContent() {
           currentTime: 0,
           playbackRate: DEFAULT_PLAYBACK_RATE,
           updatedAt: serverTimestamp(),
+          action: "init",
+          actionId: 1,
         });
+      } else {
+        const d = snap.val() as { actionId?: unknown } | null;
+        if (d && typeof d.actionId !== "number") {
+          void update(roomRef, {
+            action: "init",
+            actionId: 1,
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
     });
   }, [roomRef, isHost, videoFromUrl]);
@@ -446,6 +644,8 @@ function RoomContent() {
           currentTime: v.currentTime,
           playbackRate: normalizePlaybackRate(v.playbackRate),
           updatedAt: typeof v.updatedAt === "number" ? v.updatedAt : 0,
+          action: parseTransportAction(v.action),
+          actionId: typeof v.actionId === "number" ? v.actionId : 0,
         });
       } else {
         setRoomState(null);
@@ -471,7 +671,7 @@ function RoomContent() {
       const rateOnly = isRateOnlyFirebaseUpdate(prev, state);
 
       try {
-        if (rateOnly) {
+        if (rateOnly && (isHost || !state.actionId)) {
           if (stale()) return;
           await safeSetPlaybackRate(player, state.playbackRate);
           if (!isHost) {
@@ -488,12 +688,90 @@ function RoomContent() {
           return;
         }
 
+        if (!isHost) {
+          if (prev === null) {
+            if (stale()) return;
+            await viewerApplyInitialJoin(
+              player,
+              state,
+              lastViewerSyncRateRef,
+            );
+            if (stale()) return;
+            lastAppliedKey.current = key;
+            return;
+          }
+
+          if (!state.actionId) {
+            if (stale()) return;
+            await viewerApplyLegacyTimeDriven(
+              player,
+              state,
+              prev,
+              lastViewerSyncRateRef,
+              stale,
+            );
+            if (stale()) return;
+            lastAppliedKey.current = key;
+            return;
+          }
+
+          if (stale()) return;
+          switch (state.action) {
+            case "sync":
+              await viewerApplySyncSnapshot(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+              break;
+            case "rate":
+              await safeSetPlaybackRate(player, state.playbackRate);
+              lastViewerSyncRateRef.current = state.playbackRate;
+              break;
+            case "seek":
+              await viewerApplySeekCommand(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+              break;
+            case "play":
+              await viewerApplyPlayCommand(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+              break;
+            case "pause":
+              await viewerApplyPauseCommand(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+              break;
+            case "init":
+              await viewerApplyInitialJoin(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+              break;
+            default:
+              await viewerApplyInitialJoin(
+                player,
+                state,
+                lastViewerSyncRateRef,
+              );
+          }
+          if (stale()) return;
+          lastAppliedKey.current = key;
+          return;
+        }
+
         const localT = await player.getCurrentTime();
         if (stale()) return;
 
-        /* Host: periodic heartbeat echoes fresher `currentTime` — do not seek the local player when already in sync. */
         if (
-          isHost &&
           prev &&
           state.isPlaying &&
           prev.isPlaying &&
@@ -507,7 +785,6 @@ function RoomContent() {
 
         if (stale()) return;
 
-        let tForDrift = localT;
         let didSeek = false;
         if (
           shouldSeekToRemoteTime({
@@ -520,35 +797,16 @@ function RoomContent() {
         ) {
           await player.seekTo(state.currentTime, true);
           didSeek = true;
-          tForDrift = await player.getCurrentTime();
+          await player.getCurrentTime();
         }
         if (stale()) return;
 
-        const drift = tForDrift - state.currentTime;
         const hostRate = state.playbackRate;
-        const targetPlaybackRate =
-          !isHost && state.isPlaying
-            ? computeViewerPlaybackRate(hostRate, drift)
-            : hostRate;
-
-        if (isHost) {
-          if (
-            !prev ||
-            Math.abs(prev.playbackRate - hostRate) > 1e-6
-          ) {
-            await safeSetPlaybackRate(player, hostRate);
-          }
-        } else {
-          const needRate =
-            !prev ||
-            Math.abs(prev.playbackRate - hostRate) > 1e-6 ||
-            !Number.isFinite(lastViewerSyncRateRef.current) ||
-            Math.abs(lastViewerSyncRateRef.current - targetPlaybackRate) >
-              1e-4;
-          if (needRate) {
-            await safeSetPlaybackRate(player, targetPlaybackRate);
-            lastViewerSyncRateRef.current = targetPlaybackRate;
-          }
+        if (
+          !prev ||
+          Math.abs(prev.playbackRate - hostRate) > 1e-6
+        ) {
+          await safeSetPlaybackRate(player, hostRate);
         }
         if (stale()) return;
 
@@ -593,20 +851,25 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
 
-  const writeHostRoomPartial = useCallback((partial: Record<string, unknown>) => {
-    const rr = roomRefForWrite.current;
-    if (!rr || !isHostRef.current) return;
-    void update(rr, {
-      ...partial,
-      updatedAt: serverTimestamp(),
-    }).catch(() => {
-      /* RTDB permission / network — avoid unhandled rejection */
-    });
-  }, []);
+  const writeHostTransport = useCallback(
+    (partial: Record<string, unknown>, action: TransportAction) => {
+      const rr = roomRefForWrite.current;
+      if (!rr || !isHostRef.current) return;
+      hostActionSeqRef.current += 1;
+      void update(rr, {
+        ...partial,
+        action,
+        actionId: hostActionSeqRef.current,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB permission / network — avoid unhandled rejection */
+      });
+    },
+    [],
+  );
 
   /**
-   * Host only: while `isPlaying` is true, push fresher `currentTime` ~2×/s so viewers
-   * do not rely on stale DB time during long plays. Stops when paused or unmount (effect cleanup).
+   * Host only: infrequent time ping while playing for late join / drift recovery — not command transport.
    */
   useEffect(() => {
     if (!isHost || !roomState?.isPlaying) return;
@@ -619,15 +882,23 @@ function RoomContent() {
         | null
         | undefined;
       const fb = roomStateRef.current?.currentTime ?? 0;
+      const pr = roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       void readYoutubeCurrentTime(player, fb).then((t) => {
         if (!isHostRef.current || !roomStateRef.current?.isPlaying) return;
-        writeHostRoomPartial({ isPlaying: true, currentTime: t });
+        writeHostTransport(
+          {
+            isPlaying: true,
+            currentTime: t,
+            playbackRate: pr,
+          },
+          "sync",
+        );
       });
     };
 
-    const id = window.setInterval(tick, 500);
+    const id = window.setInterval(tick, 12_000);
     return () => window.clearInterval(id);
-  }, [isHost, roomId, roomState?.isPlaying, writeHostRoomPartial]);
+  }, [isHost, roomId, roomState?.isPlaying, writeHostTransport]);
 
   const handlePlay = () => {
     if (!isHost) return;
@@ -635,7 +906,7 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostRoomPartial({ isPlaying: true, currentTime: t });
+      writeHostTransport({ isPlaying: true, currentTime: t }, "play");
     })();
   };
 
@@ -645,7 +916,7 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostRoomPartial({ isPlaying: false, currentTime: t });
+      writeHostTransport({ isPlaying: false, currentTime: t }, "pause");
     })();
   };
 
@@ -655,13 +926,16 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostRoomPartial({ currentTime: Math.max(0, t - 10) });
+      writeHostTransport(
+        { currentTime: Math.max(0, t - 10) },
+        "seek",
+      );
     })();
   };
 
   const handleSpeed = (rate: (typeof HOST_SPEEDS)[number]) => {
     if (!isHost) return;
-    writeHostRoomPartial({ playbackRate: rate });
+    writeHostTransport({ playbackRate: rate }, "rate");
   };
 
   const handlePlayerReady = useCallback(() => {
