@@ -10,6 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import type { MutableRefObject } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -61,8 +62,13 @@ function sameDbClock(a: number, b: number): boolean {
 
 /** Paused: keep picture aligned with DB. */
 const SEEK_DRIFT_PAUSED_S = 0.4;
-/** Playing: only catch up forward when this far behind (late join / lag). Tuned with ~500ms host heartbeat. */
-const SEEK_CATCHUP_PLAYING_S = 1.0;
+/**
+ * Playing, heartbeat-style updates: tiered forward catch-up (smooth viewer).
+ * Behind under IGNORE: no seek. Between IGNORE and LARGE: 2 consecutive qualifying updates.
+ * Behind over LARGE: seek immediately.
+ */
+const PLAYBACK_DRIFT_IGNORE_S = 0.75;
+const PLAYBACK_DRIFT_LARGE_S = 2.0;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -92,35 +98,73 @@ function isUpdatedAtOnlyFirebaseUpdate(
   );
 }
 
+/** drift = localT - remoteT. Only forward catch-up when drift is negative (local behind). */
+function shouldPlaybackCatchUpWhilePlaying(
+  drift: number,
+  streakRef: MutableRefObject<number>,
+): boolean {
+  if (drift >= -PLAYBACK_DRIFT_IGNORE_S) {
+    streakRef.current = 0;
+    return false;
+  }
+  if (drift < -PLAYBACK_DRIFT_LARGE_S) {
+    streakRef.current = 0;
+    return true;
+  }
+  streakRef.current += 1;
+  if (streakRef.current >= 2) {
+    streakRef.current = 0;
+    return true;
+  }
+  return false;
+}
+
 function shouldSeekToRemoteTime(params: {
   localT: number;
   remoteT: number;
   isPlaying: boolean;
   prev: RoomState | null;
   state: RoomState;
+  playbackCatchupStreakRef: MutableRefObject<number>;
 }): boolean {
-  const { localT, remoteT, isPlaying, prev, state } = params;
+  const { localT, remoteT, isPlaying, prev, state, playbackCatchupStreakRef } =
+    params;
   const drift = localT - remoteT;
 
   if (prev === null) {
+    playbackCatchupStreakRef.current = 0;
     return Math.abs(drift) > SEEK_INITIAL_SYNC_S;
   }
 
   if (meaningfulCurrentTimeChange(prev, state)) {
-    return Math.abs(drift) > SEEK_AFTER_TRANSPORT_JUMP_S;
+    const timeStep = Math.abs(state.currentTime - prev.currentTime);
+    const explicitTransport = timeStep > PLAYBACK_DRIFT_LARGE_S;
+
+    if (explicitTransport) {
+      playbackCatchupStreakRef.current = 0;
+      return Math.abs(drift) > SEEK_AFTER_TRANSPORT_JUMP_S;
+    }
+
+    if (!isPlaying) {
+      playbackCatchupStreakRef.current = 0;
+      return Math.abs(drift) > SEEK_DRIFT_PAUSED_S;
+    }
+
+    /* Playing + small DB time step (typical heartbeat): never seek backward; tiered forward catch-up. */
+    if (drift >= 0) {
+      playbackCatchupStreakRef.current = 0;
+      return false;
+    }
+    return shouldPlaybackCatchUpWhilePlaying(drift, playbackCatchupStreakRef);
   }
 
   if (!isPlaying) {
+    playbackCatchupStreakRef.current = 0;
     return Math.abs(drift) > SEEK_DRIFT_PAUSED_S;
   }
 
-  /* Playing without a new currentTime in Firebase: remote is usually stale — do not seek
-   * backward (that caused random backward jumps). Only catch up if clearly behind. */
-  if (drift < -SEEK_CATCHUP_PLAYING_S) {
-    return true;
-  }
-
-  return false;
+  /* Playing, same currentTime (within deadband): do not seek backward; tiered forward catch-up. */
+  return shouldPlaybackCatchUpWhilePlaying(drift, playbackCatchupStreakRef);
 }
 
 /**
@@ -292,6 +336,8 @@ function RoomContent() {
   const lastAppliedKey = useRef<string>("");
   /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
   const applyRoomGenRef = useRef(0);
+  /** Consecutive playing heartbeats with moderate behind drift before one forward seek (smooth catch-up). */
+  const playbackCatchupStreakRef = useRef(0);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -451,6 +497,7 @@ function RoomContent() {
             isPlaying: state.isPlaying,
             prev,
             state,
+            playbackCatchupStreakRef,
           })
         ) {
           await player.seekTo(state.currentTime, true);
