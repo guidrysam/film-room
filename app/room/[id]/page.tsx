@@ -64,11 +64,11 @@ function sameDbClock(a: number, b: number): boolean {
 const SEEK_DRIFT_PAUSED_S = 0.4;
 /**
  * Playing, heartbeat-style updates: tiered forward catch-up (smooth viewer).
- * Behind under IGNORE: no seek. Between IGNORE and LARGE: 2 consecutive qualifying updates.
+ * Behind under IGNORE: coast. Between IGNORE and LARGE: 3 consecutive qualifying updates.
  * Behind over LARGE: seek immediately.
  */
-const PLAYBACK_DRIFT_IGNORE_S = 0.75;
-const PLAYBACK_DRIFT_LARGE_S = 2.0;
+const PLAYBACK_DRIFT_IGNORE_S = 1.25;
+const PLAYBACK_DRIFT_LARGE_S = 3.0;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -112,7 +112,7 @@ function shouldPlaybackCatchUpWhilePlaying(
     return true;
   }
   streakRef.current += 1;
-  if (streakRef.current >= 2) {
+  if (streakRef.current >= 3) {
     streakRef.current = 0;
     return true;
   }
@@ -186,29 +186,45 @@ function isRateOnlyFirebaseUpdate(
 
 const YT_PLAYING = 1;
 const YT_PAUSED = 2;
+const YT_BUFFERING = 3;
 
+async function readYoutubePlayerState(
+  player: YouTubePlayer,
+): Promise<number | undefined> {
+  const p = player as YouTubePlayer & {
+    getPlayerState?: () => number | Promise<number>;
+  };
+  if (typeof p.getPlayerState !== "function") return undefined;
+  try {
+    const raw = p.getPlayerState();
+    const st = await Promise.resolve(raw);
+    return typeof st === "number" ? st : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Only toggles play/pause when the iframe state disagrees — avoids stop-start from repeated calls.
+ * Caller should invoke only on play/pause intent change or after seek (not on every heartbeat).
+ */
 async function applyPlaybackIfNeeded(
   player: YouTubePlayer,
   shouldPlay: boolean,
 ): Promise<void> {
-  const p = player as YouTubePlayer & {
-    getPlayerState?: () => Promise<number>;
-  };
-  try {
-    if (typeof p.getPlayerState === "function") {
-      const st = await p.getPlayerState();
-      if (shouldPlay && st !== YT_PLAYING) {
-        player.playVideo();
-      } else if (!shouldPlay && st !== YT_PAUSED) {
-        player.pauseVideo();
-      }
-      return;
-    }
-  } catch {
-    /* fall through */
+  const st = await readYoutubePlayerState(player);
+  if (st === undefined) {
+    if (shouldPlay) player.playVideo();
+    else player.pauseVideo();
+    return;
   }
-  if (shouldPlay) player.playVideo();
-  else player.pauseVideo();
+  if (shouldPlay) {
+    if (st === YT_PLAYING || st === YT_BUFFERING) return;
+    player.playVideo();
+    return;
+  }
+  if (st === YT_PAUSED) return;
+  player.pauseVideo();
 }
 
 function safeDecodeVideoId(id: string): string {
@@ -490,6 +506,7 @@ function RoomContent() {
 
         if (stale()) return;
 
+        let didSeek = false;
         if (
           shouldSeekToRemoteTime({
             localT,
@@ -501,13 +518,23 @@ function RoomContent() {
           })
         ) {
           await player.seekTo(state.currentTime, true);
+          didSeek = true;
         }
         if (stale()) return;
 
-        await safeSetPlaybackRate(player, state.playbackRate);
+        const rateChanged =
+          !prev ||
+          Math.abs(prev.playbackRate - state.playbackRate) > 1e-6;
+        if (rateChanged) {
+          await safeSetPlaybackRate(player, state.playbackRate);
+        }
         if (stale()) return;
 
-        await applyPlaybackIfNeeded(player, state.isPlaying);
+        const playbackIntentChanged =
+          prev === null || prev.isPlaying !== state.isPlaying;
+        if (playbackIntentChanged || didSeek) {
+          await applyPlaybackIfNeeded(player, state.isPlaying);
+        }
         if (stale()) return;
 
         lastAppliedKey.current = key;
