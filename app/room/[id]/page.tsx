@@ -33,6 +33,13 @@ import { TelestratorOverlay } from "@/components/TelestratorOverlay";
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
 
+/** Stable reference — new object each render breaks react-youtube `shouldResetPlayer` / remounts the iframe. */
+const YOUTUBE_PLAYER_OPTS = {
+  width: "100%",
+  height: "100%",
+  playerVars: { rel: 0 },
+} as const;
+
 type RoomState = {
   videoId: string;
   isPlaying: boolean;
@@ -378,11 +385,14 @@ function RoomContent() {
     writeUpdate({ playbackRate: rate });
   };
 
-  const handlePlayerReady = () => {
+  const handlePlayerReady = useCallback(() => {
     const s = roomStateRef.current;
-    /* Player just became ready — sync full transport + rate (not a Firebase delta). */
-    if (s) void applyRoomStateToPlayer(s, null);
-  };
+    if (!s) return;
+    /* After iframe remount, re-sync. If we already applied this snapshot, skip (avoids seek/play churn). */
+    const key = stableKey(s);
+    if (key === lastAppliedKey.current) return;
+    void applyRoomStateToPlayer(s, null);
+  }, [applyRoomStateToPlayer]);
 
   const handleClearDrawings = () => {
     if (!roomId || !isHost) return;
@@ -480,13 +490,7 @@ function RoomContent() {
                 onReady={handlePlayerReady}
                 className="absolute left-0 top-0 h-full w-full"
                 iframeClassName="absolute left-0 top-0 h-full w-full"
-                opts={{
-                  width: "100%",
-                  height: "100%",
-                  playerVars: {
-                    rel: 0,
-                  },
-                }}
+                opts={YOUTUBE_PLAYER_OPTS}
               />
             </div>
             <TelestratorOverlay
