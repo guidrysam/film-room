@@ -43,6 +43,55 @@ function stableKey(s: RoomState): string {
   return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}`;
 }
 
+/** Compare Firebase `currentTime` snapshots (often stale during playback). */
+function sameDbClock(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.05;
+}
+
+/**
+ * Host speed-only writes send `{ playbackRate, updatedAt }`; RTDB keeps the same
+ * `currentTime` / `isPlaying`. In that case we must not seek or toggle play/pause.
+ */
+function isRateOnlyFirebaseUpdate(
+  prev: RoomState | null,
+  state: RoomState,
+): boolean {
+  if (prev === null) return false;
+  return (
+    prev.videoId === state.videoId &&
+    prev.isPlaying === state.isPlaying &&
+    sameDbClock(prev.currentTime, state.currentTime) &&
+    Math.abs(prev.playbackRate - state.playbackRate) > 1e-9
+  );
+}
+
+const YT_PLAYING = 1;
+const YT_PAUSED = 2;
+
+async function applyPlaybackIfNeeded(
+  player: YouTubePlayer,
+  shouldPlay: boolean,
+): Promise<void> {
+  const p = player as YouTubePlayer & {
+    getPlayerState?: () => Promise<number>;
+  };
+  try {
+    if (typeof p.getPlayerState === "function") {
+      const st = await p.getPlayerState();
+      if (shouldPlay && st !== YT_PLAYING) {
+        player.playVideo();
+      } else if (!shouldPlay && st !== YT_PAUSED) {
+        player.pauseVideo();
+      }
+      return;
+    }
+  } catch {
+    /* fall through */
+  }
+  if (shouldPlay) player.playVideo();
+  else player.pauseVideo();
+}
+
 function safeDecodeVideoId(id: string): string {
   try {
     return decodeURIComponent(id);
@@ -111,6 +160,7 @@ function RoomContent() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const lastAppliedKey = useRef<string>("");
+  const prevRoomRef = useRef<RoomState | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);
 
   useLayoutEffect(() => {
@@ -170,31 +220,47 @@ function RoomContent() {
     return () => unsub();
   }, [roomRef]);
 
-  const applyRoomStateToPlayer = useCallback(async (state: RoomState) => {
-    const yt = playerRef.current;
-    const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
-    if (!player) return;
+  const applyRoomStateToPlayer = useCallback(
+    async (state: RoomState, prev: RoomState | null) => {
+      const yt = playerRef.current;
+      const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
+      if (!player) return;
 
-    const key = stableKey(state);
-    if (key === lastAppliedKey.current) return;
-    lastAppliedKey.current = key;
+      const key = stableKey(state);
+      if (key === lastAppliedKey.current) return;
 
-    try {
-      const localT = await player.getCurrentTime();
-      if (Math.abs(localT - state.currentTime) > 0.5) {
-        await player.seekTo(state.currentTime, true);
+      const rateOnly = isRateOnlyFirebaseUpdate(prev, state);
+
+      try {
+        if (rateOnly) {
+          await safeSetPlaybackRate(player, state.playbackRate);
+          lastAppliedKey.current = key;
+          return;
+        }
+
+        lastAppliedKey.current = key;
+
+        const localT = await player.getCurrentTime();
+        if (Math.abs(localT - state.currentTime) > 0.5) {
+          await player.seekTo(state.currentTime, true);
+        }
+        await safeSetPlaybackRate(player, state.playbackRate);
+        await applyPlaybackIfNeeded(player, state.isPlaying);
+      } catch {
+        lastAppliedKey.current = "";
       }
-      await safeSetPlaybackRate(player, state.playbackRate);
-      if (state.isPlaying) player.playVideo();
-      else player.pauseVideo();
-    } catch {
-      lastAppliedKey.current = "";
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (!roomState) return;
-    void applyRoomStateToPlayer(roomState);
+    if (!roomState) {
+      prevRoomRef.current = null;
+      return;
+    }
+    const prev = prevRoomRef.current;
+    prevRoomRef.current = roomState;
+    void applyRoomStateToPlayer(roomState, prev);
   }, [roomState, applyRoomStateToPlayer]);
 
   const getPlayer = () =>
@@ -248,7 +314,8 @@ function RoomContent() {
 
   const handlePlayerReady = () => {
     const s = roomStateRef.current;
-    if (s) void applyRoomStateToPlayer(s);
+    /* Player just became ready — sync full transport + rate (not a Firebase delta). */
+    if (s) void applyRoomStateToPlayer(s, null);
   };
 
   const handleCopyViewerLink = () => {
