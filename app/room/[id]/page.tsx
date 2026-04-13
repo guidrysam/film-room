@@ -61,8 +61,8 @@ function sameDbClock(a: number, b: number): boolean {
 
 /** Paused: keep picture aligned with DB. */
 const SEEK_DRIFT_PAUSED_S = 0.4;
-/** Playing: only catch up forward when this far behind (late join / lag). */
-const SEEK_CATCHUP_PLAYING_S = 2.0;
+/** Playing: only catch up forward when this far behind (late join / lag). Slightly tighter with host heartbeat. */
+const SEEK_CATCHUP_PLAYING_S = 1.5;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -412,9 +412,23 @@ function RoomContent() {
           return;
         }
 
+        const localT = await player.getCurrentTime();
+
+        /* Host: periodic heartbeat echoes fresher `currentTime` — do not seek the local player when already in sync. */
+        if (
+          isHost &&
+          prev &&
+          state.isPlaying &&
+          prev.isPlaying &&
+          prev.videoId === state.videoId &&
+          Math.abs(localT - state.currentTime) < 1.25
+        ) {
+          lastAppliedKey.current = key;
+          return;
+        }
+
         lastAppliedKey.current = key;
 
-        const localT = await player.getCurrentTime();
         if (
           shouldSeekToRemoteTime({
             localT,
@@ -432,7 +446,7 @@ function RoomContent() {
         lastAppliedKey.current = "";
       }
     },
-    [],
+    [isHost],
   );
 
   useEffect(() => {
@@ -448,7 +462,7 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
 
-  const writeHostRoomPartial = (partial: Record<string, unknown>) => {
+  const writeHostRoomPartial = useCallback((partial: Record<string, unknown>) => {
     const rr = roomRefForWrite.current;
     if (!rr || !isHostRef.current) return;
     void update(rr, {
@@ -457,7 +471,32 @@ function RoomContent() {
     }).catch(() => {
       /* RTDB permission / network — avoid unhandled rejection */
     });
-  };
+  }, []);
+
+  /**
+   * Host only: while `isPlaying` is true, push fresher `currentTime` once per second so viewers
+   * do not rely on stale DB time during long plays. Stops when paused or unmount (effect cleanup).
+   */
+  useEffect(() => {
+    if (!isHost || !roomState?.isPlaying) return;
+
+    const tick = () => {
+      if (!isHostRef.current) return;
+      if (!roomStateRef.current?.isPlaying) return;
+      const player = playerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | null
+        | undefined;
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      void readYoutubeCurrentTime(player, fb).then((t) => {
+        if (!isHostRef.current || !roomStateRef.current?.isPlaying) return;
+        writeHostRoomPartial({ isPlaying: true, currentTime: t });
+      });
+    };
+
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [isHost, roomId, roomState?.isPlaying, writeHostRoomPartial]);
 
   const handlePlay = () => {
     if (!isHost) return;
