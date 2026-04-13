@@ -15,6 +15,7 @@ import {
   get,
   onValue,
   ref,
+  remove,
   set,
   update,
   serverTimestamp,
@@ -27,6 +28,7 @@ import {
   isRoomHost,
   markRoomHost,
 } from "@/lib/room-host";
+import { TelestratorOverlay } from "@/components/TelestratorOverlay";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -152,6 +154,7 @@ function RoomContent() {
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
   const [copied, setCopied] = useState(false);
+  const [telDrawOn, setTelDrawOn] = useState(false);
 
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
@@ -318,6 +321,11 @@ function RoomContent() {
     if (s) void applyRoomStateToPlayer(s, null);
   };
 
+  const handleClearDrawings = () => {
+    if (!roomId || !isHost) return;
+    void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+  };
+
   const handleCopyViewerLink = () => {
     const raw =
       roomState?.videoId ??
@@ -389,7 +397,7 @@ function RoomContent() {
             </button>
           ) : null}
         </div>
-        <div className="overflow-hidden rounded-lg">
+        <div className="relative overflow-hidden rounded-lg">
           <YouTube
             ref={playerRef}
             videoId={safeDecodeVideoId(effectiveVideoId)}
@@ -402,12 +410,33 @@ function RoomContent() {
               },
             }}
           />
+          <TelestratorOverlay
+            roomId={roomId}
+            isHost={isHost}
+            drawEnabled={telDrawOn}
+          />
         </div>
         {isHost ? (
           <div className="mt-6 space-y-4">
             <p className="text-center text-xs uppercase tracking-wide text-gray-500">
               Host controls
             </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTelDrawOn((v) => !v)}
+                className="rounded bg-gray-800 px-4 py-2 text-sm text-gray-200 hover:bg-gray-700"
+              >
+                {telDrawOn ? "Draw Off" : "Draw On"}
+              </button>
+              <button
+                type="button"
+                onClick={handleClearDrawings}
+                className="rounded bg-gray-800 px-4 py-2 text-sm text-gray-200 hover:bg-gray-700"
+              >
+                Clear drawings
+              </button>
+            </div>
             <div className="flex flex-wrap justify-center gap-2">
               {HOST_SPEEDS.map((rate) => (
                 <button
