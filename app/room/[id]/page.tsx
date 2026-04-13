@@ -61,8 +61,8 @@ function sameDbClock(a: number, b: number): boolean {
 
 /** Paused: keep picture aligned with DB. */
 const SEEK_DRIFT_PAUSED_S = 0.4;
-/** Playing: only catch up forward when this far behind (late join / lag). Slightly tighter with host heartbeat. */
-const SEEK_CATCHUP_PLAYING_S = 1.5;
+/** Playing: only catch up forward when this far behind (late join / lag). Tuned with ~500ms host heartbeat. */
+const SEEK_CATCHUP_PLAYING_S = 1.0;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -435,7 +435,7 @@ function RoomContent() {
           state.isPlaying &&
           prev.isPlaying &&
           prev.videoId === state.videoId &&
-          Math.abs(localT - state.currentTime) < 1.25
+          Math.abs(localT - state.currentTime) < 1.0
         ) {
           if (stale()) return;
           lastAppliedKey.current = key;
@@ -509,7 +509,7 @@ function RoomContent() {
   }, []);
 
   /**
-   * Host only: while `isPlaying` is true, push fresher `currentTime` once per second so viewers
+   * Host only: while `isPlaying` is true, push fresher `currentTime` ~2×/s so viewers
    * do not rely on stale DB time during long plays. Stops when paused or unmount (effect cleanup).
    */
   useEffect(() => {
@@ -529,7 +529,7 @@ function RoomContent() {
       });
     };
 
-    const id = window.setInterval(tick, 1000);
+    const id = window.setInterval(tick, 500);
     return () => window.clearInterval(id);
   }, [isHost, roomId, roomState?.isPlaying, writeHostRoomPartial]);
 
