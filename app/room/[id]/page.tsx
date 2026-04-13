@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -27,6 +28,7 @@ import {
   buildViewerRoomUrl,
   isRoomHost,
   markRoomHost,
+  subscribeToRoomHostStore,
 } from "@/lib/room-host";
 import { TelestratorOverlay } from "@/components/TelestratorOverlay";
 
@@ -180,9 +182,28 @@ function normalizePlaybackRate(value: unknown): number {
   return DEFAULT_PLAYBACK_RATE;
 }
 
+/** YouTube `getCurrentTime` can reject or be unavailable briefly; never skip the Firebase write because of it. */
+async function readYoutubeCurrentTime(
+  player: YouTubePlayer | null | undefined,
+  fallbackTime: number,
+): Promise<number> {
+  if (!player) return fallbackTime;
+  const p = player as YouTubePlayer & {
+    getCurrentTime?: () => number | Promise<number>;
+  };
+  try {
+    const raw = p.getCurrentTime?.();
+    const t = await Promise.resolve(raw);
+    if (typeof t === "number" && !Number.isNaN(t)) return t;
+  } catch {
+    /* player API not ready */
+  }
+  return fallbackTime;
+}
+
 function useRoomHostFromSession(roomId: string): boolean {
   return useSyncExternalStore(
-    () => () => {},
+    subscribeToRoomHostStore,
     () => (roomId ? isRoomHost(roomId) : false),
     () => false,
   );
@@ -315,7 +336,18 @@ function RoomContent() {
     }
   }, [roomId, router, searchParams]);
 
-  const roomRef = roomId ? ref(db, `rooms/${roomId}`) : null;
+  const roomRef = useMemo(
+    () => (roomId ? ref(db, `rooms/${roomId}`) : null),
+    [roomId],
+  );
+
+  const isHostRef = useRef(isHost);
+  const roomRefForWrite = useRef(roomRef);
+
+  useLayoutEffect(() => {
+    isHostRef.current = isHost;
+    roomRefForWrite.current = roomRef;
+  });
 
   useEffect(() => {
     if (!roomRef || !isHost || !videoFromUrl) return;
@@ -416,50 +448,50 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
 
-  const writeUpdate = (partial: Record<string, unknown>) => {
-    if (!roomRef || !isHost) return;
-    void update(roomRef, {
+  const writeHostRoomPartial = (partial: Record<string, unknown>) => {
+    const rr = roomRefForWrite.current;
+    if (!rr || !isHostRef.current) return;
+    void update(rr, {
       ...partial,
       updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB permission / network — avoid unhandled rejection */
     });
   };
 
   const handlePlay = () => {
     if (!isHost) return;
-    const player = getPlayer();
-    if (!player) {
-      writeUpdate({ isPlaying: true });
-      return;
-    }
-    void player.getCurrentTime().then((t: number) => {
-      writeUpdate({ isPlaying: true, currentTime: t });
-    });
+    void (async () => {
+      const player = getPlayer();
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      const t = await readYoutubeCurrentTime(player, fb);
+      writeHostRoomPartial({ isPlaying: true, currentTime: t });
+    })();
   };
 
   const handlePause = () => {
     if (!isHost) return;
-    const player = getPlayer();
-    if (!player) {
-      writeUpdate({ isPlaying: false });
-      return;
-    }
-    void player.getCurrentTime().then((t: number) => {
-      writeUpdate({ isPlaying: false, currentTime: t });
-    });
+    void (async () => {
+      const player = getPlayer();
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      const t = await readYoutubeCurrentTime(player, fb);
+      writeHostRoomPartial({ isPlaying: false, currentTime: t });
+    })();
   };
 
   const handleSeekBack = () => {
     if (!isHost) return;
-    const player = getPlayer();
-    if (!player) return;
-    void player.getCurrentTime().then((t: number) => {
-      writeUpdate({ currentTime: Math.max(0, t - 10) });
-    });
+    void (async () => {
+      const player = getPlayer();
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      const t = await readYoutubeCurrentTime(player, fb);
+      writeHostRoomPartial({ currentTime: Math.max(0, t - 10) });
+    })();
   };
 
   const handleSpeed = (rate: (typeof HOST_SPEEDS)[number]) => {
     if (!isHost) return;
-    writeUpdate({ playbackRate: rate });
+    writeHostRoomPartial({ playbackRate: rate });
   };
 
   const handlePlayerReady = useCallback(() => {
