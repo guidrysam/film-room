@@ -117,6 +117,39 @@ function useRoomHostFromSession(roomId: string): boolean {
   );
 }
 
+function getFullscreenElement(): Element | null {
+  const doc = document as Document & {
+    webkitFullscreenElement?: Element | null;
+    msFullscreenElement?: Element | null;
+  };
+  return (
+    document.fullscreenElement ??
+    doc.webkitFullscreenElement ??
+    doc.msFullscreenElement ??
+    null
+  );
+}
+
+async function exitFullscreenSafe(): Promise<void> {
+  const doc = document as Document & {
+    webkitExitFullscreen?: () => Promise<void>;
+    msExitFullscreen?: () => Promise<void>;
+  };
+  if (document.exitFullscreen) await document.exitFullscreen();
+  else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
+  else if (doc.msExitFullscreen) await doc.msExitFullscreen();
+}
+
+async function requestElFullscreen(el: HTMLElement): Promise<void> {
+  const e = el as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void>;
+    msRequestFullscreen?: () => Promise<void>;
+  };
+  if (e.requestFullscreen) await e.requestFullscreen();
+  else if (e.webkitRequestFullscreen) await e.webkitRequestFullscreen();
+  else if (e.msRequestFullscreen) await e.msRequestFullscreen();
+}
+
 async function safeSetPlaybackRate(
   player: YouTubePlayer,
   desired: number,
@@ -155,6 +188,8 @@ function RoomContent() {
   const videoFromUrl = searchParams.get("video");
   const [copied, setCopied] = useState(false);
   const [telDrawOn, setTelDrawOn] = useState(false);
+  const [stageFullscreen, setStageFullscreen] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
 
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
@@ -169,6 +204,34 @@ function RoomContent() {
   useLayoutEffect(() => {
     roomStateRef.current = roomState;
   }, [roomState]);
+
+  useEffect(() => {
+    const syncStageFs = () => {
+      const s = stageRef.current;
+      setStageFullscreen(!!s && getFullscreenElement() === s);
+    };
+    syncStageFs();
+    document.addEventListener("fullscreenchange", syncStageFs);
+    document.addEventListener("webkitfullscreenchange", syncStageFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncStageFs);
+      document.removeEventListener("webkitfullscreenchange", syncStageFs);
+    };
+  }, []);
+
+  const toggleStageFullscreen = useCallback(async () => {
+    const el = stageRef.current;
+    if (!el) return;
+    try {
+      if (getFullscreenElement() === el) {
+        await exitFullscreenSafe();
+      } else {
+        await requestElFullscreen(el);
+      }
+    } catch {
+      /* unsupported or denied */
+    }
+  }, []);
 
   useEffect(() => {
     if (!roomId) return;
@@ -372,10 +435,13 @@ function RoomContent() {
     );
   }
 
+  const hostChip =
+    "rounded-md border border-white/15 bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm backdrop-blur-sm hover:bg-black/85 sm:text-sm";
+
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 py-8 text-white">
-      <div className="w-full max-w-3xl">
-        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-2 text-sm text-gray-400">
+    <div className="flex min-h-screen flex-col bg-black px-4 py-6 text-white">
+      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
+        <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2 text-sm text-gray-400">
           <p>
             Room{" "}
             <span className="font-mono text-gray-200">{roomId}</span>
@@ -391,94 +457,110 @@ function RoomContent() {
             <button
               type="button"
               onClick={handleCopyViewerLink}
-              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+              className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
             >
               {copied ? "Copied" : "Copy Viewer Link"}
             </button>
           ) : null}
         </div>
-        <div className="relative overflow-hidden rounded-lg">
-          <YouTube
-            ref={playerRef}
-            videoId={safeDecodeVideoId(effectiveVideoId)}
-            onReady={handlePlayerReady}
-            opts={{
-              width: "100%",
-              height: "480",
-              playerVars: {
-                rel: 0,
-              },
-            }}
-          />
-          <TelestratorOverlay
-            roomId={roomId}
-            isHost={isHost}
-            drawEnabled={telDrawOn}
-          />
-        </div>
-        {isHost ? (
-          <div className="mt-6 space-y-4">
-            <p className="text-center text-xs uppercase tracking-wide text-gray-500">
-              Host controls
-            </p>
-            <div className="flex flex-wrap justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTelDrawOn((v) => !v)}
-                className="rounded bg-gray-800 px-4 py-2 text-sm text-gray-200 hover:bg-gray-700"
-              >
-                {telDrawOn ? "Draw Off" : "Draw On"}
-              </button>
-              <button
-                type="button"
-                onClick={handleClearDrawings}
-                className="rounded bg-gray-800 px-4 py-2 text-sm text-gray-200 hover:bg-gray-700"
-              >
-                Clear drawings
-              </button>
+
+        <div
+          ref={stageRef}
+          className={`relative w-full overflow-hidden bg-black ${
+            stageFullscreen
+              ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none"
+              : "rounded-lg"
+          }`}
+        >
+          <div className="relative aspect-video w-full">
+            <div className="absolute inset-0 overflow-hidden">
+              <YouTube
+                ref={playerRef}
+                videoId={safeDecodeVideoId(effectiveVideoId)}
+                onReady={handlePlayerReady}
+                className="absolute left-0 top-0 h-full w-full"
+                iframeClassName="absolute left-0 top-0 h-full w-full"
+                opts={{
+                  width: "100%",
+                  height: "100%",
+                  playerVars: {
+                    rel: 0,
+                  },
+                }}
+              />
             </div>
-            <div className="flex flex-wrap justify-center gap-2">
-              {HOST_SPEEDS.map((rate) => (
-                <button
-                  key={rate}
-                  type="button"
-                  onClick={() => handleSpeed(rate)}
-                  className={`rounded px-4 py-2 text-sm font-medium ${
-                    Math.abs((roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) - rate) <
-                    1e-6
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-800 text-gray-200 hover:bg-gray-700"
-                  }`}
-                >
-                  {rate === 1 ? "1×" : `${rate}×`}
-                </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap justify-center gap-3">
-              <button
-                type="button"
-                onClick={handlePlay}
-                className="rounded bg-green-600 px-6 py-3 font-semibold hover:bg-green-500"
-              >
-                Play
-              </button>
-              <button
-                type="button"
-                onClick={handlePause}
-                className="rounded bg-amber-600 px-6 py-3 font-semibold hover:bg-amber-500"
-              >
-                Pause
-              </button>
-              <button
-                type="button"
-                onClick={handleSeekBack}
-                className="rounded bg-gray-700 px-6 py-3 font-semibold hover:bg-gray-600"
-              >
-                -10s
-              </button>
-            </div>
+            <TelestratorOverlay
+              roomId={roomId}
+              isHost={isHost}
+              drawEnabled={telDrawOn}
+            />
+            {isHost ? (
+              <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:bottom-3">
+                <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-black/70 px-2 py-2 shadow-lg backdrop-blur-sm sm:gap-2 sm:px-3">
+                  <button
+                    type="button"
+                    onClick={handlePlay}
+                    className={hostChip}
+                  >
+                    Play
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePause}
+                    className={hostChip}
+                  >
+                    Pause
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSeekBack}
+                    className={hostChip}
+                  >
+                    -10s
+                  </button>
+                  {HOST_SPEEDS.map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      onClick={() => handleSpeed(rate)}
+                      className={`${hostChip} ${
+                        Math.abs(
+                          (roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) -
+                            rate,
+                        ) < 1e-6
+                          ? "border-blue-400/50 bg-blue-600/80 ring-1 ring-white/20"
+                          : ""
+                      }`}
+                    >
+                      {rate === 1 ? "1×" : `${rate}×`}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setTelDrawOn((v) => !v)}
+                    className={hostChip}
+                  >
+                    {telDrawOn ? "Draw Off" : "Draw On"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearDrawings}
+                    className={hostChip}
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void toggleStageFullscreen()}
+                    className={hostChip}
+                  >
+                    {stageFullscreen ? "Exit full" : "Fullscreen"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        </div>
       </div>
     </div>
   );

@@ -100,7 +100,7 @@ export default function Home() {
         placeholder="Paste YouTube link"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
-        className="mb-4 w-full max-w-md rounded-md border border-gray-300 bg-white px-3 py-2 text-black caret-black placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="mb-4 w-full max-w-md rounded-md border border-gray-300 bg-white px-3 py-2 text-black caret-black scheme-light placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
 
       <button

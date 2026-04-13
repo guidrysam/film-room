@@ -211,7 +211,7 @@ export function TelestratorOverlay({ roomId, isHost, drawEnabled }: Props) {
   return (
     <div
       ref={wrapRef}
-      className="pointer-events-none absolute inset-0 z-10"
+      className="pointer-events-none absolute inset-0 z-20"
       aria-hidden
     >
       <canvas
