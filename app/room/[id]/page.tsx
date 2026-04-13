@@ -7,9 +7,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   get,
   onValue,
@@ -21,6 +22,11 @@ import {
 import type { YouTubePlayer } from "react-youtube";
 import YouTube from "react-youtube";
 import { db } from "@/lib/firebase";
+import {
+  buildViewerRoomUrl,
+  isRoomHost,
+  markRoomHost,
+} from "@/lib/room-host";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -50,6 +56,14 @@ function normalizePlaybackRate(value: unknown): number {
     return value;
   }
   return DEFAULT_PLAYBACK_RATE;
+}
+
+function useRoomHostFromSession(roomId: string): boolean {
+  return useSyncExternalStore(
+    () => () => {},
+    () => (roomId ? isRoomHost(roomId) : false),
+    () => false,
+  );
 }
 
 async function safeSetPlaybackRate(
@@ -84,10 +98,15 @@ async function safeSetPlaybackRate(
 
 function RoomContent() {
   const params = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
-  const isHost = searchParams.get("host") === "true";
+  const [copied, setCopied] = useState(false);
+
+  const urlHostLegacy = searchParams.get("host") === "true";
+  const sessionHost = useRoomHostFromSession(roomId);
+  const isHost = urlHostLegacy || sessionHost;
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
@@ -97,6 +116,17 @@ function RoomContent() {
   useLayoutEffect(() => {
     roomStateRef.current = roomState;
   }, [roomState]);
+
+  useEffect(() => {
+    if (!roomId) return;
+    if (searchParams.get("host") === "true") {
+      markRoomHost(roomId);
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete("host");
+      const q = next.toString();
+      router.replace(`/room/${roomId}${q ? `?${q}` : ""}`, { scroll: false });
+    }
+  }, [roomId, router, searchParams]);
 
   const roomRef = roomId ? ref(db, `rooms/${roomId}`) : null;
 
@@ -221,9 +251,20 @@ function RoomContent() {
     if (s) void applyRoomStateToPlayer(s);
   };
 
+  const handleCopyViewerLink = () => {
+    const raw =
+      roomState?.videoId ??
+      (videoFromUrl ? safeDecodeVideoId(videoFromUrl) : null);
+    if (!roomId || !raw || typeof window === "undefined") return;
+    const url = buildViewerRoomUrl(window.location.origin, roomId, raw);
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
-  const roleLabel = isHost ? "Host" : "Viewer";
 
   if (!videoFromUrl) {
     return (
@@ -259,14 +300,28 @@ function RoomContent() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 py-8 text-white">
       <div className="w-full max-w-3xl">
-        <p className="mb-2 text-center text-sm text-gray-400">
-          Role: <span className="text-gray-200">{roleLabel}</span>
-          {" · "}
-          Speed:{" "}
-          <span className="text-gray-200">
-            {displayRate === 1 ? "1×" : `${displayRate}×`}
-          </span>
-        </p>
+        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-2 text-sm text-gray-400">
+          <p>
+            Room{" "}
+            <span className="font-mono text-gray-200">{roomId}</span>
+            {" · "}
+            <span className="text-gray-200">{isHost ? "Host" : "Viewer"}</span>
+            {" · "}
+            Speed{" "}
+            <span className="text-gray-200">
+              {displayRate === 1 ? "1×" : `${displayRate}×`}
+            </span>
+          </p>
+          {isHost ? (
+            <button
+              type="button"
+              onClick={handleCopyViewerLink}
+              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+            >
+              {copied ? "Copied" : "Copy Viewer Link"}
+            </button>
+          ) : null}
+        </div>
         <div className="overflow-hidden rounded-lg">
           <YouTube
             ref={playerRef}

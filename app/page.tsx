@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { markRoomHost } from '@/lib/room-host'
 
 /** YouTube video IDs are 11 characters from this character set. */
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/
@@ -80,6 +81,7 @@ export default function Home() {
       return
     }
 
+    markRoomHost(roomId)
     router.push(`/room/${roomId}?video=${encodeURIComponent(videoId)}`)
   }
 
