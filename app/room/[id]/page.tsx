@@ -57,6 +57,70 @@ function sameDbClock(a: number, b: number): boolean {
   return Math.abs(a - b) < 0.05;
 }
 
+/** Paused: keep picture aligned with DB. */
+const SEEK_DRIFT_PAUSED_S = 0.4;
+/** Playing: only catch up forward when this far behind (late join / lag). */
+const SEEK_CATCHUP_PLAYING_S = 2.0;
+/** First apply / explicit host playhead move: small deadband. */
+const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
+const SEEK_INITIAL_SYNC_S = 0.3;
+
+function meaningfulCurrentTimeChange(
+  prev: RoomState | null,
+  state: RoomState,
+): boolean {
+  if (prev === null) return false;
+  return !sameDbClock(prev.currentTime, state.currentTime);
+}
+
+/**
+ * Same logical transport, only `updatedAt` changed (e.g. metadata) — do not seek/play.
+ */
+function isUpdatedAtOnlyFirebaseUpdate(
+  prev: RoomState | null,
+  state: RoomState,
+): boolean {
+  if (prev === null) return false;
+  return (
+    prev.videoId === state.videoId &&
+    prev.isPlaying === state.isPlaying &&
+    sameDbClock(prev.currentTime, state.currentTime) &&
+    Math.abs(prev.playbackRate - state.playbackRate) < 1e-9 &&
+    prev.updatedAt !== state.updatedAt
+  );
+}
+
+function shouldSeekToRemoteTime(params: {
+  localT: number;
+  remoteT: number;
+  isPlaying: boolean;
+  prev: RoomState | null;
+  state: RoomState;
+}): boolean {
+  const { localT, remoteT, isPlaying, prev, state } = params;
+  const drift = localT - remoteT;
+
+  if (prev === null) {
+    return Math.abs(drift) > SEEK_INITIAL_SYNC_S;
+  }
+
+  if (meaningfulCurrentTimeChange(prev, state)) {
+    return Math.abs(drift) > SEEK_AFTER_TRANSPORT_JUMP_S;
+  }
+
+  if (!isPlaying) {
+    return Math.abs(drift) > SEEK_DRIFT_PAUSED_S;
+  }
+
+  /* Playing without a new currentTime in Firebase: remote is usually stale — do not seek
+   * backward (that caused random backward jumps). Only catch up if clearly behind. */
+  if (drift < -SEEK_CATCHUP_PLAYING_S) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * Host speed-only writes send `{ playbackRate, updatedAt }`; RTDB keeps the same
  * `currentTime` / `isPlaying`. In that case we must not seek or toggle play/pause.
@@ -311,10 +375,23 @@ function RoomContent() {
           return;
         }
 
+        if (isUpdatedAtOnlyFirebaseUpdate(prev, state)) {
+          lastAppliedKey.current = key;
+          return;
+        }
+
         lastAppliedKey.current = key;
 
         const localT = await player.getCurrentTime();
-        if (Math.abs(localT - state.currentTime) > 0.5) {
+        if (
+          shouldSeekToRemoteTime({
+            localT,
+            remoteT: state.currentTime,
+            isPlaying: state.isPlaying,
+            prev,
+            state,
+          })
+        ) {
           await player.seekTo(state.currentTime, true);
         }
         await safeSetPlaybackRate(player, state.playbackRate);
