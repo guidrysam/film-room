@@ -241,6 +241,29 @@ async function applyPlaybackIfNeeded(
   player.pauseVideo();
 }
 
+/**
+ * Viewer transport: when room says playing, only YT_PLAYING counts as OK — BUFFERING/PAUSED/CUED still
+ * get playVideo() so playback actually starts after seek/rate (BUFFERING is not treated as “playing enough”).
+ */
+async function ensureViewerPlaybackIntent(
+  player: YouTubePlayer,
+  shouldPlay: boolean,
+): Promise<void> {
+  if (!shouldPlay) {
+    await applyPlaybackIfNeeded(player, false);
+    return;
+  }
+  const st = await readYoutubePlayerState(player);
+  if (st === undefined) {
+    player.playVideo();
+    return;
+  }
+  if (st === YT_PLAYING) {
+    return;
+  }
+  player.playVideo();
+}
+
 function safeDecodeVideoId(id: string): string {
   try {
     return decodeURIComponent(id);
@@ -370,14 +393,7 @@ async function viewerApplySyncSnapshot(
       await safeSetPlaybackRate(player, target);
       lastViewerSyncRateRef.current = target;
     }
-    const st = await readYoutubePlayerState(player);
-    if (
-      st !== undefined &&
-      st !== YT_PLAYING &&
-      st !== YT_BUFFERING
-    ) {
-      await applyPlaybackIfNeeded(player, true);
-    }
+    await ensureViewerPlaybackIntent(player, true);
   } else {
     if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
       await player.seekTo(state.currentTime, true);
@@ -406,7 +422,7 @@ async function viewerApplyInitialJoin(
   const target = computeViewerPlaybackRate(state.playbackRate, drift);
   await safeSetPlaybackRate(player, target);
   lastViewerSyncRateRef.current = target;
-  await applyPlaybackIfNeeded(player, state.isPlaying);
+  await ensureViewerPlaybackIntent(player, state.isPlaying);
 }
 
 async function viewerApplyPlayCommand(
@@ -421,7 +437,7 @@ async function viewerApplyPlayCommand(
   if (drift < -SEEK_AFTER_TRANSPORT_JUMP_S) {
     await player.seekTo(state.currentTime, true);
   }
-  await applyPlaybackIfNeeded(player, true);
+  await ensureViewerPlaybackIntent(player, true);
 }
 
 async function viewerApplyPauseCommand(
@@ -447,7 +463,7 @@ async function viewerApplySeekCommand(
   await player.seekTo(state.currentTime, true);
   await safeSetPlaybackRate(player, state.playbackRate);
   lastViewerSyncRateRef.current = state.playbackRate;
-  await applyPlaybackIfNeeded(player, state.isPlaying);
+  await ensureViewerPlaybackIntent(player, state.isPlaying);
 }
 
 /** Pre-command rooms (actionId 0): time-driven apply until host migrates or sends commands. */
@@ -498,7 +514,7 @@ async function viewerApplyLegacyTimeDriven(
   const playbackIntentChanged =
     prev === null || prev.isPlaying !== state.isPlaying;
   if (playbackIntentChanged || didSeek) {
-    await applyPlaybackIfNeeded(player, state.isPlaying);
+    await ensureViewerPlaybackIntent(player, state.isPlaying);
   }
 }
 
