@@ -1434,6 +1434,11 @@ function RoomContent() {
     if (!rr) return;
     const cur = roomStateRef.current;
     if (!cur) return;
+
+    const rawName = window.prompt("Enter chapter name (optional)");
+    const trimmed =
+      typeof rawName === "string" ? rawName.trim() : "";
+
     void (async () => {
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(
@@ -1441,11 +1446,12 @@ function RoomContent() {
         cur.currentTime ?? 0,
       );
       const n = cur.chapters.length + 1;
+      const label = trimmed.length > 0 ? trimmed : `Chapter ${n}`;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
           time: t,
-          label: `Chapter ${n}`,
+          label,
           videoId: cur.videoId,
         },
       ];
