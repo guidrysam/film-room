@@ -36,6 +36,54 @@ import { extractYouTubeVideoId } from "@/lib/youtube-id";
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
 
+const PLAY_RETRY_MS = 250;
+const PAUSE_RETRY_MS = 150;
+
+/** Dev-only sync trace; set localStorage FILM_ROOM_SYNC_DEBUG=1 to always log. */
+function syncLog(...args: unknown[]) {
+  if (
+    typeof window !== "undefined" &&
+    (process.env.NODE_ENV === "development" ||
+      window.localStorage?.getItem("FILM_ROOM_SYNC_DEBUG") === "1")
+  ) {
+    console.log("[FilmRoom sync]", ...args);
+  }
+}
+
+/** Immediate play/pause/seek envelope (Firebase `playbackCommand`). */
+type PlaybackCommand = {
+  type: "play" | "pause" | "seek";
+  roomId: string;
+  /** YouTube video active when the host issued the command (ignore if clip changed). */
+  activeVideoId: string;
+  issuedAt: number;
+  anchorVideoTime: number;
+  playbackRate: number;
+  commandId: number;
+};
+
+function parsePlaybackCommand(raw: unknown): PlaybackCommand | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const type = o.type;
+  if (type !== "play" && type !== "pause" && type !== "seek") return null;
+  if (typeof o.roomId !== "string") return null;
+  if (typeof o.activeVideoId !== "string") return null;
+  if (typeof o.issuedAt !== "number") return null;
+  if (typeof o.anchorVideoTime !== "number") return null;
+  if (typeof o.playbackRate !== "number") return null;
+  if (typeof o.commandId !== "number") return null;
+  return {
+    type,
+    roomId: o.roomId,
+    activeVideoId: o.activeVideoId,
+    issuedAt: o.issuedAt,
+    anchorVideoTime: o.anchorVideoTime,
+    playbackRate: o.playbackRate,
+    commandId: o.commandId,
+  };
+}
+
 /** Stable reference — new object each render breaks react-youtube `shouldResetPlayer` / remounts the iframe. */
 const YOUTUBE_PLAYER_OPTS = {
   width: "100%",
@@ -56,6 +104,13 @@ type TransportAction =
 
 type ClipEntry = { videoId: string };
 
+/** Saved jump points; `videoId` ties each marker to a clip in the queue. */
+type ChapterEntry = {
+  time: number;
+  label: string;
+  videoId: string;
+};
+
 type RoomState = {
   videoId: string;
   /** In-session queue; active clip is `clips[currentClipIndex]` (kept in sync with `videoId`). */
@@ -68,6 +123,9 @@ type RoomState = {
   action: TransportAction;
   /** Monotonic per room — viewer applies command when this advances. */
   actionId: number;
+  /** Latest immediate transport for play/pause/seek (reconcile uses `action: sync` separately). */
+  playbackCommand: PlaybackCommand | null;
+  chapters: ChapterEntry[];
 };
 
 function parseTransportAction(raw: unknown): TransportAction {
@@ -83,6 +141,31 @@ function parseTransportAction(raw: unknown): TransportAction {
     return raw;
   }
   return "init";
+}
+
+function formatChapterTime(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+function parseChapters(raw: unknown): ChapterEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChapterEntry[] = [];
+  let i = 0;
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.time !== "number" || typeof o.videoId !== "string") continue;
+    const label =
+      typeof o.label === "string" && o.label.trim() !== ""
+        ? o.label
+        : `Chapter ${i + 1}`;
+    out.push({ time: o.time, label, videoId: o.videoId });
+    i += 1;
+  }
+  return out;
 }
 
 function parseClipEntries(raw: unknown): ClipEntry[] {
@@ -142,11 +225,14 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     updatedAt: typeof val.updatedAt === "number" ? val.updatedAt : 0,
     action: parseTransportAction(val.action),
     actionId: typeof val.actionId === "number" ? val.actionId : 0,
+    playbackCommand: parsePlaybackCommand(val.playbackCommand),
+    chapters: parseChapters(val.chapters),
   };
 }
 
 function stableKey(s: RoomState): string {
-  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}`;
+  const pc = s.playbackCommand?.commandId ?? 0;
+  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}|pc:${pc}`;
 }
 
 /** Compare Firebase `currentTime` snapshots (often stale during playback). */
@@ -558,6 +644,106 @@ async function viewerApplySeekCommand(
   );
 }
 
+/**
+ * Immediate command path: anchor time + rate, then play/pause/seek follow-up.
+ * Schedules one play/pause retry if transport state does not match.
+ */
+async function applyViewerImmediatePlaybackCommand(
+  cmd: PlaybackCommand,
+  roomSnapshot: RoomState,
+  player: YouTubePlayer,
+  lastViewerSyncRateRef: { current: number },
+  viewerPlaybackUnlockedRef: { current: boolean },
+  playRetryTimerRef: { current: number | null },
+  pauseRetryTimerRef: { current: number | null },
+  retryTargetCommandIdRef: { current: number },
+): Promise<void> {
+  if (playRetryTimerRef.current) {
+    clearTimeout(playRetryTimerRef.current);
+    playRetryTimerRef.current = null;
+  }
+  if (pauseRetryTimerRef.current) {
+    clearTimeout(pauseRetryTimerRef.current);
+    pauseRetryTimerRef.current = null;
+  }
+
+  await player.seekTo(cmd.anchorVideoTime, true);
+  await safeSetPlaybackRate(player, cmd.playbackRate);
+  lastViewerSyncRateRef.current = cmd.playbackRate;
+
+  if (cmd.type === "play") {
+    await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+    retryTargetCommandIdRef.current = cmd.commandId;
+    playRetryTimerRef.current = window.setTimeout(() => {
+      playRetryTimerRef.current = null;
+      if (retryTargetCommandIdRef.current !== cmd.commandId) return;
+      void (async () => {
+        const st = await readYoutubePlayerState(player);
+        if (st === YT_PLAYING || st === YT_BUFFERING) {
+          syncLog("viewer play retry skipped", { commandId: cmd.commandId, st });
+          return;
+        }
+        syncLog("viewer play retry", { commandId: cmd.commandId, stBefore: st });
+        try {
+          await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+        } catch {
+          /* ignore */
+        }
+        const st2 = await readYoutubePlayerState(player);
+        const ct = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+        syncLog("viewer post-apply (after play retry)", {
+          commandId: cmd.commandId,
+          ytState: st2,
+          currentTime: ct,
+        });
+      })();
+    }, PLAY_RETRY_MS);
+  } else if (cmd.type === "pause") {
+    await applyPlaybackIfNeeded(player, false);
+    retryTargetCommandIdRef.current = cmd.commandId;
+    pauseRetryTimerRef.current = window.setTimeout(() => {
+      pauseRetryTimerRef.current = null;
+      if (retryTargetCommandIdRef.current !== cmd.commandId) return;
+      void (async () => {
+        const st = await readYoutubePlayerState(player);
+        if (st === YT_PAUSED) {
+          syncLog("viewer pause retry skipped", { commandId: cmd.commandId, st });
+          return;
+        }
+        syncLog("viewer pause retry", { commandId: cmd.commandId, stBefore: st });
+        try {
+          await applyPlaybackIfNeeded(player, false);
+        } catch {
+          /* ignore */
+        }
+        const st2 = await readYoutubePlayerState(player);
+        const ct = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+        syncLog("viewer post-apply (after pause retry)", {
+          commandId: cmd.commandId,
+          ytState: st2,
+          currentTime: ct,
+        });
+      })();
+    }, PAUSE_RETRY_MS);
+  } else {
+    await ensureViewerPlaybackIntent(
+      player,
+      roomSnapshot.isPlaying,
+      viewerPlaybackUnlockedRef,
+    );
+  }
+
+  const stFinal = await readYoutubePlayerState(player);
+  const ctFinal = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+  syncLog("viewer post-apply (immediate command)", {
+    type: cmd.type,
+    commandId: cmd.commandId,
+    ytState: stFinal,
+    currentTime: ctFinal,
+    isPlayingIntent: roomSnapshot.isPlaying,
+  });
+}
+
 /** Pre-command rooms (actionId 0): time-driven apply until host migrates or sends commands. */
 async function viewerApplyLegacyTimeDriven(
   player: YouTubePlayer,
@@ -641,6 +827,12 @@ function RoomContent() {
   /** Viewer-only: set true after explicit tap so autopolicy allows playVideo (see overlay). */
   const viewerPlaybackUnlockedRef = useRef(false);
   const [viewerPlaybackUnlocked, setViewerPlaybackUnlocked] = useState(false);
+  /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
+  const lastAppliedCommandIdRef = useRef(0);
+  const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
+  const playRetryTimerRef = useRef<number | null>(null);
+  const pauseRetryTimerRef = useRef<number | null>(null);
+  const retryTargetCommandIdRef = useRef(0);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -649,13 +841,28 @@ function RoomContent() {
   const applyPrevSnapshotRef = useRef<RoomState | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);
 
+  const isHostRef = useRef(isHost);
+
   useLayoutEffect(() => {
     roomStateRef.current = roomState;
   }, [roomState]);
 
+  useLayoutEffect(() => {
+    isHostRef.current = isHost;
+  });
+
   useEffect(() => {
     lastViewerSyncRateRef.current = Number.NaN;
   }, [roomId]);
+
+  useEffect(() => {
+    lastAppliedCommandIdRef.current = 0;
+    pendingPlaybackCommandRef.current = null;
+    if (playRetryTimerRef.current) clearTimeout(playRetryTimerRef.current);
+    if (pauseRetryTimerRef.current) clearTimeout(pauseRetryTimerRef.current);
+    playRetryTimerRef.current = null;
+    pauseRetryTimerRef.current = null;
+  }, [roomState?.videoId]);
 
   useEffect(() => {
     viewerPlaybackUnlockedRef.current = false;
@@ -677,6 +884,39 @@ function RoomContent() {
       document.removeEventListener("webkitfullscreenchange", syncStageFs);
     };
   }, []);
+
+  useEffect(() => {
+    const onVisibleOrFocus = () => {
+      if (document.visibilityState !== "visible") return;
+      if (isHostRef.current) return;
+      const s = roomStateRef.current;
+      const p = playerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | undefined;
+      if (!s || !p) return;
+      syncLog("viewer visibility/focus → reconcile");
+      void viewerApplySyncSnapshot(
+        p,
+        s,
+        lastViewerSyncRateRef,
+        viewerPlaybackUnlockedRef,
+      ).then(async () => {
+        const st = await readYoutubePlayerState(p);
+        const ct = await readYoutubeCurrentTime(p, s.currentTime);
+        syncLog("viewer post-apply (visibility reconcile)", {
+          action: s.action,
+          ytState: st,
+          currentTime: ct,
+        });
+      });
+    };
+    document.addEventListener("visibilitychange", onVisibleOrFocus);
+    window.addEventListener("focus", onVisibleOrFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibleOrFocus);
+      window.removeEventListener("focus", onVisibleOrFocus);
+    };
+  }, [roomId]);
 
   const toggleStageFullscreen = useCallback(async () => {
     const el = stageRef.current;
@@ -708,11 +948,9 @@ function RoomContent() {
     [roomId],
   );
 
-  const isHostRef = useRef(isHost);
   const roomRefForWrite = useRef(roomRef);
 
   useLayoutEffect(() => {
-    isHostRef.current = isHost;
     roomRefForWrite.current = roomRef;
   });
 
@@ -739,6 +977,8 @@ function RoomContent() {
           isPlaying: false,
           currentTime: 0,
           playbackRate: DEFAULT_PLAYBACK_RATE,
+          playbackCommand: null,
+          chapters: [],
           updatedAt: serverTimestamp(),
           action: "init",
           actionId: 1,
@@ -788,6 +1028,26 @@ function RoomContent() {
 
       const yt = playerRef.current;
       const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
+
+      if (!isHost) {
+        const cmd = state.playbackCommand;
+        const cmdFresh =
+          !!cmd &&
+          (cmd.type === "play" ||
+            cmd.type === "pause" ||
+            cmd.type === "seek") &&
+          cmd.activeVideoId === state.videoId &&
+          cmd.commandId > lastAppliedCommandIdRef.current;
+
+        if (cmdFresh) {
+          if (!player) {
+            pendingPlaybackCommandRef.current = cmd;
+            syncLog("viewer receive (deferred, no player)", cmd);
+            return;
+          }
+        }
+      }
+
       if (!player) return;
 
       if (stale()) return;
@@ -825,6 +1085,10 @@ function RoomContent() {
               viewerPlaybackUnlockedRef,
             );
             if (stale()) return;
+            lastAppliedCommandIdRef.current = Math.max(
+              lastAppliedCommandIdRef.current,
+              state.playbackCommand?.commandId ?? 0,
+            );
             lastAppliedKey.current = key;
             return;
           }
@@ -845,6 +1109,33 @@ function RoomContent() {
           }
 
           if (stale()) return;
+
+          const cmd = state.playbackCommand;
+          const cmdApply =
+            !!cmd &&
+            (cmd.type === "play" ||
+              cmd.type === "pause" ||
+              cmd.type === "seek") &&
+            cmd.activeVideoId === state.videoId &&
+            cmd.commandId > lastAppliedCommandIdRef.current;
+
+          if (cmdApply) {
+            syncLog("viewer immediate apply", cmd);
+            await applyViewerImmediatePlaybackCommand(
+              cmd,
+              state,
+              player,
+              lastViewerSyncRateRef,
+              viewerPlaybackUnlockedRef,
+              playRetryTimerRef,
+              pauseRetryTimerRef,
+              retryTargetCommandIdRef,
+            );
+            lastAppliedCommandIdRef.current = cmd.commandId;
+          }
+
+          if (stale()) return;
+
           switch (state.action) {
             case "sync":
               await viewerApplySyncSnapshot(
@@ -859,27 +1150,42 @@ function RoomContent() {
               lastViewerSyncRateRef.current = state.playbackRate;
               break;
             case "seek":
-              await viewerApplySeekCommand(
-                player,
-                state,
-                lastViewerSyncRateRef,
-                viewerPlaybackUnlockedRef,
-              );
+              if (
+                !state.playbackCommand ||
+                state.playbackCommand.activeVideoId !== state.videoId
+              ) {
+                await viewerApplySeekCommand(
+                  player,
+                  state,
+                  lastViewerSyncRateRef,
+                  viewerPlaybackUnlockedRef,
+                );
+              }
               break;
             case "play":
-              await viewerApplyPlayCommand(
-                player,
-                state,
-                lastViewerSyncRateRef,
-                viewerPlaybackUnlockedRef,
-              );
+              if (
+                !state.playbackCommand ||
+                state.playbackCommand.activeVideoId !== state.videoId
+              ) {
+                await viewerApplyPlayCommand(
+                  player,
+                  state,
+                  lastViewerSyncRateRef,
+                  viewerPlaybackUnlockedRef,
+                );
+              }
               break;
             case "pause":
-              await viewerApplyPauseCommand(
-                player,
-                state,
-                lastViewerSyncRateRef,
-              );
+              if (
+                !state.playbackCommand ||
+                state.playbackCommand.activeVideoId !== state.videoId
+              ) {
+                await viewerApplyPauseCommand(
+                  player,
+                  state,
+                  lastViewerSyncRateRef,
+                );
+              }
               break;
             case "clip":
             case "init":
@@ -1012,12 +1318,17 @@ function RoomContent() {
   }, []);
 
   const writeHostTransport = useCallback(
-    (partial: Record<string, unknown>, action: TransportAction) => {
+    (
+      partial: Record<string, unknown>,
+      action: TransportAction,
+      options?: { clearPlaybackCommand?: boolean },
+    ) => {
       const rr = roomRefForWrite.current;
       if (!rr || !isHostRef.current) return;
       hostActionSeqRef.current += 1;
       void update(rr, {
         ...partial,
+        ...(options?.clearPlaybackCommand ? { playbackCommand: null } : {}),
         action,
         actionId: hostActionSeqRef.current,
         updatedAt: serverTimestamp(),
@@ -1027,6 +1338,125 @@ function RoomContent() {
     },
     [],
   );
+
+  const writeImmediatePlaybackCommand = useCallback(
+    (
+      transportAction: "play" | "pause" | "seek",
+      fields: {
+        currentTime: number;
+        isPlaying: boolean;
+        playbackRate: number;
+      },
+    ) => {
+      const rr = roomRefForWrite.current;
+      if (!rr || !isHostRef.current || !roomId) return;
+      hostActionSeqRef.current += 1;
+      const commandId = hostActionSeqRef.current;
+      const activeVideoId = roomStateRef.current?.videoId ?? "";
+      const playbackCommand: PlaybackCommand = {
+        type: transportAction,
+        roomId,
+        activeVideoId,
+        issuedAt: Date.now(),
+        anchorVideoTime: fields.currentTime,
+        playbackRate: fields.playbackRate,
+        commandId,
+      };
+      syncLog("host immediate command", playbackCommand);
+      void update(rr, {
+        isPlaying: fields.isPlaying,
+        currentTime: fields.currentTime,
+        playbackRate: fields.playbackRate,
+        playbackCommand,
+        action: transportAction,
+        actionId: commandId,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+    },
+    [roomId],
+  );
+
+  /** Seek on current clip, or switch clip + seek (chapter jump) using the same seek / playbackCommand path. */
+  const jumpToChapter = useCallback(
+    (chapter: ChapterEntry) => {
+      if (!isHost) return;
+      const rr = roomRefForWrite.current;
+      if (!rr || !roomId) return;
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const clipIdx = cur.clips.findIndex((c) => c.videoId === chapter.videoId);
+      if (clipIdx < 0) return;
+
+      if (chapter.videoId === cur.videoId) {
+        writeImmediatePlaybackCommand("seek", {
+          currentTime: chapter.time,
+          isPlaying: cur.isPlaying,
+          playbackRate: cur.playbackRate,
+        });
+        return;
+      }
+
+      lastAppliedKey.current = "";
+      hostActionSeqRef.current += 1;
+      const commandId = hostActionSeqRef.current;
+      const playbackCommand: PlaybackCommand = {
+        type: "seek",
+        roomId,
+        activeVideoId: chapter.videoId,
+        issuedAt: Date.now(),
+        anchorVideoTime: chapter.time,
+        playbackRate: cur.playbackRate,
+        commandId,
+      };
+      syncLog("host chapter jump (cross-clip)", playbackCommand);
+      void update(rr, {
+        videoId: chapter.videoId,
+        currentClipIndex: clipIdx,
+        currentTime: chapter.time,
+        isPlaying: cur.isPlaying,
+        playbackRate: cur.playbackRate,
+        playbackCommand,
+        action: "seek",
+        actionId: commandId,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+    },
+    [isHost, roomId, writeImmediatePlaybackCommand],
+  );
+
+  const handleAddChapter = useCallback(() => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur) return;
+    void (async () => {
+      const player = getPlayer();
+      const t = await readYoutubeCurrentTime(
+        player,
+        cur.currentTime ?? 0,
+      );
+      const n = cur.chapters.length + 1;
+      const next: ChapterEntry[] = [
+        ...cur.chapters,
+        {
+          time: t,
+          label: `Chapter ${n}`,
+          videoId: cur.videoId,
+        },
+      ];
+      void update(rr, {
+        chapters: next,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+    })();
+  }, [isHost]);
 
   const handleAddClip = useCallback(() => {
     if (!isHost) return;
@@ -1065,6 +1495,7 @@ function RoomContent() {
           playbackRate: DEFAULT_PLAYBACK_RATE,
         },
         "clip",
+        { clearPlaybackCommand: true },
       );
     },
     [isHost, roomId, writeHostTransport],
@@ -1108,7 +1539,13 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostTransport({ isPlaying: true, currentTime: t }, "play");
+      const pr =
+        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+      writeImmediatePlaybackCommand("play", {
+        isPlaying: true,
+        currentTime: t,
+        playbackRate: pr,
+      });
     })();
   };
 
@@ -1118,7 +1555,13 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostTransport({ isPlaying: false, currentTime: t }, "pause");
+      const pr =
+        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+      writeImmediatePlaybackCommand("pause", {
+        isPlaying: false,
+        currentTime: t,
+        playbackRate: pr,
+      });
     })();
   };
 
@@ -1128,10 +1571,14 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      writeHostTransport(
-        { currentTime: Math.max(0, t - 10) },
-        "seek",
-      );
+      const pr =
+        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+      const playing = roomStateRef.current?.isPlaying ?? false;
+      writeImmediatePlaybackCommand("seek", {
+        isPlaying: playing,
+        currentTime: Math.max(0, t - 10),
+        playbackRate: pr,
+      });
     })();
   };
 
@@ -1143,6 +1590,39 @@ function RoomContent() {
   const handlePlayerReady = useCallback(() => {
     const s = roomStateRef.current;
     if (!s) return;
+    const p = getPlayer();
+    if (!isHostRef.current && p && pendingPlaybackCommandRef.current) {
+      const cmd = pendingPlaybackCommandRef.current;
+      if (
+        cmd.activeVideoId === s.videoId &&
+        cmd.commandId > lastAppliedCommandIdRef.current
+      ) {
+        pendingPlaybackCommandRef.current = null;
+        syncLog("viewer apply pending on player ready", cmd);
+        void (async () => {
+          await applyViewerImmediatePlaybackCommand(
+            cmd,
+            s,
+            p,
+            lastViewerSyncRateRef,
+            viewerPlaybackUnlockedRef,
+            playRetryTimerRef,
+            pauseRetryTimerRef,
+            retryTargetCommandIdRef,
+          );
+          lastAppliedCommandIdRef.current = cmd.commandId;
+          lastAppliedKey.current = "";
+          const gen = ++applyRoomGenRef.current;
+          void applyRoomStateToPlayerRef.current(
+            s,
+            applyPrevSnapshotRef.current,
+            gen,
+          );
+        })();
+        return;
+      }
+      pendingPlaybackCommandRef.current = null;
+    }
     /* After iframe remount, re-sync. If we already applied this snapshot, skip (avoids seek/play churn). */
     const key = stableKey(s);
     if (key === lastAppliedKey.current) return;
@@ -1271,6 +1751,60 @@ function RoomContent() {
                 Add clip
               </button>
             </div>
+          </div>
+        ) : null}
+
+        {roomState ? (
+          <div className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
+            <p className="mb-2 text-xs font-medium text-gray-400">Chapters</p>
+            {isHost ? (
+              <button
+                type="button"
+                onClick={() => void handleAddChapter()}
+                className="mb-2 rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+              >
+                Add Chapter
+              </button>
+            ) : null}
+            {roomState.chapters.length === 0 ? (
+              <p className="text-xs text-gray-500">No chapters yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {roomState.chapters.map((ch, i) => (
+                  <li key={`${ch.videoId}-${ch.time}-${i}`}>
+                    {isHost ? (
+                      <button
+                        type="button"
+                        onClick={() => void jumpToChapter(ch)}
+                        className="w-full rounded border border-white/15 bg-black/50 px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-black/70"
+                      >
+                        <span className="text-white">{ch.label}</span>
+                        <span className="ml-2 font-mono text-gray-400">
+                          {formatChapterTime(ch.time)}
+                        </span>
+                        {ch.videoId !== roomState.videoId ? (
+                          <span className="ml-2 text-[10px] text-amber-400/90">
+                            (other clip)
+                          </span>
+                        ) : null}
+                      </button>
+                    ) : (
+                      <div className="rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-gray-300">
+                        <span className="text-gray-100">{ch.label}</span>
+                        <span className="ml-2 font-mono text-gray-500">
+                          {formatChapterTime(ch.time)}
+                        </span>
+                        {ch.videoId !== roomState.videoId ? (
+                          <span className="ml-2 text-[10px] text-gray-500">
+                            (other clip)
+                          </span>
+                        ) : null}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         ) : null}
 
