@@ -1,5 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 import { getDatabase } from "firebase/database";
+import { getFirestore } from "firebase/firestore";
 
 /**
  * Must match the Realtime Database URL in Firebase Console (Build → Realtime Database).
@@ -23,5 +25,11 @@ const firebaseConfig = {
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-/** Realtime Database — use `import { db } from "@/lib/firebase"` (not `database`). */
+/** Realtime Database — live room sync. */
 export const db = getDatabase(app);
+
+/** Firebase Auth (Google sign-in). */
+export const auth = getAuth(app);
+
+/** Firestore — saved session templates (not live rooms). */
+export const firestore = getFirestore(app);

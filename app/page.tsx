@@ -51,8 +51,15 @@ export default function Home() {
         </button>
 
         <Link
+          href="/app"
+          className="mt-4 text-sm text-gray-400 underline-offset-4 hover:text-gray-300 hover:underline"
+        >
+          Sign in
+        </Link>
+
+        <Link
           href="/about"
-          className="mt-10 text-sm text-gray-500 underline-offset-4 hover:text-gray-400 hover:underline"
+          className="mt-8 text-sm text-gray-500 underline-offset-4 hover:text-gray-400 hover:underline"
         >
           What is Film Room?
         </Link>

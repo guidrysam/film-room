@@ -30,7 +30,10 @@ import {
   markRoomHost,
   subscribeToRoomHostStore,
 } from "@/lib/room-host";
+import { useAuth } from "@/components/AuthProvider";
 import { TelestratorOverlay } from "@/components/TelestratorOverlay";
+import { signInWithGoogle } from "@/lib/auth-google";
+import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
@@ -807,6 +810,8 @@ function RoomContent() {
   const searchParams = useSearchParams();
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
+  const loadSavedId = searchParams.get("loadSaved");
+  const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
@@ -967,23 +972,12 @@ function RoomContent() {
 
   useEffect(() => {
     if (!roomRef || !isHost || !videoFromUrl) return;
+    if (loadSavedId && authLoading) return;
+
     const vid = decodeURIComponent(videoFromUrl);
-    void get(roomRef).then((snap) => {
-      if (!snap.exists()) {
-        void set(roomRef, {
-          videoId: vid,
-          clips: [{ videoId: vid }],
-          currentClipIndex: 0,
-          isPlaying: false,
-          currentTime: 0,
-          playbackRate: DEFAULT_PLAYBACK_RATE,
-          playbackCommand: null,
-          chapters: [],
-          updatedAt: serverTimestamp(),
-          action: "init",
-          actionId: 1,
-        });
-      } else {
+
+    void get(roomRef).then(async (snap) => {
+      if (snap.exists()) {
         const d = snap.val() as Record<string, unknown> | null;
         const needsClipMigration =
           !d ||
@@ -1007,9 +1001,69 @@ function RoomContent() {
             updatedAt: serverTimestamp(),
           });
         }
+        return;
       }
+
+      if (loadSavedId && user) {
+        try {
+          const template = await getSavedSession(user.uid, loadSavedId);
+          if (
+            template &&
+            Array.isArray(template.clips) &&
+            template.clips.length > 0
+          ) {
+            const idx = Math.min(
+              Math.max(0, template.currentClipIndex),
+              template.clips.length - 1,
+            );
+            const activeId = template.clips[idx]?.videoId ?? vid;
+            void set(roomRef, {
+              videoId: activeId,
+              clips: template.clips.map((c) => ({ videoId: c.videoId })),
+              currentClipIndex: idx,
+              chapters: template.chapters ?? [],
+              isPlaying: false,
+              currentTime: 0,
+              playbackRate: DEFAULT_PLAYBACK_RATE,
+              playbackCommand: null,
+              updatedAt: serverTimestamp(),
+              action: "init",
+              actionId: 1,
+            });
+            router.replace(
+              `/room/${roomId}?video=${encodeURIComponent(activeId)}`,
+            );
+            return;
+          }
+        } catch {
+          /* fall through to default room */
+        }
+      }
+
+      void set(roomRef, {
+        videoId: vid,
+        clips: [{ videoId: vid }],
+        currentClipIndex: 0,
+        isPlaying: false,
+        currentTime: 0,
+        playbackRate: DEFAULT_PLAYBACK_RATE,
+        playbackCommand: null,
+        chapters: [],
+        updatedAt: serverTimestamp(),
+        action: "init",
+        actionId: 1,
+      });
     });
-  }, [roomRef, isHost, videoFromUrl]);
+  }, [
+    roomRef,
+    isHost,
+    videoFromUrl,
+    loadSavedId,
+    user,
+    authLoading,
+    roomId,
+    router,
+  ]);
 
   useEffect(() => {
     if (!roomRef) return;
@@ -1653,6 +1707,42 @@ function RoomContent() {
     });
   };
 
+  const handleSaveSession = useCallback(async () => {
+    if (!isHost || !roomState) return;
+    let u = user;
+    if (!u) {
+      try {
+        const cred = await signInWithGoogle();
+        u = cred.user;
+      } catch {
+        return;
+      }
+    }
+    const fallback = `Session ${new Date().toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    })}`;
+    const raw = window.prompt("Session name", fallback);
+    if (raw === null) return;
+    const name =
+      typeof raw === "string" && raw.trim() !== "" ? raw.trim() : fallback;
+    try {
+      await saveSessionTemplate(u.uid, {
+        name,
+        clips: roomState.clips.map((c) => ({ videoId: c.videoId })),
+        chapters: roomState.chapters.map((ch) => ({
+          time: ch.time,
+          label: ch.label,
+          videoId: ch.videoId,
+        })),
+        currentClipIndex: roomState.currentClipIndex,
+      });
+      alert("Session saved.");
+    } catch {
+      alert("Could not save session. Check Firestore rules and login.");
+    }
+  }, [isHost, roomState, user]);
+
   const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
 
@@ -1706,13 +1796,22 @@ function RoomContent() {
             </span>
           </p>
           {isHost ? (
-            <button
-              type="button"
-              onClick={handleCopyViewerLink}
-              className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
-            >
-              {copied ? "Copied" : "Copy Viewer Link"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleSaveSession()}
+                className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
+              >
+                Save Session
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyViewerLink}
+                className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
+              >
+                {copied ? "Copied" : "Copy Viewer Link"}
+              </button>
+            </div>
           ) : null}
         </div>
 
