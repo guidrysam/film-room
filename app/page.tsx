@@ -38,13 +38,13 @@ export default function Home() {
     <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
       <div className="w-full max-w-md">
         <div className="mb-10 text-center">
-          <h1 className="mb-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+          <h1 className="mb-4 text-4xl font-semibold tracking-tight text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.08)] sm:text-5xl">
             Film Room
           </h1>
           <p className="mb-4 text-lg font-medium leading-snug text-zinc-200 sm:text-xl">
-            Teach from video. Live. Without the setup.
+            Watch together. Anywhere. Anytime.
           </p>
-          <p className="mx-auto max-w-sm text-sm leading-relaxed text-zinc-500">
+          <p className="mx-auto max-w-sm text-sm leading-relaxed text-zinc-400">
             Use YouTube, Hudl exports, or any video you already have.
             <br />
             Film Room is the fastest way to run a session together.
