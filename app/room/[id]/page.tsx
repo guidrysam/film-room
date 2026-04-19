@@ -53,9 +53,9 @@ function syncLog(...args: unknown[]) {
   }
 }
 
-/** Immediate play/pause/seek envelope (Firebase `playbackCommand`). */
+/** Immediate play/pause/seek/resync envelope (Firebase `playbackCommand`). */
 type PlaybackCommand = {
-  type: "play" | "pause" | "seek";
+  type: "play" | "pause" | "seek" | "resync";
   roomId: string;
   /** YouTube video active when the host issued the command (ignore if clip changed). */
   activeVideoId: string;
@@ -69,7 +69,14 @@ function parsePlaybackCommand(raw: unknown): PlaybackCommand | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const type = o.type;
-  if (type !== "play" && type !== "pause" && type !== "seek") return null;
+  if (
+    type !== "play" &&
+    type !== "pause" &&
+    type !== "seek" &&
+    type !== "resync"
+  ) {
+    return null;
+  }
   if (typeof o.roomId !== "string") return null;
   if (typeof o.activeVideoId !== "string") return null;
   if (typeof o.issuedAt !== "number") return null;
@@ -101,6 +108,7 @@ type TransportAction =
   | "play"
   | "pause"
   | "seek"
+  | "resync"
   | "rate"
   | "sync"
   | "clip";
@@ -137,6 +145,7 @@ function parseTransportAction(raw: unknown): TransportAction {
     raw === "play" ||
     raw === "pause" ||
     raw === "seek" ||
+    raw === "resync" ||
     raw === "rate" ||
     raw === "sync" ||
     raw === "clip"
@@ -169,6 +178,91 @@ function parseChapters(raw: unknown): ChapterEntry[] {
     i += 1;
   }
   return out;
+}
+
+/** Session chapter order: clip index in queue, then time (supports multi-clip lists). */
+const CHAPTER_NAV_EPS = 0.05;
+
+function clipIndexForVideo(clips: ClipEntry[], videoId: string): number {
+  const i = clips.findIndex((c) => c.videoId === videoId);
+  return i >= 0 ? i : 0;
+}
+
+function compareChapterOrder(
+  clips: ClipEntry[],
+  a: ChapterEntry,
+  b: ChapterEntry,
+): number {
+  const ia = clipIndexForVideo(clips, a.videoId);
+  const ib = clipIndexForVideo(clips, b.videoId);
+  if (ia !== ib) return ia - ib;
+  return a.time - b.time;
+}
+
+function sortChaptersForNavigation(
+  clips: ClipEntry[],
+  chapters: ChapterEntry[],
+): ChapterEntry[] {
+  return [...chapters].sort((a, b) => compareChapterOrder(clips, a, b));
+}
+
+function chapterStrictlyBeforeCursor(
+  clips: ClipEntry[],
+  ch: ChapterEntry,
+  cursorClipIdx: number,
+  cursorTime: number,
+): boolean {
+  const ci = clipIndexForVideo(clips, ch.videoId);
+  return (
+    ci < cursorClipIdx ||
+    (ci === cursorClipIdx && ch.time < cursorTime - CHAPTER_NAV_EPS)
+  );
+}
+
+function chapterStrictlyAfterCursor(
+  clips: ClipEntry[],
+  ch: ChapterEntry,
+  cursorClipIdx: number,
+  cursorTime: number,
+): boolean {
+  const ci = clipIndexForVideo(clips, ch.videoId);
+  return (
+    ci > cursorClipIdx ||
+    (ci === cursorClipIdx && ch.time > cursorTime + CHAPTER_NAV_EPS)
+  );
+}
+
+function findPrevChapterInSession(
+  clips: ClipEntry[],
+  chapters: ChapterEntry[],
+  cursorClipIdx: number,
+  cursorTime: number,
+): ChapterEntry | null {
+  if (!chapters.length) return null;
+  const sorted = sortChaptersForNavigation(clips, chapters);
+  let best: ChapterEntry | null = null;
+  for (const ch of sorted) {
+    if (chapterStrictlyBeforeCursor(clips, ch, cursorClipIdx, cursorTime)) {
+      best = ch;
+    }
+  }
+  return best;
+}
+
+function findNextChapterInSession(
+  clips: ClipEntry[],
+  chapters: ChapterEntry[],
+  cursorClipIdx: number,
+  cursorTime: number,
+): ChapterEntry | null {
+  if (!chapters.length) return null;
+  const sorted = sortChaptersForNavigation(clips, chapters);
+  for (const ch of sorted) {
+    if (chapterStrictlyAfterCursor(clips, ch, cursorClipIdx, cursorTime)) {
+      return ch;
+    }
+  }
+  return null;
 }
 
 function parseClipEntries(raw: unknown): ClipEntry[] {
@@ -467,6 +561,29 @@ async function readYoutubeCurrentTime(
   return fallbackTime;
 }
 
+async function readYoutubePlaybackRate(
+  player: YouTubePlayer | null | undefined,
+  fallback: number,
+): Promise<number> {
+  if (!player) return fallback;
+  const p = player as YouTubePlayer & {
+    getPlaybackRate?: () => number | Promise<number>;
+  };
+  try {
+    const raw = p.getPlaybackRate?.();
+    const r = await Promise.resolve(raw);
+    if (typeof r === "number" && !Number.isNaN(r) && r > 0) return r;
+  } catch {
+    /* API not ready */
+  }
+  return fallback;
+}
+
+/** True when the iframe reports playing intent (playing or buffering). */
+function youtubeStateImpliesPlaying(st: number | undefined): boolean {
+  return st === YT_PLAYING || st === YT_BUFFERING;
+}
+
 function useRoomHostFromSession(roomId: string): boolean {
   return useSyncExternalStore(
     subscribeToRoomHostStore,
@@ -728,6 +845,13 @@ async function applyViewerImmediatePlaybackCommand(
         });
       })();
     }, PAUSE_RETRY_MS);
+  } else if (cmd.type === "resync") {
+    /* Authoritative snap: no play/pause retry timers (unlike play/pause). */
+    if (roomSnapshot.isPlaying) {
+      await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+    } else {
+      await applyPlaybackIfNeeded(player, false);
+    }
   } else {
     await ensureViewerPlaybackIntent(
       player,
@@ -1089,7 +1213,8 @@ function RoomContent() {
           !!cmd &&
           (cmd.type === "play" ||
             cmd.type === "pause" ||
-            cmd.type === "seek") &&
+            cmd.type === "seek" ||
+            cmd.type === "resync") &&
           cmd.activeVideoId === state.videoId &&
           cmd.commandId > lastAppliedCommandIdRef.current;
 
@@ -1169,7 +1294,8 @@ function RoomContent() {
             !!cmd &&
             (cmd.type === "play" ||
               cmd.type === "pause" ||
-              cmd.type === "seek") &&
+              cmd.type === "seek" ||
+              cmd.type === "resync") &&
             cmd.activeVideoId === state.videoId &&
             cmd.commandId > lastAppliedCommandIdRef.current;
 
@@ -1214,6 +1340,25 @@ function RoomContent() {
                   lastViewerSyncRateRef,
                   viewerPlaybackUnlockedRef,
                 );
+              }
+              break;
+            case "resync":
+              if (
+                !state.playbackCommand ||
+                state.playbackCommand.activeVideoId !== state.videoId
+              ) {
+                await player.seekTo(state.currentTime, true);
+                await safeSetPlaybackRate(player, state.playbackRate);
+                lastViewerSyncRateRef.current = state.playbackRate;
+                if (state.isPlaying) {
+                  await ensureViewerPlaybackIntent(
+                    player,
+                    true,
+                    viewerPlaybackUnlockedRef,
+                  );
+                } else {
+                  await applyPlaybackIfNeeded(player, false);
+                }
               }
               break;
             case "play":
@@ -1395,7 +1540,7 @@ function RoomContent() {
 
   const writeImmediatePlaybackCommand = useCallback(
     (
-      transportAction: "play" | "pause" | "seek",
+      transportAction: "play" | "pause" | "seek" | "resync",
       fields: {
         currentTime: number;
         isPlaying: boolean;
@@ -1422,7 +1567,7 @@ function RoomContent() {
         currentTime: fields.currentTime,
         playbackRate: fields.playbackRate,
         playbackCommand,
-        action: transportAction,
+        action: transportAction === "resync" ? "resync" : transportAction,
         actionId: commandId,
         updatedAt: serverTimestamp(),
       }).catch(() => {
@@ -1642,6 +1787,67 @@ function RoomContent() {
     })();
   };
 
+  /** Authoritative snap: live time, rate, play state — bypasses drift/nudge on viewers. */
+  const handleHostResync = () => {
+    if (!isHost) return;
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const player = getPlayer();
+      const fb = cur.currentTime ?? 0;
+      const t = await readYoutubeCurrentTime(player, fb);
+      const pr = await readYoutubePlaybackRate(
+        player,
+        cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+      );
+      const st = await readYoutubePlayerState(player);
+      let isPlaying = cur.isPlaying;
+      if (st !== undefined) {
+        if (youtubeStateImpliesPlaying(st)) isPlaying = true;
+        else if (st === YT_PAUSED) isPlaying = false;
+      }
+      writeImmediatePlaybackCommand("resync", {
+        currentTime: t,
+        isPlaying,
+        playbackRate: pr,
+      });
+    })();
+  };
+
+  const handlePrevChapter = () => {
+    if (!isHost) return;
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || !cur.chapters.length) return;
+      const player = getPlayer();
+      const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
+      const target = findPrevChapterInSession(
+        cur.clips,
+        cur.chapters,
+        cur.currentClipIndex,
+        t,
+      );
+      if (target) jumpToChapter(target);
+    })();
+  };
+
+  const handleNextChapter = () => {
+    if (!isHost) return;
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || !cur.chapters.length) return;
+      const player = getPlayer();
+      const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
+      const target = findNextChapterInSession(
+        cur.clips,
+        cur.chapters,
+        cur.currentClipIndex,
+        t,
+      );
+      if (target) jumpToChapter(target);
+    })();
+  };
+
   const handleSpeed = (rate: (typeof HOST_SPEEDS)[number]) => {
     if (!isHost) return;
     writeHostTransport({ playbackRate: rate }, "rate");
@@ -1780,6 +1986,25 @@ function RoomContent() {
   const hostChip =
     "rounded-md border border-white/15 bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm backdrop-blur-sm hover:bg-black/85 sm:text-sm";
 
+  const sessionPrevChapter =
+    roomState && roomState.chapters.length > 0
+      ? findPrevChapterInSession(
+          roomState.clips,
+          roomState.chapters,
+          roomState.currentClipIndex,
+          roomState.currentTime,
+        )
+      : null;
+  const sessionNextChapter =
+    roomState && roomState.chapters.length > 0
+      ? findNextChapterInSession(
+          roomState.clips,
+          roomState.chapters,
+          roomState.currentClipIndex,
+          roomState.currentTime,
+        )
+      : null;
+
   return (
     <div className="flex min-h-screen flex-col bg-black px-4 py-6 text-white">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
@@ -1863,13 +2088,31 @@ function RoomContent() {
           <div className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
             <p className="mb-2 text-xs font-medium text-gray-400">Chapters</p>
             {isHost ? (
-              <button
-                type="button"
-                onClick={() => void handleAddChapter()}
-                className="mb-2 rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
-              >
-                Add Chapter
-              </button>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleAddChapter()}
+                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+                >
+                  Add Chapter
+                </button>
+                <button
+                  type="button"
+                  disabled={!sessionPrevChapter}
+                  onClick={() => void handlePrevChapter()}
+                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  disabled={!sessionNextChapter}
+                  onClick={() => void handleNextChapter()}
+                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
             ) : null}
             {roomState.chapters.length === 0 ? (
               <p className="text-xs text-gray-500">No chapters yet.</p>
@@ -1983,6 +2226,13 @@ function RoomContent() {
                     className={hostChip}
                   >
                     -10s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleHostResync}
+                    className={hostChip}
+                  >
+                    Sync
                   </button>
                   {HOST_SPEEDS.map((rate) => (
                     <button
