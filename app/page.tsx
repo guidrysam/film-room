@@ -41,33 +41,38 @@ export default function Home() {
           <h1 className="mb-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
             Film Room
           </h1>
-          <p className="text-base leading-relaxed text-zinc-400">
-            Watch film together, anywhere.
+          <p className="mb-4 text-lg font-medium leading-snug text-zinc-200 sm:text-xl">
+            Teach from video. Live. Without the setup.
+          </p>
+          <p className="mx-auto max-w-sm text-sm leading-relaxed text-zinc-500">
+            Use YouTube, Hudl exports, or any video you already have.
+            <br />
+            Film Room is the fastest way to run a session together.
           </p>
         </div>
 
         <div className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-8">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-            YouTube link
-          </label>
           <input
             type="text"
-            placeholder="Paste link to start a session"
+            placeholder="Paste YouTube link to start a session"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            className={`${inputClass} mb-5`}
+            className={inputClass}
           />
+          <p className="mb-5 mt-2 text-center text-xs leading-relaxed text-zinc-600">
+            Works with any video you already use.
+          </p>
           <button type="button" onClick={createRoom} className={primaryBtn}>
             Start Film Session
           </button>
         </div>
 
         <div className="mt-8 flex flex-col items-center gap-4 text-center">
-          <Link href="/app" className={ghostLink}>
-            Sign in
-          </Link>
-          <Link href="/about" className={`${ghostLink} text-zinc-600`}>
+          <Link href="/about" className={ghostLink}>
             What is Film Room?
+          </Link>
+          <Link href="/app" className={`${ghostLink} text-xs text-zinc-600`}>
+            Sign in
           </Link>
         </div>
       </div>
