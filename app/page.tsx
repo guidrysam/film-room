@@ -6,6 +6,15 @@ import { useRouter } from "next/navigation";
 import { markRoomHost } from "@/lib/room-host";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
+const inputClass =
+  "w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-zinc-500 transition focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/35";
+
+const primaryBtn =
+  "inline-flex w-full max-w-xs items-center justify-center rounded-xl bg-blue-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]";
+
+const ghostLink =
+  "text-sm text-zinc-500 transition hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const router = useRouter();
@@ -26,43 +35,41 @@ export default function Home() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 py-10 text-white">
-      <div className="flex w-full max-w-lg flex-col items-center">
-        <h1 className="mb-2 text-center text-4xl font-bold">Film Room</h1>
+    <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+      <div className="w-full max-w-md">
+        <div className="mb-10 text-center">
+          <h1 className="mb-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+            Film Room
+          </h1>
+          <p className="text-base leading-relaxed text-zinc-400">
+            Watch film together, anywhere.
+          </p>
+        </div>
 
-        <p className="mb-8 text-center text-gray-400">
-          Watch film together, anywhere.
-        </p>
+        <div className="rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-8">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+            YouTube link
+          </label>
+          <input
+            type="text"
+            placeholder="Paste link to start a session"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className={`${inputClass} mb-5`}
+          />
+          <button type="button" onClick={createRoom} className={primaryBtn}>
+            Start Film Session
+          </button>
+        </div>
 
-        <input
-          type="text"
-          placeholder="Paste YouTube link to start a session"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          className="mb-4 w-full max-w-md rounded-md border border-gray-300 bg-white px-3 py-2 text-black caret-black scheme-light placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-
-        <button
-          type="button"
-          onClick={createRoom}
-          className="rounded bg-blue-600 px-6 py-3 font-semibold hover:bg-blue-500"
-        >
-          Start Film Session
-        </button>
-
-        <Link
-          href="/app"
-          className="mt-4 text-sm text-gray-400 underline-offset-4 hover:text-gray-300 hover:underline"
-        >
-          Sign in
-        </Link>
-
-        <Link
-          href="/about"
-          className="mt-8 text-sm text-gray-500 underline-offset-4 hover:text-gray-400 hover:underline"
-        >
-          What is Film Room?
-        </Link>
+        <div className="mt-8 flex flex-col items-center gap-4 text-center">
+          <Link href="/app" className={ghostLink}>
+            Sign in
+          </Link>
+          <Link href="/about" className={`${ghostLink} text-zinc-600`}>
+            What is Film Room?
+          </Link>
+        </div>
       </div>
     </div>
   );

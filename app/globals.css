@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
+/* Film Room: dark cinematic base + single accent (blue) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #030306;
+  --foreground: #f4f4f5;
+  /* Primary accent — blue-500; use for focus, CTAs, selected transport */
+  --fr-accent: #3b82f6;
+  --fr-accent-dim: rgba(59, 130, 246, 0.12);
+  --fr-accent-ring: rgba(59, 130, 246, 0.45);
 }
 
 @theme inline {
@@ -12,15 +17,16 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-image:
+    radial-gradient(
+      ellipse 100% 85% at 50% -30%,
+      var(--fr-accent-dim),
+      transparent 58%
+    ),
+    linear-gradient(180deg, #0c0c10 0%, #070709 42%, #020203 100%);
+  min-height: 100%;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }

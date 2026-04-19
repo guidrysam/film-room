@@ -1954,37 +1954,59 @@ function RoomContent() {
 
   if (!videoFromUrl) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 text-white">
-        <p className="mb-4 text-center text-gray-300">
-          No video selected. Add a <code className="text-gray-100">?video=</code>{" "}
-          query with a YouTube video ID.
-        </p>
-        <Link
-          href="/"
-          className="rounded bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500"
-        >
-          Back to home
-        </Link>
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+        <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+          <p className="mb-6 text-sm leading-relaxed text-zinc-400">
+            No video selected. Add a{" "}
+            <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-zinc-200">
+              ?video=
+            </code>{" "}
+            query with a YouTube video ID.
+          </p>
+          <Link
+            href="/"
+            className="inline-flex rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+          >
+            Back to home
+          </Link>
+        </div>
       </div>
     );
   }
 
   if (!effectiveVideoId) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-black px-4 text-white">
-        <p className="mb-4 text-center text-gray-300">Missing video id.</p>
-        <Link
-          href="/"
-          className="rounded bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500"
-        >
-          Back to home
-        </Link>
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+        <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+          <p className="mb-6 text-sm text-zinc-400">Missing video id.</p>
+          <Link
+            href="/"
+            className="inline-flex rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+          >
+            Back to home
+          </Link>
+        </div>
       </div>
     );
   }
 
   const hostChip =
-    "rounded-md border border-white/15 bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm backdrop-blur-sm hover:bg-black/85 sm:text-sm";
+    "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-100 shadow-md shadow-black/40 backdrop-blur-md transition hover:border-white/18 hover:bg-zinc-900/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
+
+  const hostChipSync =
+    "rounded-lg border border-blue-500/45 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/50 backdrop-blur-md transition hover:border-blue-400/60 hover:bg-blue-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
+
+  const hostControlsBar =
+    "pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-zinc-950/92 px-3 py-2.5 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-white/[0.06] sm:gap-2.5 sm:px-4";
+
+  const frPanel =
+    "mb-3 w-full rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 text-sm shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
+
+  const frPanelTitle =
+    "mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500";
+
+  const secondaryHostBtn =
+    "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-100 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40";
 
   const sessionPrevChapter =
     roomState && roomState.chapters.length > 0
@@ -2006,17 +2028,19 @@ function RoomContent() {
       : null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-black px-4 py-6 text-white">
+    <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-100">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-        <div className="mb-3 flex w-full flex-wrap items-center justify-between gap-2 text-sm text-gray-400">
-          <p>
-            Room{" "}
-            <span className="font-mono text-gray-200">{roomId}</span>
-            {" · "}
-            <span className="text-gray-200">{isHost ? "Host" : "Viewer"}</span>
-            {" · "}
-            Speed{" "}
-            <span className="text-gray-200">
+        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-500">
+          <p className="min-w-0">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-600">
+              Room
+            </span>{" "}
+            <span className="font-mono text-sm text-zinc-300">{roomId}</span>
+            <span className="text-zinc-600"> · </span>
+            <span className="text-zinc-300">{isHost ? "Host" : "Viewer"}</span>
+            <span className="text-zinc-600"> · </span>
+            <span className="text-zinc-600">Speed </span>
+            <span className="font-medium text-zinc-200">
               {displayRate === 1 ? "1×" : `${displayRate}×`}
             </span>
           </p>
@@ -2025,14 +2049,14 @@ function RoomContent() {
               <button
                 type="button"
                 onClick={() => void handleSaveSession()}
-                className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
+                className={secondaryHostBtn}
               >
                 Save Session
               </button>
               <button
                 type="button"
                 onClick={handleCopyViewerLink}
-                className="rounded-md border border-white/10 bg-white/10 px-3 py-1 text-xs text-white hover:bg-white/20"
+                className={secondaryHostBtn}
               >
                 {copied ? "Copied" : "Copy Viewer Link"}
               </button>
@@ -2041,9 +2065,9 @@ function RoomContent() {
         </div>
 
         {isHost && roomState ? (
-          <div className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
-            <p className="mb-2 text-xs font-medium text-gray-400">Clip queue</p>
-            <div className="mb-2 flex flex-wrap gap-1.5">
+          <div className={frPanel}>
+            <p className={frPanelTitle}>Clip queue</p>
+            <div className="mb-2 flex flex-wrap gap-2">
               {roomState.clips.map((c, i) => {
                 const active = i === roomState.currentClipIndex;
                 return (
@@ -2051,14 +2075,14 @@ function RoomContent() {
                     key={`${c.videoId}-${i}`}
                     type="button"
                     onClick={() => void handleSelectClip(i)}
-                    className={`rounded border px-2 py-1 text-xs ${
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 ${
                       active
-                        ? "border-blue-400/60 bg-blue-600/40 text-white"
-                        : "border-white/15 bg-black/50 text-gray-200 hover:bg-black/70"
+                        ? "border-blue-500/55 bg-blue-600/25 text-white shadow-md shadow-blue-950/25 ring-1 ring-blue-400/35"
+                        : "border-white/10 bg-white/[0.04] text-zinc-300 hover:border-white/18 hover:bg-white/[0.07]"
                     }`}
                   >
                     {active ? "▶ " : ""}Clip {i + 1}{" "}
-                    <span className="font-mono text-[10px] text-gray-400">
+                    <span className="font-mono text-[10px] text-zinc-500">
                       {c.videoId.slice(0, 6)}…
                     </span>
                   </button>
@@ -2071,12 +2095,12 @@ function RoomContent() {
                 placeholder="Paste YouTube link"
                 value={clipUrlDraft}
                 onChange={(e) => setClipUrlDraft(e.target.value)}
-                className="min-w-0 flex-1 rounded border border-white/15 bg-black/60 px-2 py-1.5 text-xs text-white placeholder:text-gray-500"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-xs text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-zinc-500 focus:border-blue-500/35 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
               />
               <button
                 type="button"
                 onClick={() => void handleAddClip()}
-                className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+                className={secondaryHostBtn}
               >
                 Add clip
               </button>
@@ -2085,14 +2109,14 @@ function RoomContent() {
         ) : null}
 
         {roomState ? (
-          <div className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
-            <p className="mb-2 text-xs font-medium text-gray-400">Chapters</p>
+          <div className={frPanel}>
+            <p className={frPanelTitle}>Chapters</p>
             {isHost ? (
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => void handleAddChapter()}
-                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20"
+                  className={secondaryHostBtn}
                 >
                   Add Chapter
                 </button>
@@ -2100,7 +2124,7 @@ function RoomContent() {
                   type="button"
                   disabled={!sessionPrevChapter}
                   onClick={() => void handlePrevChapter()}
-                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  className={secondaryHostBtn}
                 >
                   Prev
                 </button>
@@ -2108,49 +2132,64 @@ function RoomContent() {
                   type="button"
                   disabled={!sessionNextChapter}
                   onClick={() => void handleNextChapter()}
-                  className="rounded border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  className={secondaryHostBtn}
                 >
                   Next
                 </button>
               </div>
             ) : null}
             {roomState.chapters.length === 0 ? (
-              <p className="text-xs text-gray-500">No chapters yet.</p>
+              <p className="text-xs text-zinc-600">No chapters yet.</p>
             ) : (
-              <ul className="flex flex-col gap-1.5">
-                {roomState.chapters.map((ch, i) => (
-                  <li key={`${ch.videoId}-${ch.time}-${i}`}>
-                    {isHost ? (
-                      <button
-                        type="button"
-                        onClick={() => void jumpToChapter(ch)}
-                        className="w-full rounded border border-white/15 bg-black/50 px-2 py-1.5 text-left text-xs text-gray-200 hover:bg-black/70"
-                      >
-                        <span className="text-white">{ch.label}</span>
-                        <span className="ml-2 font-mono text-gray-400">
-                          {formatChapterTime(ch.time)}
-                        </span>
-                        {ch.videoId !== roomState.videoId ? (
-                          <span className="ml-2 text-[10px] text-amber-400/90">
-                            (other clip)
+              <ul className="flex flex-col gap-2">
+                {roomState.chapters.map((ch, i) => {
+                  const onActiveClip = ch.videoId === roomState.videoId;
+                  return (
+                    <li key={`${ch.videoId}-${ch.time}-${i}`}>
+                      {isHost ? (
+                        <button
+                          type="button"
+                          onClick={() => void jumpToChapter(ch)}
+                          className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
+                            onActiveClip
+                              ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15"
+                              : "border-white/8 bg-black/35 text-zinc-300 hover:border-white/15 hover:bg-black/55"
+                          }`}
+                        >
+                          <span className="font-medium text-white">
+                            {ch.label}
                           </span>
-                        ) : null}
-                      </button>
-                    ) : (
-                      <div className="rounded border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-gray-300">
-                        <span className="text-gray-100">{ch.label}</span>
-                        <span className="ml-2 font-mono text-gray-500">
-                          {formatChapterTime(ch.time)}
-                        </span>
-                        {ch.videoId !== roomState.videoId ? (
-                          <span className="ml-2 text-[10px] text-gray-500">
-                            (other clip)
+                          <span className="ml-2 font-mono text-zinc-500">
+                            {formatChapterTime(ch.time)}
                           </span>
-                        ) : null}
-                      </div>
-                    )}
-                  </li>
-                ))}
+                          {ch.videoId !== roomState.videoId ? (
+                            <span className="ml-2 text-[10px] text-amber-400/85">
+                              (other clip)
+                            </span>
+                          ) : null}
+                        </button>
+                      ) : (
+                        <div
+                          className={`rounded-lg border px-3 py-2 text-xs ${
+                            onActiveClip
+                              ? "border-blue-500/20 bg-blue-950/20 text-zinc-300 ring-1 ring-blue-500/10"
+                              : "border-white/[0.06] bg-black/30 text-zinc-400"
+                          }`}
+                        >
+                          <span className="text-zinc-100">{ch.label}</span>
+                          <span className="ml-2 font-mono text-zinc-600">
+                            {formatChapterTime(ch.time)}
+                          </span>
+                          {ch.videoId !== roomState.videoId ? (
+                            <span className="ml-2 text-[10px] text-zinc-600">
+                              (other clip)
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -2160,8 +2199,8 @@ function RoomContent() {
           ref={stageRef}
           className={`relative w-full overflow-hidden bg-black ${
             stageFullscreen
-              ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none"
-              : "rounded-lg"
+              ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none ring-0 shadow-none"
+              : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
         >
           <div className="relative aspect-video w-full">
@@ -2182,14 +2221,23 @@ function RoomContent() {
               drawEnabled={telDrawOn}
             />
             {!isHost && !viewerPlaybackUnlocked ? (
-              <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/75 px-4 backdrop-blur-[1px]">
-                <button
-                  type="button"
-                  onClick={handleViewerPlaybackUnlock}
-                  className="rounded-lg border border-white/20 bg-blue-600 px-6 py-3 text-center text-sm font-semibold text-white shadow-lg hover:bg-blue-500"
-                >
-                  Tap to enable playback
-                </button>
+              <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
+                <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-950/90 p-8 text-center shadow-2xl shadow-black/60 ring-1 ring-white/[0.05]">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Viewer
+                  </p>
+                  <p className="mb-6 text-sm leading-relaxed text-zinc-400">
+                    Enable playback to follow the host. Audio and video stay in
+                    sync after you continue.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleViewerPlaybackUnlock}
+                    className="w-full rounded-xl bg-blue-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                  >
+                    Tap to enable playback
+                  </button>
+                </div>
               </div>
             ) : null}
             {!isHost ? (
@@ -2205,7 +2253,7 @@ function RoomContent() {
             ) : null}
             {isHost ? (
               <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:bottom-3">
-                <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-black/70 px-2 py-2 shadow-lg backdrop-blur-sm sm:gap-2 sm:px-3">
+                <div className={hostControlsBar}>
                   <button
                     type="button"
                     onClick={handlePlay}
@@ -2230,7 +2278,7 @@ function RoomContent() {
                   <button
                     type="button"
                     onClick={handleHostResync}
-                    className={hostChip}
+                    className={hostChipSync}
                   >
                     Sync
                   </button>
@@ -2244,7 +2292,7 @@ function RoomContent() {
                           (roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) -
                             rate,
                         ) < 1e-6
-                          ? "border-blue-400/50 bg-blue-600/80 ring-1 ring-white/20"
+                          ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
                           : ""
                       }`}
                     >
@@ -2254,7 +2302,11 @@ function RoomContent() {
                   <button
                     type="button"
                     onClick={() => setTelDrawOn((v) => !v)}
-                    className={hostChip}
+                    className={
+                      telDrawOn
+                        ? `${hostChip} border-blue-400/45 bg-blue-950/50 font-semibold text-white ring-1 ring-blue-500/30`
+                        : hostChip
+                    }
                   >
                     {telDrawOn ? "Draw Off" : "Draw On"}
                   </button>
@@ -2286,8 +2338,8 @@ export default function RoomPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center bg-black text-white">
-          Loading…
+        <div className="flex min-h-screen items-center justify-center text-zinc-500">
+          <p className="text-sm">Loading…</p>
         </div>
       }
     >
