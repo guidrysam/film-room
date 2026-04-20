@@ -1726,6 +1726,24 @@ function RoomContent() {
     })();
   }, [isHost]);
 
+  const handleDeleteChapter = useCallback((index: number) => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur || index < 0 || index >= cur.chapters.length) return;
+    const ch = cur.chapters[index];
+    if (!ch) return;
+    if (!window.confirm(`Delete chapter "${ch.label}"?`)) return;
+    const next = cur.chapters.filter((_, j) => j !== index);
+    void update(rr, {
+      chapters: next,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+  }, [isHost]);
+
   const handleAddClip = useCallback(() => {
     if (!isHost) return;
     const rr = roomRefForWrite.current;
@@ -2208,29 +2226,39 @@ function RoomContent() {
                 {roomState.chapters.map((ch, i) => {
                   const onActiveClip = ch.videoId === roomState.videoId;
                   return (
-                    <li key={`${ch.videoId}-${ch.time}-${i}`}>
+                    <li key={`${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
                       {isHost ? (
-                        <button
-                          type="button"
-                          onClick={() => void jumpToChapter(ch)}
-                          className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
-                            onActiveClip
-                              ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15"
-                              : "border-white/8 bg-black/35 text-zinc-300 hover:border-white/15 hover:bg-black/55"
-                          }`}
-                        >
-                          <span className="font-medium text-white">
-                            {ch.label}
-                          </span>
-                          <span className="ml-2 font-mono text-zinc-500">
-                            {formatChapterTime(ch.time)}
-                          </span>
-                          {ch.videoId !== roomState.videoId ? (
-                            <span className="ml-2 text-[10px] text-amber-400/85">
-                              (other clip)
+                        <div className="flex gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => void jumpToChapter(ch)}
+                            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
+                              onActiveClip
+                                ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15"
+                                : "border-white/8 bg-black/35 text-zinc-300 hover:border-white/15 hover:bg-black/55"
+                            }`}
+                          >
+                            <span className="font-medium text-white">
+                              {ch.label}
                             </span>
-                          ) : null}
-                        </button>
+                            <span className="ml-2 font-mono text-zinc-500">
+                              {formatChapterTime(ch.time)}
+                            </span>
+                            {ch.videoId !== roomState.videoId ? (
+                              <span className="ml-2 text-[10px] text-amber-400/85">
+                                (other clip)
+                              </span>
+                            ) : null}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteChapter(i)}
+                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-500 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                            aria-label={`Delete chapter ${ch.label}`}
+                          >
+                            ×
+                          </button>
+                        </div>
                       ) : (
                         <div
                           className={`rounded-lg border px-3 py-2 text-xs ${
