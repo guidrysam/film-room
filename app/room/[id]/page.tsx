@@ -39,6 +39,11 @@ import { extractYouTubeVideoId } from "@/lib/youtube-id";
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
 
+/** Fast-forward tiers: off → 2× → 4× → 8× → off (4×/8× use native 2× + seek assist). */
+const FF_TIERS = [0, 2, 4, 8] as const;
+const FF_SIM_MS = 700;
+const FF_NATIVE_CAP = 2;
+
 const PLAY_RETRY_MS = 250;
 const PAUSE_RETRY_MS = 150;
 
@@ -1016,6 +1021,10 @@ function RoomContent() {
     null,
   );
   const chapterNavFlashTimerRef = useRef<number | null>(null);
+  /** Host-only fast-forward: 0 = off, else simulated tier (2/4/8×). */
+  const [ffMode, setFfMode] = useState<(typeof FF_TIERS)[number]>(0);
+  const ffModeRef = useRef<(typeof FF_TIERS)[number]>(0);
+  const playbackRateBeforeFfRef = useRef(DEFAULT_PLAYBACK_RATE);
   const stageRef = useRef<HTMLDivElement>(null);
 
   const urlHostLegacy = searchParams.get("host") === "true";
@@ -1069,6 +1078,10 @@ function RoomContent() {
   useLayoutEffect(() => {
     isHostRef.current = isHost;
   });
+
+  useLayoutEffect(() => {
+    ffModeRef.current = ffMode;
+  }, [ffMode]);
 
   useEffect(() => {
     lastViewerSyncRateRef.current = Number.NaN;
@@ -1685,6 +1698,80 @@ function RoomContent() {
     [],
   );
 
+  /** Exit fast-forward and restore pre-FF playback rate; returns rate to use for the next transport write. */
+  const clearFfIfActive = useCallback((): number => {
+    if (ffModeRef.current === 0) {
+      return roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+    }
+    const r = playbackRateBeforeFfRef.current;
+    setFfMode(0);
+    writeHostTransport({ playbackRate: r }, "rate");
+    return r;
+  }, [writeHostTransport]);
+
+  const cycleFf = useCallback(() => {
+    if (!isHost) return;
+    const prev = ffModeRef.current;
+    const i = FF_TIERS.indexOf(prev);
+    const next = FF_TIERS[(i + 1) % FF_TIERS.length]!;
+    if (prev === 0 && next === 2) {
+      playbackRateBeforeFfRef.current =
+        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+    }
+    if (next === 0) {
+      writeHostTransport(
+        { playbackRate: playbackRateBeforeFfRef.current },
+        "rate",
+      );
+      setFfMode(0);
+      return;
+    }
+    writeHostTransport({ playbackRate: FF_NATIVE_CAP }, "rate");
+    setFfMode(next);
+  }, [isHost, writeHostTransport]);
+
+  /** Simulated 4× / 8×: YouTube stays at 2×; extra advance is applied via periodic seeks + time sync. */
+  useEffect(() => {
+    if (!isHost) return;
+    if (ffMode !== 4 && ffMode !== 8) return;
+    if (!roomState?.isPlaying) return;
+    const id = window.setInterval(() => {
+      if (!isHostRef.current) return;
+      const tier = ffModeRef.current;
+      if (tier !== 4 && tier !== 8) return;
+      if (!roomStateRef.current?.isPlaying) return;
+      const player = getPlayer();
+      if (!player) return;
+      void (async () => {
+        const cur = roomStateRef.current;
+        if (!cur?.isPlaying) return;
+        const fb = cur.currentTime ?? 0;
+        const t = await readYoutubeCurrentTime(player, fb);
+        const wallSec = FF_SIM_MS / 1000;
+        const extra = (tier - FF_NATIVE_CAP) * wallSec;
+        const newT = Math.max(0, t + extra);
+        try {
+          (
+            player as YouTubePlayer & {
+              seekTo?: (s: number, allowSeekAhead: boolean) => void;
+            }
+          ).seekTo?.(newT, true);
+        } catch {
+          /* YouTube API */
+        }
+        writeHostTransport(
+          {
+            isPlaying: true,
+            currentTime: newT,
+            playbackRate: FF_NATIVE_CAP,
+          },
+          "sync",
+        );
+      })();
+    }, FF_SIM_MS);
+    return () => window.clearInterval(id);
+  }, [isHost, ffMode, roomState?.isPlaying, writeHostTransport]);
+
   const writeImmediatePlaybackCommand = useCallback(
     (
       transportAction: "play" | "pause" | "seek" | "resync",
@@ -1775,6 +1862,7 @@ function RoomContent() {
       if (!isHost) return;
       const rr = roomRefForWrite.current;
       if (!rr || !roomId) return;
+      const pr = clearFfIfActive();
       const cur = roomStateRef.current;
       if (!cur) return;
       const clipIdx = cur.clips.findIndex((c) => c.videoId === chapter.videoId);
@@ -1784,7 +1872,7 @@ function RoomContent() {
         writeImmediatePlaybackCommand("seek", {
           currentTime: chapter.time,
           isPlaying: cur.isPlaying,
-          playbackRate: cur.playbackRate,
+          playbackRate: pr,
         });
         return;
       }
@@ -1798,7 +1886,7 @@ function RoomContent() {
         activeVideoId: chapter.videoId,
         issuedAt: Date.now(),
         anchorVideoTime: chapter.time,
-        playbackRate: cur.playbackRate,
+        playbackRate: pr,
         commandId,
       };
       syncLog("host chapter jump (cross-clip)", playbackCommand);
@@ -1807,7 +1895,7 @@ function RoomContent() {
         currentClipIndex: clipIdx,
         currentTime: chapter.time,
         isPlaying: cur.isPlaying,
-        playbackRate: cur.playbackRate,
+        playbackRate: pr,
         playbackCommand,
         action: "seek",
         actionId: commandId,
@@ -1816,7 +1904,7 @@ function RoomContent() {
         /* RTDB */
       });
     },
-    [isHost, roomId, writeImmediatePlaybackCommand],
+    [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand],
   );
 
   const handleAddChapter = useCallback(() => {
@@ -1973,6 +2061,8 @@ function RoomContent() {
       const label = formatClipLabel(removing, index);
       if (!window.confirm(`Remove "${label}" from the queue?`)) return;
 
+      clearFfIfActive();
+
       const nextClips = cur.clips.filter((_, j) => j !== index);
       const nextVidSet = new Set(nextClips.map((c) => c.videoId));
       const nextChapters = cur.chapters.filter((ch) => nextVidSet.has(ch.videoId));
@@ -2045,7 +2135,7 @@ function RoomContent() {
         { clearPlaybackCommand: true },
       );
     },
-    [isHost, roomId, writeHostTransport],
+    [isHost, roomId, clearFfIfActive, writeHostTransport],
   );
 
   const handleClearClips = useCallback(() => {
@@ -2061,6 +2151,7 @@ function RoomContent() {
     ) {
       return;
     }
+    clearFfIfActive();
     const active = cur.clips[cur.currentClipIndex];
     if (!active) return;
     const nextClips = [active];
@@ -2074,11 +2165,12 @@ function RoomContent() {
     }).catch(() => {
       /* RTDB */
     });
-  }, [isHost]);
+  }, [isHost, clearFfIfActive]);
 
   const handleSelectClip = useCallback(
     (index: number) => {
       if (!isHost || !roomId) return;
+      clearFfIfActive();
       const cur = roomStateRef.current;
       if (!cur || index < 0 || index >= cur.clips.length) return;
       if (index === cur.currentClipIndex) return;
@@ -2098,7 +2190,7 @@ function RoomContent() {
         { clearPlaybackCommand: true },
       );
     },
-    [isHost, roomId, writeHostTransport],
+    [isHost, roomId, clearFfIfActive, writeHostTransport],
   );
 
   /**
@@ -2135,12 +2227,11 @@ function RoomContent() {
 
   const handlePlay = () => {
     if (!isHost) return;
+    const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      const pr =
-        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       writeImmediatePlaybackCommand("play", {
         isPlaying: true,
         currentTime: t,
@@ -2151,12 +2242,11 @@ function RoomContent() {
 
   const handlePause = () => {
     if (!isHost) return;
+    const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      const pr =
-        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       writeImmediatePlaybackCommand("pause", {
         isPlaying: false,
         currentTime: t,
@@ -2167,12 +2257,11 @@ function RoomContent() {
 
   const handleSeekBack = () => {
     if (!isHost) return;
+    const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
-      const pr =
-        roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       const playing = roomStateRef.current?.isPlaying ?? false;
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
@@ -2186,6 +2275,7 @@ function RoomContent() {
   const handleHostResync = () => {
     if (!isHost) return;
     void (async () => {
+      clearFfIfActive();
       const cur = roomStateRef.current;
       if (!cur) return;
       const player = getPlayer();
@@ -2247,6 +2337,9 @@ function RoomContent() {
 
   const handleSpeed = (rate: (typeof HOST_SPEEDS)[number]) => {
     if (!isHost) return;
+    if (ffModeRef.current !== 0) {
+      setFfMode(0);
+    }
     writeHostTransport({ playbackRate: rate }, "rate");
   };
 
@@ -2800,6 +2893,23 @@ function RoomContent() {
                     className={hostChipSync}
                   >
                     Sync
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cycleFf}
+                    className={`${hostChip} ${
+                      ffMode !== 0
+                        ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
+                        : ""
+                    }`}
+                  >
+                    {ffMode === 0
+                      ? "FF"
+                      : ffMode === 2
+                        ? "FF 2×"
+                        : ffMode === 4
+                          ? "FF 4×"
+                          : "FF 8×"}
                   </button>
                   {HOST_SPEEDS.map((rate) => (
                     <button
