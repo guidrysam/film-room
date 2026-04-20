@@ -274,6 +274,27 @@ function findNextChapterInSession(
   return null;
 }
 
+/** Most recent chapter on the active clip at or before playback time `t` (index in `chapters`). */
+const CHAPTER_ACTIVE_UI_EPS = 0.2;
+
+function findActiveChapterIndexForUi(
+  chapters: ChapterEntry[],
+  activeVideoId: string,
+  t: number,
+): number | null {
+  let bestIdx: number | null = null;
+  let bestTime = -Infinity;
+  for (let i = 0; i < chapters.length; i++) {
+    const ch = chapters[i];
+    if (ch.videoId !== activeVideoId) continue;
+    if (ch.time <= t + CHAPTER_ACTIVE_UI_EPS && ch.time >= bestTime) {
+      bestTime = ch.time;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 function parseClipEntries(raw: unknown): ClipEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: ClipEntry[] = [];
@@ -950,6 +971,13 @@ function RoomContent() {
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
   const [stageFullscreen, setStageFullscreen] = useState(false);
+  /** Live-ish playhead for chapter highlight (player when available, else room time). */
+  const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
+  /** Brief flash on Prev / Next chapter for pressed feedback. */
+  const [chapterNavFlash, setChapterNavFlash] = useState<"prev" | "next" | null>(
+    null,
+  );
+  const chapterNavFlashTimerRef = useRef<number | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
   const urlHostLegacy = searchParams.get("host") === "true";
@@ -1016,7 +1044,55 @@ function RoomContent() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset draft when room changes
     setClipUrlDraft("");
     setViewerPlaybackUnlocked(false);
+    if (chapterNavFlashTimerRef.current !== null) {
+      window.clearTimeout(chapterNavFlashTimerRef.current);
+      chapterNavFlashTimerRef.current = null;
+    }
+    setChapterNavFlash(null);
   }, [roomId]);
+
+  useEffect(() => {
+    return () => {
+      if (chapterNavFlashTimerRef.current !== null) {
+        window.clearTimeout(chapterNavFlashTimerRef.current);
+        chapterNavFlashTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const pulseChapterNav = useCallback((which: "prev" | "next") => {
+    if (chapterNavFlashTimerRef.current !== null) {
+      window.clearTimeout(chapterNavFlashTimerRef.current);
+    }
+    setChapterNavFlash(which);
+    chapterNavFlashTimerRef.current = window.setTimeout(() => {
+      chapterNavFlashTimerRef.current = null;
+      setChapterNavFlash(null);
+    }, 220);
+  }, []);
+
+  useEffect(() => {
+    const tick = () => {
+      const cur = roomStateRef.current;
+      if (!cur) {
+        setUiPlaybackTime(null);
+        return;
+      }
+      const p = playerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | undefined;
+      if (isHostRef.current || viewerPlaybackUnlockedRef.current) {
+        void readYoutubeCurrentTime(p, cur.currentTime ?? 0).then(
+          setUiPlaybackTime,
+        );
+      } else {
+        setUiPlaybackTime(cur.currentTime ?? 0);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 500);
+    return () => window.clearInterval(id);
+  }, [roomId, viewerPlaybackUnlocked]);
 
   useEffect(() => {
     const syncStageFs = () => {
@@ -1897,6 +1973,7 @@ function RoomContent() {
 
   const handlePrevChapter = () => {
     if (!isHost) return;
+    pulseChapterNav("prev");
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur || !cur.chapters.length) return;
@@ -1914,6 +1991,7 @@ function RoomContent() {
 
   const handleNextChapter = () => {
     if (!isHost) return;
+    pulseChapterNav("next");
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur || !cur.chapters.length) return;
@@ -2072,10 +2150,10 @@ function RoomContent() {
   }
 
   const hostChip =
-    "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-50 shadow-md shadow-black/40 backdrop-blur-md transition hover:border-white/18 hover:bg-zinc-900/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
+    "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-50 shadow-md shadow-black/40 backdrop-blur-md transition duration-150 hover:border-white/18 hover:bg-zinc-900/95 active:scale-[0.97] active:brightness-90 active:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
 
   const hostChipSync =
-    "rounded-lg border border-blue-500/45 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/50 backdrop-blur-md transition hover:border-blue-400/60 hover:bg-blue-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
+    "rounded-lg border border-blue-500/45 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/50 backdrop-blur-md transition duration-150 hover:border-blue-400/60 hover:bg-blue-900/55 active:scale-[0.97] active:brightness-95 active:border-blue-300/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
 
   const hostControlsBar =
     "pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-zinc-950/92 px-3 py-2.5 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-white/[0.06] sm:gap-2.5 sm:px-4";
@@ -2087,7 +2165,17 @@ function RoomContent() {
     "mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400";
 
   const secondaryHostBtn =
-    "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40";
+    "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-50 transition duration-150 hover:border-white/20 hover:bg-white/[0.10] active:scale-[0.98] active:bg-white/[0.14] active:border-white/28 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
+
+  const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
+  const activeChapterIndex =
+    roomState?.chapters?.length && roomState.videoId
+      ? findActiveChapterIndexForUi(
+          roomState.chapters,
+          roomState.videoId,
+          tForChapterHighlight,
+        )
+      : null;
 
   const sessionPrevChapter =
     roomState && roomState.chapters.length > 0
@@ -2095,7 +2183,7 @@ function RoomContent() {
           roomState.clips,
           roomState.chapters,
           roomState.currentClipIndex,
-          roomState.currentTime,
+          tForChapterHighlight,
         )
       : null;
   const sessionNextChapter =
@@ -2104,7 +2192,7 @@ function RoomContent() {
           roomState.clips,
           roomState.chapters,
           roomState.currentClipIndex,
-          roomState.currentTime,
+          tForChapterHighlight,
         )
       : null;
 
@@ -2156,7 +2244,7 @@ function RoomContent() {
                     key={`${c.videoId}-${i}`}
                     type="button"
                     onClick={() => void handleSelectClip(i)}
-                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 ${
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] active:brightness-95 ${
                       active
                         ? "border-blue-500/55 bg-blue-600/25 text-white shadow-md shadow-blue-950/25 ring-1 ring-blue-400/35"
                         : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
@@ -2205,7 +2293,11 @@ function RoomContent() {
                   type="button"
                   disabled={!sessionPrevChapter}
                   onClick={() => void handlePrevChapter()}
-                  className={secondaryHostBtn}
+                  className={`${secondaryHostBtn} ${
+                    chapterNavFlash === "prev"
+                      ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
+                      : ""
+                  }`}
                 >
                   Prev
                 </button>
@@ -2213,7 +2305,11 @@ function RoomContent() {
                   type="button"
                   disabled={!sessionNextChapter}
                   onClick={() => void handleNextChapter()}
-                  className={secondaryHostBtn}
+                  className={`${secondaryHostBtn} ${
+                    chapterNavFlash === "next"
+                      ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
+                      : ""
+                  }`}
                 >
                   Next
                 </button>
@@ -2225,6 +2321,8 @@ function RoomContent() {
               <ul className="flex flex-col gap-2">
                 {roomState.chapters.map((ch, i) => {
                   const onActiveClip = ch.videoId === roomState.videoId;
+                  const isCurrentChapter =
+                    activeChapterIndex !== null && activeChapterIndex === i;
                   return (
                     <li key={`${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
                       {isHost ? (
@@ -2232,16 +2330,24 @@ function RoomContent() {
                           <button
                             type="button"
                             onClick={() => void jumpToChapter(ch)}
-                            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
-                              onActiveClip
-                                ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15"
-                                : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
+                            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 active:scale-[0.99] active:brightness-95 ${
+                              isCurrentChapter && onActiveClip
+                                ? "border-blue-500/80 bg-blue-600/40 text-white ring-2 ring-blue-400/45 shadow-lg shadow-blue-950/30"
+                                : onActiveClip
+                                  ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15 hover:border-blue-400/35 hover:bg-blue-950/45"
+                                  : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
                             }`}
                           >
                             <span className="font-medium text-white">
                               {ch.label}
                             </span>
-                            <span className="ml-2 font-mono text-zinc-400">
+                            <span
+                              className={`ml-2 font-mono ${
+                                isCurrentChapter && onActiveClip
+                                  ? "text-blue-100/90"
+                                  : "text-zinc-400"
+                              }`}
+                            >
                               {formatChapterTime(ch.time)}
                             </span>
                             {ch.videoId !== roomState.videoId ? (
@@ -2253,7 +2359,7 @@ function RoomContent() {
                           <button
                             type="button"
                             onClick={() => handleDeleteChapter(i)}
-                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-400 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-400 transition duration-150 hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 active:scale-[0.94] active:bg-red-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
                             aria-label={`Delete chapter ${ch.label}`}
                           >
                             ×
@@ -2262,13 +2368,29 @@ function RoomContent() {
                       ) : (
                         <div
                           className={`rounded-lg border px-3 py-2 text-xs ${
-                            onActiveClip
-                              ? "border-blue-500/20 bg-blue-950/20 text-zinc-200 ring-1 ring-blue-500/10"
-                              : "border-white/[0.06] bg-black/30 text-zinc-300"
+                            isCurrentChapter && onActiveClip
+                              ? "border-blue-500/70 bg-blue-600/35 text-zinc-50 ring-2 ring-blue-400/40 shadow-md shadow-blue-950/20"
+                              : onActiveClip
+                                ? "border-blue-500/20 bg-blue-950/20 text-zinc-200 ring-1 ring-blue-500/10"
+                                : "border-white/[0.06] bg-black/30 text-zinc-300"
                           }`}
                         >
-                          <span className="text-zinc-50">{ch.label}</span>
-                          <span className="ml-2 font-mono text-zinc-400">
+                          <span
+                            className={
+                              isCurrentChapter && onActiveClip
+                                ? "font-medium text-white"
+                                : "text-zinc-50"
+                            }
+                          >
+                            {ch.label}
+                          </span>
+                          <span
+                            className={`ml-2 font-mono ${
+                              isCurrentChapter && onActiveClip
+                                ? "text-blue-100/85"
+                                : "text-zinc-400"
+                            }`}
+                          >
                             {formatChapterTime(ch.time)}
                           </span>
                           {ch.videoId !== roomState.videoId ? (
