@@ -13,7 +13,7 @@ import {
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const inputClass =
-  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+  "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-50 placeholder:text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
 const primaryBtn =
   "w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-950/35 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]";
@@ -22,10 +22,10 @@ const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
 
 const ghostBtn =
-  "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+  "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 const linkBack =
-  "text-sm text-zinc-500 transition hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
+  "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
@@ -79,7 +79,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-zinc-400">
+      <div className="flex min-h-screen items-center justify-center text-zinc-300">
         <p className="text-sm">Loading…</p>
       </div>
     );
@@ -87,15 +87,15 @@ export default function DashboardPage() {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <div className="w-full max-w-sm text-center">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
             Film Room
           </p>
           <h1 className="mb-3 text-2xl font-semibold tracking-tight text-white">
             Dashboard
           </h1>
-          <p className="mb-8 text-sm leading-relaxed text-zinc-400">
+          <p className="mb-8 text-sm leading-relaxed text-zinc-300">
             Sign in with Google to save sessions and open your dashboard.
           </p>
           <button
@@ -114,11 +114,11 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen px-4 py-10 text-zinc-100">
+    <div className="min-h-screen px-4 py-10 text-zinc-50">
       <div className="mx-auto w-full max-w-lg">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-3 border-b border-white/[0.06] pb-6">
           <div>
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+            <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
               Film Room
             </p>
             <h1 className="text-xl font-semibold tracking-tight text-white">
@@ -126,7 +126,7 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className="max-w-[180px] truncate text-zinc-500">
+            <span className="max-w-[180px] truncate text-zinc-400">
               {user.email}
             </span>
             <button
@@ -140,7 +140,7 @@ export default function DashboardPage() {
         </div>
 
         <div className={`${panelClass} mb-8`}>
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
             Start new session
           </p>
           <input
@@ -157,21 +157,21 @@ export default function DashboardPage() {
 
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Saved sessions
             </p>
             <button
               type="button"
               onClick={() => void refreshList()}
-              className="text-xs font-medium text-zinc-500 transition hover:text-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm"
+              className="text-xs font-medium text-zinc-400 transition hover:text-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm"
             >
               Refresh
             </button>
           </div>
           {listLoading ? (
-            <p className="text-sm text-zinc-500">Loading list…</p>
+            <p className="text-sm text-zinc-400">Loading list…</p>
           ) : sessions.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-zinc-500">
+            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-zinc-400">
               No saved sessions yet. Save one from a live room (host).
             </p>
           ) : (
@@ -185,7 +185,7 @@ export default function DashboardPage() {
                     <p className="truncate text-sm font-medium text-white">
                       {data.name}
                     </p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-400">
                       {data.updatedAt
                         ? data.updatedAt.toDate().toLocaleString()
                         : "—"}

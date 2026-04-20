@@ -3,7 +3,7 @@
 /* Film Room: dark cinematic base + single accent (blue) */
 :root {
   --background: #030306;
-  --foreground: #f4f4f5;
+  --foreground: #fafafa;
   /* Primary accent — blue-500; use for focus, CTAs, selected transport */
   --fr-accent: #3b82f6;
   --fr-accent-dim: rgba(59, 130, 246, 0.12);

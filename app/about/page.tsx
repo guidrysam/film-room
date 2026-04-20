@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const pageBgClass =
-  "min-h-screen bg-[radial-gradient(circle_at_top,_rgba(40,40,55,0.35)_0%,_rgba(3,3,6,1)_55%)] px-4 py-16 text-zinc-100";
+  "min-h-screen bg-[radial-gradient(circle_at_top,_rgba(40,40,55,0.35)_0%,_rgba(3,3,6,1)_55%)] px-4 py-16 text-zinc-50";
 
 const shellClass = "mx-auto w-full max-w-4xl";
 
@@ -11,12 +11,12 @@ const cardClass =
 const sectionTitleClass =
   "mb-4 text-lg font-semibold tracking-tight text-white sm:text-xl";
 
-const bodyClass = "text-sm leading-relaxed text-zinc-300 sm:text-base";
+const bodyClass = "text-sm leading-relaxed text-zinc-200 sm:text-base";
 
-const mutedClass = "text-zinc-500";
+const mutedClass = "text-zinc-400";
 
 const linkClass =
-  "inline-flex rounded-sm text-sm text-zinc-500 transition hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]";
+  "inline-flex rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]";
 
 const workflowSteps = [
   {
@@ -73,13 +73,13 @@ export default function AboutPage() {
     <main className={pageBgClass}>
       <div className={shellClass}>
         <header className="mb-10 text-center">
-          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
             Film Room
           </p>
           <h1 className="mb-3 text-3xl font-semibold tracking-tight text-white sm:text-5xl">
             Watch film together, anywhere.
           </h1>
-          <p className="mx-auto max-w-2xl text-sm leading-relaxed text-zinc-300 sm:text-base">
+          <p className="mx-auto max-w-2xl text-sm leading-relaxed text-zinc-200 sm:text-base">
             Film Room lets coaches, teachers, and teams teach from video in real
             time. The host controls playback, speed, chapters, clips, and
             telestration — everyone else stays in sync.
@@ -122,7 +122,7 @@ export default function AboutPage() {
               <h3 className="font-semibold text-white">Privacy &amp; control</h3>
               <p className={`${bodyClass} mt-2 ${mutedClass}`}>
                 If you’re using your own content, upload it to YouTube and set it
-                to <span className="font-semibold text-zinc-300">Unlisted</span>. Only people with the
+                to <span className="font-semibold text-zinc-200">Unlisted</span>. Only people with the
                 link can view it, which makes it easy to keep team film private
                 until you’re ready to share it.
               </p>
@@ -141,7 +141,7 @@ export default function AboutPage() {
               <p className={`${bodyClass} mt-2 ${mutedClass}`}>
                 You can use any YouTube video in Film Room. For the smoothest
                 sessions, use your own uploads when possible, or use
-                <span className="font-semibold text-zinc-300"> YouTube Premium</span>.
+                <span className="font-semibold text-zinc-200"> YouTube Premium</span>.
               </p>
               <p className={`${bodyClass} mt-3 ${mutedClass}`}>
                 If both the coach and viewers have YouTube Premium, you get the

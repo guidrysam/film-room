@@ -2035,11 +2035,11 @@ function RoomContent() {
 
   if (!videoFromUrl) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <p className="mb-6 text-sm leading-relaxed text-zinc-400">
+          <p className="mb-6 text-sm leading-relaxed text-zinc-300">
             No video selected. Add a{" "}
-            <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-zinc-200">
+            <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-zinc-100">
               ?video=
             </code>{" "}
             query with a YouTube video ID.
@@ -2057,9 +2057,9 @@ function RoomContent() {
 
   if (!effectiveVideoId) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-100">
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <p className="mb-6 text-sm text-zinc-400">Missing video id.</p>
+          <p className="mb-6 text-sm text-zinc-300">Missing video id.</p>
           <Link
             href="/"
             className="inline-flex rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
@@ -2072,7 +2072,7 @@ function RoomContent() {
   }
 
   const hostChip =
-    "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-100 shadow-md shadow-black/40 backdrop-blur-md transition hover:border-white/18 hover:bg-zinc-900/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
+    "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-50 shadow-md shadow-black/40 backdrop-blur-md transition hover:border-white/18 hover:bg-zinc-900/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
 
   const hostChipSync =
     "rounded-lg border border-blue-500/45 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/50 backdrop-blur-md transition hover:border-blue-400/60 hover:bg-blue-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
@@ -2084,10 +2084,10 @@ function RoomContent() {
     "mb-3 w-full rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 text-sm shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
 
   const frPanelTitle =
-    "mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500";
+    "mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400";
 
   const secondaryHostBtn =
-    "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-100 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40";
+    "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40";
 
   const sessionPrevChapter =
     roomState && roomState.chapters.length > 0
@@ -2109,19 +2109,19 @@ function RoomContent() {
       : null;
 
   return (
-    <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-100">
+    <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-500">
+        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
           <p className="min-w-0">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-600">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
               Room
             </span>{" "}
-            <span className="font-mono text-sm text-zinc-300">{roomId}</span>
-            <span className="text-zinc-600"> · </span>
-            <span className="text-zinc-300">{isHost ? "Host" : "Viewer"}</span>
-            <span className="text-zinc-600"> · </span>
-            <span className="text-zinc-600">Speed </span>
-            <span className="font-medium text-zinc-200">
+            <span className="font-mono text-sm text-zinc-200">{roomId}</span>
+            <span className="text-zinc-500"> · </span>
+            <span className="text-zinc-200">{isHost ? "Host" : "Viewer"}</span>
+            <span className="text-zinc-500"> · </span>
+            <span className="text-zinc-500">Speed </span>
+            <span className="font-medium text-zinc-100">
               {displayRate === 1 ? "1×" : `${displayRate}×`}
             </span>
           </p>
@@ -2159,11 +2159,11 @@ function RoomContent() {
                     className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 ${
                       active
                         ? "border-blue-500/55 bg-blue-600/25 text-white shadow-md shadow-blue-950/25 ring-1 ring-blue-400/35"
-                        : "border-white/10 bg-white/[0.04] text-zinc-300 hover:border-white/18 hover:bg-white/[0.07]"
+                        : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
                     }`}
                   >
                     {active ? "▶ " : ""}Clip {i + 1}{" "}
-                    <span className="font-mono text-[10px] text-zinc-500">
+                    <span className="font-mono text-[10px] text-zinc-400">
                       {c.videoId.slice(0, 6)}…
                     </span>
                   </button>
@@ -2176,7 +2176,7 @@ function RoomContent() {
                 placeholder="Paste YouTube link"
                 value={clipUrlDraft}
                 onChange={(e) => setClipUrlDraft(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-xs text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-zinc-500 focus:border-blue-500/35 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-xs text-zinc-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-zinc-400 focus:border-blue-500/35 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
               />
               <button
                 type="button"
@@ -2220,7 +2220,7 @@ function RoomContent() {
               </div>
             ) : null}
             {roomState.chapters.length === 0 ? (
-              <p className="text-xs text-zinc-600">No chapters yet.</p>
+              <p className="text-xs text-zinc-400">No chapters yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {roomState.chapters.map((ch, i) => {
@@ -2235,13 +2235,13 @@ function RoomContent() {
                             className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
                               onActiveClip
                                 ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15"
-                                : "border-white/8 bg-black/35 text-zinc-300 hover:border-white/15 hover:bg-black/55"
+                                : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
                             }`}
                           >
                             <span className="font-medium text-white">
                               {ch.label}
                             </span>
-                            <span className="ml-2 font-mono text-zinc-500">
+                            <span className="ml-2 font-mono text-zinc-400">
                               {formatChapterTime(ch.time)}
                             </span>
                             {ch.videoId !== roomState.videoId ? (
@@ -2253,7 +2253,7 @@ function RoomContent() {
                           <button
                             type="button"
                             onClick={() => handleDeleteChapter(i)}
-                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-500 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-400 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
                             aria-label={`Delete chapter ${ch.label}`}
                           >
                             ×
@@ -2263,16 +2263,16 @@ function RoomContent() {
                         <div
                           className={`rounded-lg border px-3 py-2 text-xs ${
                             onActiveClip
-                              ? "border-blue-500/20 bg-blue-950/20 text-zinc-300 ring-1 ring-blue-500/10"
-                              : "border-white/[0.06] bg-black/30 text-zinc-400"
+                              ? "border-blue-500/20 bg-blue-950/20 text-zinc-200 ring-1 ring-blue-500/10"
+                              : "border-white/[0.06] bg-black/30 text-zinc-300"
                           }`}
                         >
-                          <span className="text-zinc-100">{ch.label}</span>
-                          <span className="ml-2 font-mono text-zinc-600">
+                          <span className="text-zinc-50">{ch.label}</span>
+                          <span className="ml-2 font-mono text-zinc-400">
                             {formatChapterTime(ch.time)}
                           </span>
                           {ch.videoId !== roomState.videoId ? (
-                            <span className="ml-2 text-[10px] text-zinc-600">
+                            <span className="ml-2 text-[10px] text-zinc-400">
                               (other clip)
                             </span>
                           ) : null}
@@ -2315,10 +2315,10 @@ function RoomContent() {
             {!isHost && !viewerPlaybackUnlocked ? (
               <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
                 <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-950/90 p-8 text-center shadow-2xl shadow-black/60 ring-1 ring-white/[0.05]">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Viewer
                   </p>
-                  <p className="mb-6 text-sm leading-relaxed text-zinc-400">
+                  <p className="mb-6 text-sm leading-relaxed text-zinc-300">
                     Enable playback to follow the host. Audio and video stay in
                     sync after you continue.
                   </p>
@@ -2348,17 +2348,12 @@ function RoomContent() {
                 <div className={hostControlsBar}>
                   <button
                     type="button"
-                    onClick={handlePlay}
+                    onClick={() =>
+                      roomState?.isPlaying ? handlePause() : handlePlay()
+                    }
                     className={hostChip}
                   >
-                    Play
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handlePause}
-                    className={hostChip}
-                  >
-                    Pause
+                    {roomState?.isPlaying ? "Pause" : "Play"}
                   </button>
                   <button
                     type="button"
@@ -2430,7 +2425,7 @@ export default function RoomPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center text-zinc-500">
+        <div className="flex min-h-screen items-center justify-center text-zinc-400">
           <p className="text-sm">Loading…</p>
         </div>
       }
