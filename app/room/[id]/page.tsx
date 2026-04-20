@@ -98,8 +98,17 @@ function parsePlaybackCommand(raw: unknown): PlaybackCommand | null {
 const YOUTUBE_PLAYER_OPTS = {
   width: "100%",
   height: "100%",
-  /* fs: 0 — hide YT iframe fullscreen; fullscreen must use the stage (video + telestrator). */
-  playerVars: { rel: 0, fs: 0 },
+  /**
+   * fs: 0 — hide YT iframe fullscreen; fullscreen must use the stage (video + telestrator).
+   * rel: 0 — limit related video surface at end (embed policy).
+   * modestbranding / playsinline — calmer chrome, mobile-friendly inline playback.
+   */
+  playerVars: {
+    rel: 0,
+    fs: 0,
+    modestbranding: 1,
+    playsinline: 1,
+  },
 } as const;
 
 /** Host-issued transport; `sync` is occasional time reference only (not command transport). */
@@ -456,6 +465,7 @@ function isRateOnlyFirebaseUpdate(
   );
 }
 
+const YT_ENDED = 0;
 const YT_PLAYING = 1;
 const YT_PAUSED = 2;
 const YT_BUFFERING = 3;
@@ -962,6 +972,10 @@ function RoomContent() {
   const playRetryTimerRef = useRef<number | null>(null);
   const pauseRetryTimerRef = useRef<number | null>(null);
   const retryTargetCommandIdRef = useRef(0);
+  /** Dedupe YouTube `ENDED` for the same clip (iframe can signal more than once). */
+  const youtubeEndedGuardRef = useRef<{ videoId: string; at: number } | null>(
+    null,
+  );
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -991,6 +1005,10 @@ function RoomContent() {
     if (pauseRetryTimerRef.current) clearTimeout(pauseRetryTimerRef.current);
     playRetryTimerRef.current = null;
     pauseRetryTimerRef.current = null;
+  }, [roomState?.videoId]);
+
+  useEffect(() => {
+    youtubeEndedGuardRef.current = null;
   }, [roomState?.videoId]);
 
   useEffect(() => {
@@ -1575,6 +1593,51 @@ function RoomContent() {
       });
     },
     [roomId],
+  );
+
+  /**
+   * When a clip ends, keep the session on this video (no autoplay into YouTube’s next).
+   * Everyone: seek slightly before the true end + pause locally.
+   * Host: also writes paused state to the room so viewers stay in sync.
+   */
+  const handleYoutubeStateChange = useCallback(
+    (event: { data: number; target: YouTubePlayer }) => {
+      if (event.data !== YT_ENDED) return;
+
+      const vid = roomStateRef.current?.videoId ?? "";
+      const now = Date.now();
+      const guard = youtubeEndedGuardRef.current;
+      if (guard && guard.videoId === vid && now - guard.at < 900) return;
+      youtubeEndedGuardRef.current = { videoId: vid, at: now };
+
+      const player = event.target;
+      let endTime = roomStateRef.current?.currentTime ?? 0;
+      try {
+        const raw = (
+          player as YouTubePlayer & { getDuration?: () => number }
+        ).getDuration?.();
+        const d =
+          typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+        if (d > 0.5) {
+          endTime = Math.max(0, d - 0.25);
+          player.seekTo?.(endTime, true);
+        }
+        player.pauseVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+
+      if (!isHostRef.current) return;
+
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      writeImmediatePlaybackCommand("pause", {
+        isPlaying: false,
+        currentTime: endTime,
+        playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+      });
+    },
+    [writeImmediatePlaybackCommand],
   );
 
   /** Seek on current clip, or switch clip + seek (chapter jump) using the same seek / playbackCommand path. */
@@ -2210,6 +2273,7 @@ function RoomContent() {
                 ref={playerRef}
                 videoId={safeDecodeVideoId(effectiveVideoId)}
                 onReady={handlePlayerReady}
+                onStateChange={handleYoutubeStateChange}
                 className="absolute left-0 top-0 h-full w-full"
                 iframeClassName="absolute left-0 top-0 h-full w-full"
                 opts={YOUTUBE_PLAYER_OPTS}
@@ -2252,7 +2316,7 @@ function RoomContent() {
               </div>
             ) : null}
             {isHost ? (
-              <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:bottom-3">
+              <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
                 <div className={hostControlsBar}>
                   <button
                     type="button"
