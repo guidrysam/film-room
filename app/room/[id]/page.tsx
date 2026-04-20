@@ -1927,16 +1927,38 @@ function RoomContent() {
     if (!rr) return;
     const id = extractYouTubeVideoId(clipUrlDraft);
     if (!id) return;
-    const cur = roomStateRef.current;
-    if (!cur) return;
-    const next = [...cur.clips, { videoId: id }];
-    void update(rr, {
-      clips: next,
-      updatedAt: serverTimestamp(),
-    }).catch(() => {
-      /* RTDB */
-    });
     setClipUrlDraft("");
+
+    void (async () => {
+      let label: string | undefined;
+      try {
+        const res = await fetch(
+          `/api/youtube-title?videoId=${encodeURIComponent(id)}`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { title?: string | null };
+          const t =
+            typeof data.title === "string" ? data.title.trim() : "";
+          if (t) label = t;
+        }
+      } catch (err) {
+        console.warn("[FilmRoom] youtube title fetch failed:", err);
+      }
+
+      const latest = roomStateRef.current;
+      if (!latest) return;
+
+      const newClip = label
+        ? { videoId: id, label }
+        : { videoId: id };
+      const next = [...latest.clips, newClip];
+      void update(rr, {
+        clips: next,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+    })();
   }, [isHost, clipUrlDraft]);
 
   const handleRemoveClip = useCallback(
