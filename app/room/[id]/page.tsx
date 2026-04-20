@@ -122,7 +122,7 @@ type TransportAction =
   | "sync"
   | "clip";
 
-type ClipEntry = { videoId: string };
+type ClipEntry = { videoId: string; label?: string };
 
 /** Saved jump points; `videoId` ties each marker to a clip in the queue. */
 type ChapterEntry = {
@@ -171,6 +171,10 @@ function formatChapterTime(seconds: number): string {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+/** Compact host control for rename affordances (chapters / clips). */
+const miniHostBtn =
+  "rounded border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-medium text-zinc-200 transition duration-150 hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-95 active:bg-white/[0.14] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
 function parseChapters(raw: unknown): ChapterEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: ChapterEntry[] = [];
@@ -192,9 +196,10 @@ function parseChapters(raw: unknown): ChapterEntry[] {
 /** Session chapter order: clip index in queue, then time (supports multi-clip lists). */
 const CHAPTER_NAV_EPS = 0.05;
 
-function clipIndexForVideo(clips: ClipEntry[], videoId: string): number {
+/** Queue index for sort/navigation; unknown `videoId` sorts after all clips in the queue. */
+function clipSortIndexForOrder(clips: ClipEntry[], videoId: string): number {
   const i = clips.findIndex((c) => c.videoId === videoId);
-  return i >= 0 ? i : 0;
+  return i >= 0 ? i : clips.length;
 }
 
 function compareChapterOrder(
@@ -202,8 +207,8 @@ function compareChapterOrder(
   a: ChapterEntry,
   b: ChapterEntry,
 ): number {
-  const ia = clipIndexForVideo(clips, a.videoId);
-  const ib = clipIndexForVideo(clips, b.videoId);
+  const ia = clipSortIndexForOrder(clips, a.videoId);
+  const ib = clipSortIndexForOrder(clips, b.videoId);
   if (ia !== ib) return ia - ib;
   return a.time - b.time;
 }
@@ -215,13 +220,37 @@ function sortChaptersForNavigation(
   return [...chapters].sort((a, b) => compareChapterOrder(clips, a, b));
 }
 
+/** Display order: clip queue order, then time ascending; carries RTDB index for edits. */
+function buildChaptersDisplayList(
+  clips: ClipEntry[],
+  chapters: ChapterEntry[],
+): Array<{ chapter: ChapterEntry; sourceIndex: number }> {
+  const rows = chapters.map((chapter, sourceIndex) => ({
+    chapter,
+    sourceIndex,
+  }));
+  rows.sort((a, b) => compareChapterOrder(clips, a.chapter, b.chapter));
+  return rows;
+}
+
+function formatClipLabel(clip: ClipEntry, index: number): string {
+  const t = clip.label?.trim();
+  if (t) return t;
+  return `Clip ${index + 1}`;
+}
+
+function clipToSavedClip(c: ClipEntry): { videoId: string; label?: string } {
+  const label = c.label?.trim();
+  return label ? { videoId: c.videoId, label } : { videoId: c.videoId };
+}
+
 function chapterStrictlyBeforeCursor(
   clips: ClipEntry[],
   ch: ChapterEntry,
   cursorClipIdx: number,
   cursorTime: number,
 ): boolean {
-  const ci = clipIndexForVideo(clips, ch.videoId);
+  const ci = clipSortIndexForOrder(clips, ch.videoId);
   return (
     ci < cursorClipIdx ||
     (ci === cursorClipIdx && ch.time < cursorTime - CHAPTER_NAV_EPS)
@@ -234,7 +263,7 @@ function chapterStrictlyAfterCursor(
   cursorClipIdx: number,
   cursorTime: number,
 ): boolean {
-  const ci = clipIndexForVideo(clips, ch.videoId);
+  const ci = clipSortIndexForOrder(clips, ch.videoId);
   return (
     ci > cursorClipIdx ||
     (ci === cursorClipIdx && ch.time > cursorTime + CHAPTER_NAV_EPS)
@@ -304,7 +333,16 @@ function parseClipEntries(raw: unknown): ClipEntry[] {
       typeof row === "object" &&
       typeof (row as ClipEntry).videoId === "string"
     ) {
-      out.push({ videoId: (row as ClipEntry).videoId });
+      const o = row as Record<string, unknown>;
+      const labelRaw = o.label;
+      const label =
+        typeof labelRaw === "string" && labelRaw.trim() !== ""
+          ? labelRaw.trim()
+          : undefined;
+      out.push({
+        videoId: (row as ClipEntry).videoId,
+        ...(label ? { label } : {}),
+      });
     }
   }
   return out;
@@ -1237,7 +1275,12 @@ function RoomContent() {
             const activeId = template.clips[idx]?.videoId ?? vid;
             void set(roomRef, {
               videoId: activeId,
-              clips: template.clips.map((c) => ({ videoId: c.videoId })),
+              clips: template.clips.map((c) => ({
+                videoId: c.videoId,
+                ...(typeof c.label === "string" && c.label.trim() !== ""
+                  ? { label: c.label.trim() }
+                  : {}),
+              })),
               currentClipIndex: idx,
               chapters: template.chapters ?? [],
               isPlaying: false,
@@ -1820,6 +1863,54 @@ function RoomContent() {
     });
   }, [isHost]);
 
+  const handleRenameChapter = useCallback((index: number) => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur || index < 0 || index >= cur.chapters.length) return;
+    const ch = cur.chapters[index];
+    if (!ch) return;
+    const raw = window.prompt("Rename chapter", ch.label);
+    if (raw === null) return;
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (trimmed === "" || trimmed === ch.label) return;
+    const next = cur.chapters.map((c, j) =>
+      j === index ? { ...c, label: trimmed } : c,
+    );
+    void update(rr, {
+      chapters: next,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+  }, [isHost]);
+
+  const handleRenameClip = useCallback((index: number) => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur || index < 0 || index >= cur.clips.length) return;
+    const clip = cur.clips[index];
+    if (!clip) return;
+    const current = formatClipLabel(clip, index);
+    const raw = window.prompt("Rename clip", current);
+    if (raw === null) return;
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (trimmed === "" || trimmed === current) return;
+    const next = cur.clips.map((c, j) => {
+      if (j !== index) return c;
+      return { videoId: c.videoId, label: trimmed };
+    });
+    void update(rr, {
+      clips: next,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+  }, [isHost]);
+
   const handleAddClip = useCallback(() => {
     if (!isHost) return;
     const rr = roomRefForWrite.current;
@@ -2094,7 +2185,7 @@ function RoomContent() {
     try {
       await saveSessionTemplate(u.uid, {
         name,
-        clips: roomState.clips.map((c) => ({ videoId: c.videoId })),
+        clips: roomState.clips.map(clipToSavedClip),
         chapters: roomState.chapters.map((ch) => ({
           time: ch.time,
           label: ch.label,
@@ -2107,6 +2198,14 @@ function RoomContent() {
       alert("Could not save session. Check Firestore rules and login.");
     }
   }, [isHost, roomState, user]);
+
+  const chaptersDisplay = useMemo(
+    () =>
+      roomState?.chapters?.length
+        ? buildChaptersDisplayList(roomState.clips, roomState.chapters)
+        : [],
+    [roomState],
+  );
 
   const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
@@ -2239,22 +2338,35 @@ function RoomContent() {
             <div className="mb-2 flex flex-wrap gap-2">
               {roomState.clips.map((c, i) => {
                 const active = i === roomState.currentClipIndex;
+                const clipTitle = formatClipLabel(c, i);
                 return (
-                  <button
+                  <div
                     key={`${c.videoId}-${i}`}
-                    type="button"
-                    onClick={() => void handleSelectClip(i)}
-                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] active:brightness-95 ${
-                      active
-                        ? "border-blue-500/55 bg-blue-600/25 text-white shadow-md shadow-blue-950/25 ring-1 ring-blue-400/35"
-                        : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
-                    }`}
+                    className="flex flex-wrap items-center gap-1"
                   >
-                    {active ? "▶ " : ""}Clip {i + 1}{" "}
-                    <span className="font-mono text-[10px] text-zinc-400">
-                      {c.videoId.slice(0, 6)}…
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSelectClip(i)}
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] active:brightness-95 ${
+                        active
+                          ? "border-blue-500/55 bg-blue-600/25 text-white shadow-md shadow-blue-950/25 ring-1 ring-blue-400/35"
+                          : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
+                      }`}
+                    >
+                      {active ? "▶ " : ""}
+                      {clipTitle}{" "}
+                      <span className="font-mono text-[10px] text-zinc-400">
+                        {c.videoId.slice(0, 6)}…
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRenameClip(i)}
+                      className={miniHostBtn}
+                    >
+                      Rename
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -2319,14 +2431,14 @@ function RoomContent() {
               <p className="text-xs text-zinc-400">No chapters yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
-                {roomState.chapters.map((ch, i) => {
+                {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
                   const onActiveClip = ch.videoId === roomState.videoId;
                   const isCurrentChapter =
                     activeChapterIndex !== null && activeChapterIndex === i;
                   return (
                     <li key={`${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
                       {isHost ? (
-                        <div className="flex gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => void jumpToChapter(ch)}
@@ -2355,6 +2467,13 @@ function RoomContent() {
                                 (other clip)
                               </span>
                             ) : null}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRenameChapter(i)}
+                            className={miniHostBtn}
+                          >
+                            Rename
                           </button>
                           <button
                             type="button"

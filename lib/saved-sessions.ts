@@ -9,7 +9,7 @@ import {
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 
-export type SavedClip = { videoId: string };
+export type SavedClip = { videoId: string; label?: string };
 
 export type SavedChapter = {
   time: number;
