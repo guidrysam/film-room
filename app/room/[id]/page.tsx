@@ -1022,6 +1022,16 @@ function RoomContent() {
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
 
+  const handleReturnHome = useCallback(() => {
+    if (
+      isHost &&
+      !window.confirm("Leave session? Your session will continue for others.")
+    ) {
+      return;
+    }
+    router.push("/");
+  }, [isHost, router]);
+
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const lastAppliedKey = useRef<string>("");
@@ -2325,9 +2335,19 @@ function RoomContent() {
   const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
 
+  const returnHomeBtnClass =
+    "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
   if (!videoFromUrl) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
+        <button
+          type="button"
+          onClick={handleReturnHome}
+          className={returnHomeBtnClass}
+        >
+          ← Home
+        </button>
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
           <p className="mb-6 text-sm leading-relaxed text-zinc-300">
             No video selected. Add a{" "}
@@ -2350,6 +2370,13 @@ function RoomContent() {
   if (!effectiveVideoId) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
+        <button
+          type="button"
+          onClick={handleReturnHome}
+          className={returnHomeBtnClass}
+        >
+          ← Home
+        </button>
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
           <p className="mb-6 text-sm text-zinc-300">Missing video id.</p>
           <Link
@@ -2412,6 +2439,13 @@ function RoomContent() {
 
   return (
     <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
+      <button
+        type="button"
+        onClick={handleReturnHome}
+        className={returnHomeBtnClass}
+      >
+        ← Home
+      </button>
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
         <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
           <p className="min-w-0">
