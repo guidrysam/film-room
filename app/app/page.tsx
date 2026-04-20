@@ -7,6 +7,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import {
+  ensureSessionSharing,
   listSavedSessions,
   type SavedSessionDoc,
 } from "@/lib/saved-sessions";
@@ -60,6 +61,19 @@ export default function DashboardPage() {
     const roomId = Math.random().toString(36).substring(2, 8);
     markRoomHost(roomId);
     router.push(`/room/${roomId}?video=${encodeURIComponent(videoId)}`);
+  };
+
+  const handleShareTemplate = async (sessionId: string) => {
+    if (!user) return;
+    try {
+      const shareId = await ensureSessionSharing(user.uid, sessionId);
+      const link = `${window.location.origin}/shared/${shareId}`;
+      await navigator.clipboard.writeText(link);
+      alert("Template link copied");
+      void refreshList();
+    } catch {
+      alert("Could not create share link.");
+    }
   };
 
   const loadSavedIntoRoom = (savedId: string, template: SavedSessionDoc) => {
@@ -194,13 +208,22 @@ export default function DashboardPage() {
                       {data.clips.length === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => loadSavedIntoRoom(id, data)}
-                    className="shrink-0 rounded-lg border border-blue-500/35 bg-blue-600/25 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
-                  >
-                    Load
-                  </button>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleShareTemplate(id)}
+                      className={ghostBtn}
+                    >
+                      Share Template
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => loadSavedIntoRoom(id, data)}
+                      className="rounded-lg border border-blue-500/35 bg-blue-600/25 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                    >
+                      Load
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
