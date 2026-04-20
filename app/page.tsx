@@ -42,12 +42,7 @@ export default function Home() {
             Film Room
           </h1>
           <p className="mb-4 text-lg font-medium leading-snug text-zinc-100 sm:text-xl">
-            Watch together. Anywhere. Anytime.
-          </p>
-          <p className="mx-auto max-w-sm text-sm leading-relaxed text-zinc-300">
-            Use YouTube, Hudl exports, or any video you already have.
-            <br />
-            Film Room is the fastest way to run a session together.
+            Watch together, anywhere, anytime.
           </p>
         </div>
 
