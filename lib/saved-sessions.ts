@@ -50,6 +50,19 @@ function generateShareId(): string {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
+/** Best-effort message for Firestore / client errors (includes `code` when present). */
+function firestoreErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; code?: unknown };
+    const msg = typeof o.message === "string" ? o.message.trim() : "";
+    const code = typeof o.code === "string" ? o.code : "";
+    if (msg && code) return `${msg} (${code})`;
+    if (msg) return msg;
+  }
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return fallback;
+}
+
 function parseSavedSessionFields(
   v: Record<string, unknown>,
   ownerUserId: string,
@@ -164,21 +177,49 @@ export async function ensureSessionSharing(
   sessionId: string,
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId), sessionId);
-  const snap = await getDoc(ref);
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (err) {
+    console.error("[saved-sessions] ensureSessionSharing getDoc failed:", err);
+    throw new Error(
+      firestoreErrorMessage(
+        err,
+        "Could not read this session from Firestore (check rules and network).",
+      ),
+    );
+  }
   if (!snap.exists()) {
-    throw new Error("Session not found");
+    throw new Error("Session not found.");
   }
   const raw = snap.data() as Record<string, unknown>;
   const parsed = parseSavedSessionFields(raw, ownerUserId);
   if (parsed.isShared && parsed.shareId) {
-    return parsed.shareId;
+    const existing = parsed.shareId.trim();
+    if (!existing) {
+      throw new Error("Saved session has invalid share id; try again.");
+    }
+    return existing;
   }
-  const shareId = generateShareId();
-  await updateDoc(ref, {
-    shareId,
-    isShared: true,
-    updatedAt: serverTimestamp(),
-  });
+  const shareId = generateShareId().trim();
+  if (!shareId) {
+    throw new Error("Could not generate a share id.");
+  }
+  try {
+    await updateDoc(ref, {
+      shareId,
+      isShared: true,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.error("[saved-sessions] ensureSessionSharing updateDoc failed:", err);
+    throw new Error(
+      firestoreErrorMessage(
+        err,
+        "Could not save sharing fields (check Firestore rules for session updates).",
+      ),
+    );
+  }
   return shareId;
 }
 

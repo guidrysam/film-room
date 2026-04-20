@@ -28,6 +28,15 @@ const ghostBtn =
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
 
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message.trim()) return err.message;
+  if (err && typeof err === "object" && "message" in err) {
+    const m = (err as { message: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return fallback;
+}
+
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -65,15 +74,55 @@ export default function DashboardPage() {
 
   const handleShareTemplate = async (sessionId: string) => {
     if (!user) return;
+
+    let shareId: string;
     try {
-      const shareId = await ensureSessionSharing(user.uid, sessionId);
-      const link = `${window.location.origin}/shared/${shareId}`;
-      await navigator.clipboard.writeText(link);
-      alert("Template link copied");
-      void refreshList();
-    } catch {
-      alert("Could not create share link.");
+      shareId = await ensureSessionSharing(user.uid, sessionId);
+    } catch (err) {
+      console.error("[Share Template] ensureSessionSharing failed:", err);
+      alert(
+        `Could not enable sharing: ${errorMessage(err, "Unknown error while saving share settings.")}`,
+      );
+      return;
     }
+
+    let shareUrl: string;
+    try {
+      if (typeof window === "undefined" || !window.location?.origin) {
+        throw new Error("Browser location is not available.");
+      }
+      const origin = window.location.origin.trim();
+      if (!origin) throw new Error("Empty window.location.origin.");
+      shareUrl = `${origin}/shared/${encodeURIComponent(shareId)}`;
+    } catch (err) {
+      console.error("[Share Template] building URL failed:", err);
+      alert(
+        `Could not build share link: ${errorMessage(err, "Unknown error building URL.")}`,
+      );
+      return;
+    }
+
+    let clipboardOk = false;
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        clipboardOk = true;
+      } catch (err) {
+        console.error("[Share Template] clipboard.writeText failed:", err);
+      }
+    } else {
+      console.warn(
+        "[Share Template] navigator.clipboard.writeText not available; using prompt fallback.",
+      );
+    }
+
+    if (clipboardOk) {
+      alert("Template link copied");
+    } else {
+      window.prompt("Copy this link", shareUrl);
+    }
+
+    void refreshList();
   };
 
   const loadSavedIntoRoom = (savedId: string, template: SavedSessionDoc) => {
