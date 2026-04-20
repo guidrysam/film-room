@@ -1929,6 +1929,121 @@ function RoomContent() {
     setClipUrlDraft("");
   }, [isHost, clipUrlDraft]);
 
+  const handleRemoveClip = useCallback(
+    (index: number) => {
+      if (!isHost || !roomId) return;
+      const rr = roomRefForWrite.current;
+      if (!rr) return;
+      const cur = roomStateRef.current;
+      if (!cur || index < 0 || index >= cur.clips.length) return;
+      const removing = cur.clips[index];
+      if (!removing) return;
+      const label = formatClipLabel(removing, index);
+      if (!window.confirm(`Remove "${label}" from the queue?`)) return;
+
+      const nextClips = cur.clips.filter((_, j) => j !== index);
+      const nextVidSet = new Set(nextClips.map((c) => c.videoId));
+      const nextChapters = cur.chapters.filter((ch) => nextVidSet.has(ch.videoId));
+
+      const isActive = index === cur.currentClipIndex;
+
+      if (!isActive) {
+        let newIdx = cur.currentClipIndex;
+        if (index < cur.currentClipIndex) newIdx--;
+        void update(rr, {
+          clips: nextClips,
+          chapters: nextChapters,
+          currentClipIndex: newIdx,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {
+          /* RTDB */
+        });
+        return;
+      }
+
+      // Active clip removed: explicit clip transport when switching to another video.
+      if (nextClips.length === 0) {
+        const only: ClipEntry = {
+          videoId: removing.videoId,
+          ...(removing.label?.trim()
+            ? { label: removing.label.trim() }
+            : {}),
+        };
+        const single = [only];
+        const vidSet = new Set(single.map((c) => c.videoId));
+        const chaptersSingle = cur.chapters.filter((ch) => vidSet.has(ch.videoId));
+        lastAppliedKey.current = "";
+        void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+        writeHostTransport(
+          {
+            clips: single,
+            chapters: chaptersSingle,
+            videoId: only.videoId,
+            currentClipIndex: 0,
+            currentTime: 0,
+            isPlaying: false,
+            playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+          },
+          "clip",
+          { clearPlaybackCommand: true },
+        );
+        return;
+      }
+
+      const target: ClipEntry =
+        index < cur.clips.length - 1
+          ? cur.clips[index + 1]!
+          : cur.clips[index - 1]!;
+      const newIdx = nextClips.findIndex((c) => c.videoId === target.videoId);
+      if (newIdx < 0) return;
+
+      lastAppliedKey.current = "";
+      void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+      writeHostTransport(
+        {
+          clips: nextClips,
+          chapters: nextChapters,
+          videoId: target.videoId,
+          currentClipIndex: newIdx,
+          currentTime: 0,
+          isPlaying: false,
+          playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+        },
+        "clip",
+        { clearPlaybackCommand: true },
+      );
+    },
+    [isHost, roomId, writeHostTransport],
+  );
+
+  const handleClearClips = useCallback(() => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur || cur.clips.length <= 1) return;
+    if (
+      !window.confirm(
+        "Keep only the current clip and remove all others? Chapters on other clips will be removed.",
+      )
+    ) {
+      return;
+    }
+    const active = cur.clips[cur.currentClipIndex];
+    if (!active) return;
+    const nextClips = [active];
+    const nextVidSet = new Set(nextClips.map((c) => c.videoId));
+    const nextChapters = cur.chapters.filter((ch) => nextVidSet.has(ch.videoId));
+    void update(rr, {
+      clips: nextClips,
+      currentClipIndex: 0,
+      chapters: nextChapters,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+  }, [isHost]);
+
   const handleSelectClip = useCallback(
     (index: number) => {
       if (!isHost || !roomId) return;
@@ -2366,6 +2481,18 @@ function RoomContent() {
                     >
                       Rename
                     </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleRemoveClip(i);
+                      }}
+                      className="shrink-0 rounded-lg border border-white/10 px-2 py-1.5 text-xs font-medium text-zinc-400 transition duration-150 hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 active:scale-[0.94] active:bg-red-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                      aria-label={`Remove clip ${clipTitle}`}
+                    >
+                      ×
+                    </button>
                   </div>
                 );
               })}
@@ -2384,6 +2511,14 @@ function RoomContent() {
                 className={secondaryHostBtn}
               >
                 Add clip
+              </button>
+              <button
+                type="button"
+                disabled={roomState.clips.length <= 1}
+                onClick={() => handleClearClips()}
+                className={secondaryHostBtn}
+              >
+                Clear clips
               </button>
             </div>
           </div>
