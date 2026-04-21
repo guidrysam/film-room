@@ -104,13 +104,13 @@ const YOUTUBE_PLAYER_OPTS = {
   width: "100%",
   height: "100%",
   /**
-   * fs: 0 — hide YT iframe fullscreen; fullscreen must use the stage (video + telestrator).
+   * fs: 1 — show YouTube’s native fullscreen control (preferred over browser element fullscreen).
    * rel: 0 — limit related video surface at end (embed policy).
    * modestbranding / playsinline — calmer chrome, mobile-friendly inline playback.
    */
   playerVars: {
     rel: 0,
-    fs: 0,
+    fs: 1,
     modestbranding: 1,
     playsinline: 1,
   },
@@ -666,54 +666,6 @@ function useRoomHostFromSession(roomId: string): boolean {
   );
 }
 
-function getFullscreenElement(): Element | null {
-  const doc = document as Document & {
-    webkitFullscreenElement?: Element | null;
-    msFullscreenElement?: Element | null;
-  };
-  return (
-    document.fullscreenElement ??
-    doc.webkitFullscreenElement ??
-    doc.msFullscreenElement ??
-    null
-  );
-}
-
-async function exitFullscreenSafe(): Promise<void> {
-  const doc = document as Document & {
-    webkitExitFullscreen?: () => Promise<void>;
-    msExitFullscreen?: () => Promise<void>;
-  };
-  if (document.exitFullscreen) await document.exitFullscreen();
-  else if (doc.webkitExitFullscreen) await doc.webkitExitFullscreen();
-  else if (doc.msExitFullscreen) await doc.msExitFullscreen();
-}
-
-async function requestElFullscreen(el: HTMLElement): Promise<void> {
-  const e = el as HTMLElement & {
-    webkitRequestFullscreen?: () => Promise<void>;
-    msRequestFullscreen?: () => Promise<void>;
-  };
-  if (e.requestFullscreen) await e.requestFullscreen();
-  else if (e.webkitRequestFullscreen) await e.webkitRequestFullscreen();
-  else if (e.msRequestFullscreen) await e.msRequestFullscreen();
-}
-
-/** Element fullscreen is not available on many mobile browsers (notably iPhone Safari). */
-function isStageElementFullscreenSupported(el: HTMLElement | null): boolean {
-  if (!el) return false;
-  const e = el as HTMLElement & {
-    requestFullscreen?: () => Promise<void>;
-    webkitRequestFullscreen?: () => Promise<void>;
-    msRequestFullscreen?: () => Promise<void>;
-  };
-  return (
-    typeof e.requestFullscreen === "function" ||
-    typeof e.webkitRequestFullscreen === "function" ||
-    typeof e.msRequestFullscreen === "function"
-  );
-}
-
 async function safeSetPlaybackRate(
   player: YouTubePlayer,
   desired: number,
@@ -1028,11 +980,12 @@ function RoomContent() {
   const [copied, setCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
-  const [stageFullscreen, setStageFullscreen] = useState(false);
-  /** Viewer pseudo-fullscreen: large stage, minimal chrome (no real browser fullscreen). */
+  /** Viewer pseudo-fullscreen: large stage, minimal chrome (independent of browser fullscreen API). */
   const [viewerWatchMode, setViewerWatchMode] = useState(false);
-  /** Brief hint when host fullscreen API is unavailable or denied. */
-  const [hostFsHint, setHostFsHint] = useState(false);
+  /** Brief ring after “Focus video” so the stage is easy to spot. */
+  const [videoStageHighlight, setVideoStageHighlight] = useState(false);
+  /** Subtle reminder to use YouTube’s built-in fullscreen control. */
+  const [showNativeFsHint, setShowNativeFsHint] = useState(false);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1175,24 +1128,6 @@ function RoomContent() {
   }, [roomId, viewerPlaybackUnlocked]);
 
   useEffect(() => {
-    const syncStageFs = () => {
-      const s = stageRef.current;
-      const fs = getFullscreenElement();
-      setStageFullscreen(!!s && fs === s);
-      if (s && fs === s && !isHostRef.current) {
-        setViewerWatchMode(false);
-      }
-    };
-    syncStageFs();
-    document.addEventListener("fullscreenchange", syncStageFs);
-    document.addEventListener("webkitfullscreenchange", syncStageFs);
-    return () => {
-      document.removeEventListener("fullscreenchange", syncStageFs);
-      document.removeEventListener("webkitfullscreenchange", syncStageFs);
-    };
-  }, []);
-
-  useEffect(() => {
     const onVisibleOrFocus = () => {
       if (document.visibilityState !== "visible") return;
       if (isHostRef.current) return;
@@ -1225,46 +1160,36 @@ function RoomContent() {
     };
   }, [roomId]);
 
-  const toggleStageFullscreen = useCallback(async () => {
+  /** Scroll/focus the stage and nudge users toward YouTube’s native fullscreen (no element fullscreen API). */
+  const handleFocusVideoStage = useCallback(() => {
     const el = stageRef.current;
     if (!el) return;
 
+    if (!isHostRef.current && viewerWatchMode) {
+      setViewerWatchMode(false);
+      return;
+    }
+
     try {
-      const fsEl = getFullscreenElement();
-      if (fsEl === el) {
-        await exitFullscreenSafe().catch(() => {
-          /* exit may fail on some browsers */
-        });
-        return;
-      }
-
-      if (!isHostRef.current && viewerWatchMode) {
-        setViewerWatchMode(false);
-        return;
-      }
-
-      if (!isStageElementFullscreenSupported(el)) {
-        if (!isHostRef.current) {
-          setViewerWatchMode(true);
-        } else {
-          setHostFsHint(true);
-          window.setTimeout(() => setHostFsHint(false), 4500);
-        }
-        return;
-      }
-
-      await requestElFullscreen(el);
-      if (!isHostRef.current) {
-        setViewerWatchMode(false);
-      }
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
     } catch {
-      if (!isHostRef.current) {
-        setViewerWatchMode(true);
-      } else {
-        setHostFsHint(true);
-        window.setTimeout(() => setHostFsHint(false), 4500);
+      el.scrollIntoView();
+    }
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+      try {
+        el.focus();
+      } catch {
+        /* focus not supported */
       }
     }
+
+    setVideoStageHighlight(true);
+    window.setTimeout(() => setVideoStageHighlight(false), 1200);
+
+    setShowNativeFsHint(true);
+    window.setTimeout(() => setShowNativeFsHint(false), 4500);
   }, [viewerWatchMode]);
 
   /** Optional: expand viewer layout on small screens in landscape (pseudo watch mode). */
@@ -2873,12 +2798,15 @@ function RoomContent() {
 
         <div
           ref={stageRef}
-          className={`relative w-full overflow-hidden bg-black ${
-            stageFullscreen
-              ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none ring-0 shadow-none"
-              : viewerWatchLayout
-                ? "shrink-0 rounded-none ring-0 shadow-none"
-                : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
+          tabIndex={-1}
+          className={`relative w-full overflow-hidden bg-black outline-none transition-[box-shadow] duration-300 ${
+            viewerWatchLayout
+              ? "shrink-0 rounded-none ring-0 shadow-none"
+              : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
+          } ${
+            videoStageHighlight
+              ? "ring-2 ring-blue-400/80 ring-offset-2 ring-offset-zinc-950"
+              : ""
           }`}
         >
           {/*
@@ -2931,17 +2859,13 @@ function RoomContent() {
               </div>
             ) : null}
             {!isHost ? (
-              <div className="pointer-events-none absolute bottom-2 right-2 z-30 sm:bottom-3 sm:right-3">
+              <div className="pointer-events-none absolute bottom-2 right-2 z-30 hidden sm:block sm:bottom-3 sm:right-3">
                 <button
                   type="button"
-                  onClick={() => void toggleStageFullscreen()}
+                  onClick={handleFocusVideoStage}
                   className={`pointer-events-auto ${hostChip}`}
                 >
-                  {viewerWatchMode
-                    ? "Exit"
-                    : stageFullscreen
-                      ? "Exit full"
-                      : "Fullscreen"}
+                  {viewerWatchMode ? "Exit" : "Focus video"}
                 </button>
               </div>
             ) : null}
@@ -3026,15 +2950,15 @@ function RoomContent() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void toggleStageFullscreen()}
+                    onClick={handleFocusVideoStage}
                     className={hostChip}
                   >
-                    {stageFullscreen ? "Exit full" : "Fullscreen"}
+                    Focus video
                   </button>
                   </div>
-                  {hostFsHint ? (
-                    <p className="pointer-events-none max-w-[min(100%,18rem)] rounded-md border border-amber-500/25 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[10px] leading-snug text-amber-100/90 shadow-lg shadow-black/40">
-                      Full screen unavailable — playback and sync are unchanged
+                  {showNativeFsHint ? (
+                    <p className="pointer-events-none max-w-[min(100%,18rem)] rounded-md border border-zinc-600/40 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[10px] leading-snug text-zinc-300 shadow-lg shadow-black/40">
+                      Use the video’s fullscreen button
                     </p>
                   ) : null}
                 </div>
