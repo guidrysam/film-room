@@ -699,6 +699,21 @@ async function requestElFullscreen(el: HTMLElement): Promise<void> {
   else if (e.msRequestFullscreen) await e.msRequestFullscreen();
 }
 
+/** Element fullscreen is not available on many mobile browsers (notably iPhone Safari). */
+function isStageElementFullscreenSupported(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  const e = el as HTMLElement & {
+    requestFullscreen?: () => Promise<void>;
+    webkitRequestFullscreen?: () => Promise<void>;
+    msRequestFullscreen?: () => Promise<void>;
+  };
+  return (
+    typeof e.requestFullscreen === "function" ||
+    typeof e.webkitRequestFullscreen === "function" ||
+    typeof e.msRequestFullscreen === "function"
+  );
+}
+
 async function safeSetPlaybackRate(
   player: YouTubePlayer,
   desired: number,
@@ -1014,6 +1029,10 @@ function RoomContent() {
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
   const [stageFullscreen, setStageFullscreen] = useState(false);
+  /** Viewer pseudo-fullscreen: large stage, minimal chrome (no real browser fullscreen). */
+  const [viewerWatchMode, setViewerWatchMode] = useState(false);
+  /** Brief hint when host fullscreen API is unavailable or denied. */
+  const [hostFsHint, setHostFsHint] = useState(false);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1158,7 +1177,11 @@ function RoomContent() {
   useEffect(() => {
     const syncStageFs = () => {
       const s = stageRef.current;
-      setStageFullscreen(!!s && getFullscreenElement() === s);
+      const fs = getFullscreenElement();
+      setStageFullscreen(!!s && fs === s);
+      if (s && fs === s && !isHostRef.current) {
+        setViewerWatchMode(false);
+      }
     };
     syncStageFs();
     document.addEventListener("fullscreenchange", syncStageFs);
@@ -1205,16 +1228,65 @@ function RoomContent() {
   const toggleStageFullscreen = useCallback(async () => {
     const el = stageRef.current;
     if (!el) return;
+
     try {
-      if (getFullscreenElement() === el) {
-        await exitFullscreenSafe();
-      } else {
-        await requestElFullscreen(el);
+      const fsEl = getFullscreenElement();
+      if (fsEl === el) {
+        await exitFullscreenSafe().catch(() => {
+          /* exit may fail on some browsers */
+        });
+        return;
+      }
+
+      if (!isHostRef.current && viewerWatchMode) {
+        setViewerWatchMode(false);
+        return;
+      }
+
+      if (!isStageElementFullscreenSupported(el)) {
+        if (!isHostRef.current) {
+          setViewerWatchMode(true);
+        } else {
+          setHostFsHint(true);
+          window.setTimeout(() => setHostFsHint(false), 4500);
+        }
+        return;
+      }
+
+      await requestElFullscreen(el);
+      if (!isHostRef.current) {
+        setViewerWatchMode(false);
       }
     } catch {
-      /* unsupported or denied */
+      if (!isHostRef.current) {
+        setViewerWatchMode(true);
+      } else {
+        setHostFsHint(true);
+        window.setTimeout(() => setHostFsHint(false), 4500);
+      }
     }
-  }, []);
+  }, [viewerWatchMode]);
+
+  /** Optional: expand viewer layout on small screens in landscape (pseudo watch mode). */
+  useEffect(() => {
+    if (typeof window === "undefined" || isHost) return;
+    const consider = () => {
+      const narrow = window.innerWidth > 0 && window.innerWidth < 768;
+      const landscape =
+        window.innerWidth > window.innerHeight &&
+        window.matchMedia("(orientation: landscape)").matches;
+      if (narrow && landscape) {
+        setViewerWatchMode(true);
+      }
+    };
+    consider();
+    window.addEventListener("orientationchange", consider);
+    window.addEventListener("resize", consider);
+    return () => {
+      window.removeEventListener("orientationchange", consider);
+      window.removeEventListener("resize", consider);
+    };
+  }, [isHost]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -2552,8 +2624,16 @@ function RoomContent() {
         )
       : null;
 
+  const viewerWatchLayout = viewerWatchMode && !isHost;
+
   return (
-    <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
+    <div
+      className={`flex min-h-screen flex-col text-zinc-50 ${
+        viewerWatchLayout
+          ? "fixed inset-0 z-40 overflow-hidden bg-[#030306] px-2 pb-2 pt-14 sm:px-3 sm:pt-16"
+          : "px-4 py-6"
+      }`}
+    >
       <button
         type="button"
         onClick={handleReturnHome}
@@ -2561,40 +2641,46 @@ function RoomContent() {
       >
         ← Home
       </button>
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col">
-        <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
-          <p className="min-w-0">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-              Room
-            </span>{" "}
-            <span className="font-mono text-sm text-zinc-200">{roomId}</span>
-            <span className="text-zinc-500"> · </span>
-            <span className="text-zinc-200">{isHost ? "Host" : "Viewer"}</span>
-            <span className="text-zinc-500"> · </span>
-            <span className="text-zinc-500">Speed </span>
-            <span className="font-medium text-zinc-100">
-              {displayRate === 1 ? "1×" : `${displayRate}×`}
-            </span>
-          </p>
-          {isHost ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleSaveSession()}
-                className={secondaryHostBtn}
-              >
-                Save Session
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyViewerLink}
-                className={secondaryHostBtn}
-              >
-                {copied ? "Copied" : "Copy Viewer Link"}
-              </button>
-            </div>
-          ) : null}
-        </div>
+      <div
+        className={`mx-auto flex w-full flex-1 flex-col ${
+          viewerWatchLayout ? "max-w-none min-h-0" : "max-w-3xl"
+        }`}
+      >
+        {!(viewerWatchMode && !isHost) ? (
+          <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
+            <p className="min-w-0">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                Room
+              </span>{" "}
+              <span className="font-mono text-sm text-zinc-200">{roomId}</span>
+              <span className="text-zinc-500"> · </span>
+              <span className="text-zinc-200">{isHost ? "Host" : "Viewer"}</span>
+              <span className="text-zinc-500"> · </span>
+              <span className="text-zinc-500">Speed </span>
+              <span className="font-medium text-zinc-100">
+                {displayRate === 1 ? "1×" : `${displayRate}×`}
+              </span>
+            </p>
+            {isHost ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveSession()}
+                  className={secondaryHostBtn}
+                >
+                  Save Session
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyViewerLink}
+                  className={secondaryHostBtn}
+                >
+                  {copied ? "Copied" : "Copy Viewer Link"}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {isHost && roomState ? (
           <div className={frPanel}>
@@ -2673,44 +2759,42 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {roomState ? (
+        {roomState && isHost ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Chapters</p>
-            {isHost ? (
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void handleAddChapter()}
-                  className={secondaryHostBtn}
-                >
-                  Add Chapter
-                </button>
-                <button
-                  type="button"
-                  disabled={!sessionPrevChapter}
-                  onClick={() => void handlePrevChapter()}
-                  className={`${secondaryHostBtn} ${
-                    chapterNavFlash === "prev"
-                      ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
-                      : ""
-                  }`}
-                >
-                  Prev
-                </button>
-                <button
-                  type="button"
-                  disabled={!sessionNextChapter}
-                  onClick={() => void handleNextChapter()}
-                  className={`${secondaryHostBtn} ${
-                    chapterNavFlash === "next"
-                      ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
-                      : ""
-                  }`}
-                >
-                  Next
-                </button>
-              </div>
-            ) : null}
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleAddChapter()}
+                className={secondaryHostBtn}
+              >
+                Add Chapter
+              </button>
+              <button
+                type="button"
+                disabled={!sessionPrevChapter}
+                onClick={() => void handlePrevChapter()}
+                className={`${secondaryHostBtn} ${
+                  chapterNavFlash === "prev"
+                    ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
+                    : ""
+                }`}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                disabled={!sessionNextChapter}
+                onClick={() => void handleNextChapter()}
+                className={`${secondaryHostBtn} ${
+                  chapterNavFlash === "next"
+                    ? "ring-2 ring-blue-400/60 border-blue-500/50 bg-blue-600/30 shadow-md shadow-blue-950/25"
+                    : ""
+                }`}
+              >
+                Next
+              </button>
+            </div>
             {roomState.chapters.length === 0 ? (
               <p className="text-xs text-zinc-400">No chapters yet.</p>
             ) : (
@@ -2721,105 +2805,87 @@ function RoomContent() {
                     activeChapterIndex !== null && activeChapterIndex === i;
                   return (
                     <li key={`${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
-                      {isHost ? (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => void jumpToChapter(ch)}
-                            className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 active:scale-[0.99] active:brightness-95 ${
-                              isCurrentChapter && onActiveClip
-                                ? "border-blue-500/80 bg-blue-600/40 text-white ring-2 ring-blue-400/45 shadow-lg shadow-blue-950/30"
-                                : onActiveClip
-                                  ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15 hover:border-blue-400/35 hover:bg-blue-950/45"
-                                  : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
-                            }`}
-                          >
-                            <span className="font-medium text-white">
-                              {ch.label}
-                            </span>
-                            <span
-                              className={`ml-2 font-mono ${
-                                isCurrentChapter && onActiveClip
-                                  ? "text-blue-100/90"
-                                  : "text-zinc-400"
-                              }`}
-                            >
-                              {formatChapterTime(ch.time)}
-                            </span>
-                            {ch.videoId !== roomState.videoId ? (
-                              <span className="ml-2 text-[10px] text-amber-400/85">
-                                (other clip)
-                              </span>
-                            ) : null}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRenameChapter(i)}
-                            className={miniHostBtn}
-                          >
-                            Rename
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteChapter(i)}
-                            className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-400 transition duration-150 hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 active:scale-[0.94] active:bg-red-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
-                            aria-label={`Delete chapter ${ch.label}`}
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ) : (
-                        <div
-                          className={`rounded-lg border px-3 py-2 text-xs ${
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => void jumpToChapter(ch)}
+                          className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 active:scale-[0.99] active:brightness-95 ${
                             isCurrentChapter && onActiveClip
-                              ? "border-blue-500/70 bg-blue-600/35 text-zinc-50 ring-2 ring-blue-400/40 shadow-md shadow-blue-950/20"
+                              ? "border-blue-500/80 bg-blue-600/40 text-white ring-2 ring-blue-400/45 shadow-lg shadow-blue-950/30"
                               : onActiveClip
-                                ? "border-blue-500/20 bg-blue-950/20 text-zinc-200 ring-1 ring-blue-500/10"
-                                : "border-white/[0.06] bg-black/30 text-zinc-300"
+                                ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15 hover:border-blue-400/35 hover:bg-blue-950/45"
+                                : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
                           }`}
                         >
-                          <span
-                            className={
-                              isCurrentChapter && onActiveClip
-                                ? "font-medium text-white"
-                                : "text-zinc-50"
-                            }
-                          >
+                          <span className="font-medium text-white">
                             {ch.label}
                           </span>
                           <span
                             className={`ml-2 font-mono ${
                               isCurrentChapter && onActiveClip
-                                ? "text-blue-100/85"
+                                ? "text-blue-100/90"
                                 : "text-zinc-400"
                             }`}
                           >
                             {formatChapterTime(ch.time)}
                           </span>
                           {ch.videoId !== roomState.videoId ? (
-                            <span className="ml-2 text-[10px] text-zinc-400">
+                            <span className="ml-2 text-[10px] text-amber-400/85">
                               (other clip)
                             </span>
                           ) : null}
-                        </div>
-                      )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRenameChapter(i)}
+                          className={miniHostBtn}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteChapter(i)}
+                          className="shrink-0 rounded-lg border border-white/10 px-2 py-2 text-xs font-medium text-zinc-400 transition duration-150 hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 active:scale-[0.94] active:bg-red-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                          aria-label={`Delete chapter ${ch.label}`}
+                        >
+                          ×
+                        </button>
+                      </div>
                     </li>
                   );
                 })}
               </ul>
             )}
           </div>
+        ) : roomState && !isHost && !viewerWatchMode ? (
+          <div className="mb-3 flex items-center justify-center rounded-lg border border-white/[0.06] bg-zinc-950/35 px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+            Watching live
+          </div>
+        ) : roomState && !isHost && viewerWatchMode ? (
+          <div className="mb-2 flex items-center justify-center gap-2 text-[11px] text-zinc-500">
+            <span className="font-medium uppercase tracking-wide text-zinc-500">
+              Watching live
+            </span>
+            <span className="text-zinc-600">·</span>
+            <span className="text-zinc-400">Watch mode</span>
+          </div>
         ) : null}
 
         <div
           ref={stageRef}
           className={`relative w-full overflow-hidden bg-black ${
-            stageFullscreen
+            stageFullscreen || viewerWatchLayout
               ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none ring-0 shadow-none"
               : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
         >
-          <div className="relative aspect-video w-full">
+          <div
+            className={`relative w-full overflow-hidden ${
+              viewerWatchLayout
+                ? "flex min-h-0 flex-1 flex-col"
+                : "aspect-video"
+            }`}
+          >
             <div className="absolute inset-0 overflow-hidden">
               <YouTube
                 key={safeDecodeVideoId(effectiveVideoId)}
@@ -2864,13 +2930,18 @@ function RoomContent() {
                   onClick={() => void toggleStageFullscreen()}
                   className={`pointer-events-auto ${hostChip}`}
                 >
-                  {stageFullscreen ? "Exit full" : "Fullscreen"}
+                  {viewerWatchMode
+                    ? "Exit"
+                    : stageFullscreen
+                      ? "Exit full"
+                      : "Fullscreen"}
                 </button>
               </div>
             ) : null}
             {isHost ? (
               <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
-                <div className={hostControlsBar}>
+                <div className="flex flex-col items-center gap-1">
+                  <div className={hostControlsBar}>
                   <button
                     type="button"
                     onClick={() =>
@@ -2953,6 +3024,12 @@ function RoomContent() {
                   >
                     {stageFullscreen ? "Exit full" : "Fullscreen"}
                   </button>
+                  </div>
+                  {hostFsHint ? (
+                    <p className="pointer-events-none max-w-[min(100%,18rem)] rounded-md border border-amber-500/25 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[10px] leading-snug text-amber-100/90 shadow-lg shadow-black/40">
+                      Full screen unavailable — playback and sync are unchanged
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ) : null}
