@@ -1010,10 +1010,6 @@ function RoomContent() {
   const [telDrawOn, setTelDrawOn] = useState(false);
   /** Viewer pseudo-fullscreen: large stage, minimal chrome (independent of browser fullscreen API). */
   const [viewerWatchMode, setViewerWatchMode] = useState(false);
-  /** Brief ring after “Focus video” so the stage is easy to spot. */
-  const [videoStageHighlight, setVideoStageHighlight] = useState(false);
-  /** Subtle reminder to use YouTube’s built-in fullscreen control. */
-  const [showNativeFsHint, setShowNativeFsHint] = useState(false);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1025,7 +1021,6 @@ function RoomContent() {
   const [ffMode, setFfMode] = useState<(typeof FF_TIERS)[number]>(0);
   const ffModeRef = useRef<(typeof FF_TIERS)[number]>(0);
   const playbackRateBeforeFfRef = useRef(DEFAULT_PLAYBACK_RATE);
-  const stageRef = useRef<HTMLDivElement>(null);
 
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
@@ -1188,38 +1183,6 @@ function RoomContent() {
     };
   }, [roomId]);
 
-  /** Scroll/focus the stage and nudge users toward YouTube’s native fullscreen (no element fullscreen API). */
-  const handleFocusVideoStage = useCallback(() => {
-    const el = stageRef.current;
-    if (!el) return;
-
-    if (!isHostRef.current && viewerWatchMode) {
-      setViewerWatchMode(false);
-      return;
-    }
-
-    try {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch {
-      el.scrollIntoView();
-    }
-    try {
-      el.focus({ preventScroll: true });
-    } catch {
-      try {
-        el.focus();
-      } catch {
-        /* focus not supported */
-      }
-    }
-
-    setVideoStageHighlight(true);
-    window.setTimeout(() => setVideoStageHighlight(false), 1200);
-
-    setShowNativeFsHint(true);
-    window.setTimeout(() => setShowNativeFsHint(false), 4500);
-  }, [viewerWatchMode]);
-
   /** Optional: expand viewer layout on small screens in landscape (pseudo watch mode). */
   useEffect(() => {
     if (typeof window === "undefined" || isHost) return;
@@ -1228,9 +1191,7 @@ function RoomContent() {
       const landscape =
         window.innerWidth > window.innerHeight &&
         window.matchMedia("(orientation: landscape)").matches;
-      if (narrow && landscape) {
-        setViewerWatchMode(true);
-      }
+      setViewerWatchMode(Boolean(narrow && landscape));
     };
     consider();
     window.addEventListener("orientationchange", consider);
@@ -2825,16 +2786,10 @@ function RoomContent() {
         ) : null}
 
         <div
-          ref={stageRef}
-          tabIndex={-1}
-          className={`relative w-full overflow-hidden bg-black outline-none transition-[box-shadow] duration-300 ${
+          className={`relative w-full overflow-hidden bg-black ${
             viewerWatchLayout
               ? "shrink-0 rounded-none ring-0 shadow-none"
               : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
-          } ${
-            videoStageHighlight
-              ? "ring-2 ring-blue-400/80 ring-offset-2 ring-offset-zinc-950"
-              : ""
           }`}
         >
           {/*
@@ -2884,17 +2839,6 @@ function RoomContent() {
                     Tap to enable playback
                   </button>
                 </div>
-              </div>
-            ) : null}
-            {!isHost ? (
-              <div className="pointer-events-none absolute bottom-2 right-2 z-30 hidden sm:block sm:bottom-3 sm:right-3">
-                <button
-                  type="button"
-                  onClick={handleFocusVideoStage}
-                  className={`pointer-events-auto ${hostChip}`}
-                >
-                  {viewerWatchMode ? "Exit" : "Focus video"}
-                </button>
               </div>
             ) : null}
             {isHost ? (
@@ -2976,19 +2920,7 @@ function RoomContent() {
                   >
                     Clear
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleFocusVideoStage}
-                    className={hostChip}
-                  >
-                    Focus video
-                  </button>
                   </div>
-                  {showNativeFsHint ? (
-                    <p className="pointer-events-none max-w-[min(100%,18rem)] rounded-md border border-zinc-600/40 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[10px] leading-snug text-zinc-300 shadow-lg shadow-black/40">
-                      Use the video’s fullscreen button
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ) : null}
