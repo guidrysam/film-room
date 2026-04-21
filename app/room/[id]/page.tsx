@@ -2643,7 +2643,7 @@ function RoomContent() {
       </button>
       <div
         className={`mx-auto flex w-full flex-1 flex-col ${
-          viewerWatchLayout ? "max-w-none min-h-0" : "max-w-3xl"
+          viewerWatchLayout ? "max-w-none justify-center" : "max-w-3xl"
         }`}
       >
         {!(viewerWatchMode && !isHost) ? (
@@ -2874,16 +2874,23 @@ function RoomContent() {
         <div
           ref={stageRef}
           className={`relative w-full overflow-hidden bg-black ${
-            stageFullscreen || viewerWatchLayout
+            stageFullscreen
               ? "flex max-h-none min-h-0 flex-1 flex-col rounded-none ring-0 shadow-none"
-              : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
+              : viewerWatchLayout
+                ? "shrink-0 rounded-none ring-0 shadow-none"
+                : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
         >
+          {/*
+            Always keep aspect-video: absolutely positioned YouTube/iframe does not
+            contribute height — flex-1/min-h-0 without aspect ratio collapsed the
+            player (black screen) after unlock on some mobile watch layouts.
+          */}
           <div
-            className={`relative w-full overflow-hidden ${
+            className={`relative aspect-video w-full min-h-[12rem] overflow-hidden ${
               viewerWatchLayout
-                ? "flex min-h-0 flex-1 flex-col"
-                : "aspect-video"
+                ? "max-h-[min(100dvw*0.5625,85dvh)] mx-auto w-full max-w-[100dvw]"
+                : ""
             }`}
           >
             <div className="absolute inset-0 overflow-hidden">
