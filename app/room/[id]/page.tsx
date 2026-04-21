@@ -99,18 +99,15 @@ function parsePlaybackCommand(raw: unknown): PlaybackCommand | null {
   };
 }
 
-/** Stable reference — new object each render breaks react-youtube `shouldResetPlayer` / remounts the iframe. */
-const YOUTUBE_PLAYER_OPTS = {
+/**
+ * Shared embed options; `fs` is set per role in RoomContent (`useMemo` + stable ref)
+ * so the coach iframe omits YouTube fullscreen (keeps host controls visible).
+ */
+const YOUTUBE_PLAYER_OPTS_BASE = {
   width: "100%",
   height: "100%",
-  /**
-   * fs: 1 — show YouTube’s native fullscreen control (preferred over browser element fullscreen).
-   * rel: 0 — limit related video surface at end (embed policy).
-   * modestbranding / playsinline — calmer chrome, mobile-friendly inline playback.
-   */
   playerVars: {
     rel: 0,
-    fs: 1,
     modestbranding: 1,
     playsinline: 1,
   },
@@ -1025,6 +1022,19 @@ function RoomContent() {
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
+
+  /** Host: hide YouTube fullscreen (fs:0) so the coach never loses the app control bar. Viewer: fs:1. */
+  const youtubePlayerOpts = useMemo(
+    () => ({
+      width: YOUTUBE_PLAYER_OPTS_BASE.width,
+      height: YOUTUBE_PLAYER_OPTS_BASE.height,
+      playerVars: {
+        ...YOUTUBE_PLAYER_OPTS_BASE.playerVars,
+        fs: isHost ? 0 : 1,
+      },
+    }),
+    [isHost],
+  );
 
   const handleReturnHome = useCallback(() => {
     if (
@@ -2806,14 +2816,14 @@ function RoomContent() {
           >
             <div className="absolute inset-0 overflow-hidden">
               <YouTube
-                key={safeDecodeVideoId(effectiveVideoId)}
+                key={`${safeDecodeVideoId(effectiveVideoId)}-${isHost ? "host" : "viewer"}`}
                 ref={playerRef}
                 videoId={safeDecodeVideoId(effectiveVideoId)}
                 onReady={handlePlayerReady}
                 onStateChange={handleYoutubeStateChange}
                 className="absolute left-0 top-0 h-full w-full"
                 iframeClassName="absolute left-0 top-0 h-full w-full"
-                opts={YOUTUBE_PLAYER_OPTS}
+                opts={youtubePlayerOpts}
               />
             </div>
             <TelestratorOverlay
