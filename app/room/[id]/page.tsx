@@ -418,10 +418,12 @@ const PLAYBACK_EXPLICIT_STEP_S = 3.0;
  * While playing: only seek if local is this far behind remote (no backward seek, no small/medium seeks).
  */
 const SEEK_WHILE_PLAYING_LARGE_S = 2.5;
-/** Within this drift (seconds), viewer uses exact host playbackRate. */
-const RATE_SYNC_DEADBAND_S = 0.5;
+/** Within this drift (seconds), viewer uses exact host playbackRate (wider = less speed hunting). */
+const RATE_SYNC_DEADBAND_S = 0.88;
 /** Nudge magnitude relative to host rate when moderately ahead/behind (applied to host rate). */
-const RATE_NUDGE_DELTA = 0.25;
+const RATE_NUDGE_DELTA = 0.12;
+/** Min change before applying a viewer correction rate vs last applied (reduces setPlaybackRate churn). */
+const VIEWER_RATE_CORRECTION_EPS = 0.028;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
@@ -467,6 +469,26 @@ function computeViewerPlaybackRate(hostRate: number, drift: number): number {
     return hostRate + RATE_NUDGE_DELTA;
   }
   return Math.max(hostRate - RATE_NUDGE_DELTA, 0.25);
+}
+
+/**
+ * Only push a new correction playbackRate when it meaningfully differs from the last
+ * applied value — avoids rapid oscillation between host rate and nudged rate on heartbeats.
+ */
+function shouldApplyViewerCorrectionRate(
+  prevApplied: number,
+  target: number,
+  hostRate: number,
+): boolean {
+  if (!Number.isFinite(prevApplied)) return true;
+  const targetAtHost = Math.abs(target - hostRate) < 1e-6;
+  const prevAtHost = Math.abs(prevApplied - hostRate) < 1e-6;
+  if (targetAtHost && prevAtHost) return false;
+  if (targetAtHost && !prevAtHost) return true;
+  if (!targetAtHost && prevAtHost) {
+    return Math.abs(target - hostRate) > VIEWER_RATE_CORRECTION_EPS;
+  }
+  return Math.abs(prevApplied - target) > VIEWER_RATE_CORRECTION_EPS;
 }
 
 function shouldSeekToRemoteTime(params: {
@@ -715,8 +737,11 @@ async function viewerApplySyncSnapshot(
     const d = t2 - state.currentTime;
     const target = computeViewerPlaybackRate(hostRate, d);
     if (
-      !Number.isFinite(lastViewerSyncRateRef.current) ||
-      Math.abs(lastViewerSyncRateRef.current - target) > 1e-4
+      shouldApplyViewerCorrectionRate(
+        lastViewerSyncRateRef.current,
+        target,
+        hostRate,
+      )
     ) {
       await safeSetPlaybackRate(player, target);
       lastViewerSyncRateRef.current = target;
@@ -950,8 +975,11 @@ async function viewerApplyLegacyTimeDriven(
   const needRate =
     !prev ||
     Math.abs(prev.playbackRate - hostRate) > 1e-6 ||
-    !Number.isFinite(lastViewerSyncRateRef.current) ||
-    Math.abs(lastViewerSyncRateRef.current - targetPlaybackRate) > 1e-4;
+    shouldApplyViewerCorrectionRate(
+      lastViewerSyncRateRef.current,
+      targetPlaybackRate,
+      hostRate,
+    );
   if (needRate) {
     await safeSetPlaybackRate(player, targetPlaybackRate);
     lastViewerSyncRateRef.current = targetPlaybackRate;
@@ -1010,8 +1038,8 @@ function RoomContent() {
     ) {
       return;
     }
-    router.push("/");
-  }, [isHost, router]);
+    router.push(user ? "/app" : "/");
+  }, [isHost, router, user]);
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
