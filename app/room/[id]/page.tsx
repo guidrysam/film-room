@@ -574,6 +574,30 @@ const YT_ENDED = 0;
 const YT_PLAYING = 1;
 const YT_PAUSED = 2;
 const YT_BUFFERING = 3;
+const YT_UNSTARTED = -1;
+const YT_CUED = 5;
+
+function youtubeStateLabel(data: number): string {
+  switch (data) {
+    case YT_UNSTARTED:
+      return "UNSTARTED";
+    case YT_ENDED:
+      return "ENDED";
+    case YT_PLAYING:
+      return "PLAYING";
+    case YT_PAUSED:
+      return "PAUSED";
+    case YT_BUFFERING:
+      return "BUFFERING";
+    case YT_CUED:
+      return "CUED";
+    default:
+      return String(data);
+  }
+}
+
+/** After host taps Play, suppress heartbeat RTDB writes to avoid racing BUFFERING on mobile. */
+const HOST_PLAY_HEARTBEAT_SUPPRESS_MS = 2800;
 
 async function readYoutubePlayerState(
   player: YouTubePlayer,
@@ -1089,6 +1113,8 @@ function RoomContent() {
   const [telDrawOn, setTelDrawOn] = useState(false);
   /** Viewer pseudo-fullscreen: large stage, minimal chrome (independent of browser fullscreen API). */
   const [viewerWatchMode, setViewerWatchMode] = useState(false);
+  /** Host-only: expand stage/workspace in-page (not YouTube or browser fullscreen). */
+  const [hostFocusMode, setHostFocusMode] = useState(false);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1175,6 +1201,10 @@ function RoomContent() {
   const roomStateRef = useRef<RoomState | null>(null);
   /** Skip redundant host heartbeat RTDB writes when playhead barely moved. */
   const lastHostHeartbeatSentRef = useRef<number | null>(null);
+  /** Last host Play tap — used to avoid heartbeat / drift-seek races on Android. */
+  const hostLastPlayGestureAtRef = useRef(0);
+  /** Last logged YouTube `event.data` for host (avoids duplicate BUFFERING spam). */
+  const hostLastYtStateCodeRef = useRef<number | null>(null);
 
   const isHostRef = useRef(isHost);
 
@@ -1210,6 +1240,7 @@ function RoomContent() {
     isLiveStreamRef.current = false;
     setLiveBehindSec(null);
     lastHostHeartbeatSentRef.current = null;
+    hostLastYtStateCodeRef.current = null;
   }, [activeYouTubeVideoId]);
 
   useLayoutEffect(() => {
@@ -1692,7 +1723,17 @@ function RoomContent() {
         if (stale()) return;
 
         let didSeek = false;
+        const pauseToPlayEdge =
+          !!prev && !prev.isPlaying && state.isPlaying;
+        if (pauseToPlayEdge) {
+          syncLog("host apply: skip drift seek (pause→play edge)", {
+            localT,
+            remoteT: state.currentTime,
+            action: state.action,
+          });
+        }
         if (
+          !pauseToPlayEdge &&
           shouldSeekToRemoteTime({
             localT,
             remoteT: state.currentTime,
@@ -1701,6 +1742,10 @@ function RoomContent() {
             state,
           })
         ) {
+          syncLog("host apply: drift seek to room time", {
+            localT,
+            remoteT: state.currentTime,
+          });
           await player.seekTo(state.currentTime, true);
           didSeek = true;
           await player.getCurrentTime();
@@ -2001,6 +2046,13 @@ function RoomContent() {
    */
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
+      if (isHostRef.current && event.data !== hostLastYtStateCodeRef.current) {
+        hostLastYtStateCodeRef.current = event.data;
+        syncLog("host yt player state", {
+          state: youtubeStateLabel(event.data),
+          code: event.data,
+        });
+      }
       if (event.data !== YT_ENDED) return;
       if (isLiveStreamRef.current) {
         syncLog("YT_ENDED ignored (YouTube live mode)");
@@ -2406,6 +2458,12 @@ function RoomContent() {
     const tick = () => {
       if (!isHostRef.current) return;
       if (!roomStateRef.current?.isPlaying) return;
+      if (
+        Date.now() - hostLastPlayGestureAtRef.current <
+        HOST_PLAY_HEARTBEAT_SUPPRESS_MS
+      ) {
+        return;
+      }
       const player = playerRef.current?.getInternalPlayer() as
         | YouTubePlayer
         | null
@@ -2414,6 +2472,12 @@ function RoomContent() {
       const pr = roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       void readYoutubeCurrentTime(player, fb).then((t) => {
         if (!isHostRef.current || !roomStateRef.current?.isPlaying) return;
+        if (
+          Date.now() - hostLastPlayGestureAtRef.current <
+          HOST_PLAY_HEARTBEAT_SUPPRESS_MS
+        ) {
+          return;
+        }
         const last = lastHostHeartbeatSentRef.current;
         if (
           last !== null &&
@@ -2442,11 +2506,17 @@ function RoomContent() {
 
   const handlePlay = () => {
     if (!isHost) return;
+    hostLastPlayGestureAtRef.current = Date.now();
+    syncLog("host pressed Play");
     const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
+      syncLog("host Play transport", {
+        anchorTime: t,
+        playbackRate: pr,
+      });
       writeImmediatePlaybackCommand("play", {
         isPlaying: true,
         currentTime: t,
@@ -2851,12 +2921,14 @@ function RoomContent() {
       : null;
 
   const viewerWatchLayout = viewerWatchMode && !isHost;
+  const hostFocusLayout = isHost && hostFocusMode;
+  const immersiveLayout = viewerWatchLayout || hostFocusLayout;
 
   return (
     <>
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
-        viewerWatchLayout
+        immersiveLayout
           ? "fixed inset-0 z-40 overflow-hidden bg-[#030306] px-2 pb-2 pt-14 sm:px-3 sm:pt-16"
           : "px-4 py-6"
       }`}
@@ -2870,7 +2942,7 @@ function RoomContent() {
       </button>
       <div
         className={`mx-auto flex w-full flex-1 flex-col ${
-          viewerWatchLayout ? "max-w-none justify-center" : "max-w-3xl"
+          immersiveLayout ? "max-w-none justify-center" : "max-w-3xl"
         }`}
       >
         {!(viewerWatchMode && !isHost) ? (
@@ -2903,6 +2975,14 @@ function RoomContent() {
                   className={secondaryHostBtn}
                 >
                   {copied ? "Copied" : "Copy Viewer Link"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHostFocusMode((v) => !v)}
+                  className={secondaryHostBtn}
+                  aria-pressed={hostFocusMode}
+                >
+                  {hostFocusMode ? "Exit focus" : "Focus"}
                 </button>
               </div>
             ) : null}
@@ -3100,7 +3180,7 @@ function RoomContent() {
 
         <div
           className={`relative w-full overflow-hidden bg-black ${
-            viewerWatchLayout
+            immersiveLayout
               ? "shrink-0 rounded-none ring-0 shadow-none"
               : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
@@ -3112,7 +3192,7 @@ function RoomContent() {
           */}
           <div
             className={`relative aspect-video w-full min-h-[12rem] overflow-hidden ${
-              viewerWatchLayout
+              immersiveLayout
                 ? "max-h-[min(100dvw*0.5625,85dvh)] mx-auto w-full max-w-[100dvw]"
                 : ""
             }`}
