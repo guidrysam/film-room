@@ -414,16 +414,30 @@ const PLAYBACK_EXPLICIT_STEP_S = 3.0;
 /**
  * While playing: only seek if local is this far behind remote (no backward seek, no small/medium seeks).
  */
-const SEEK_WHILE_PLAYING_LARGE_S = 2.5;
+const SEEK_WHILE_PLAYING_LARGE_S = 4.0;
 /** Within this drift (seconds), viewer uses exact host playbackRate (wider = less speed hunting). */
-const RATE_SYNC_DEADBAND_S = 0.88;
+const RATE_SYNC_DEADBAND_S = 1.12;
 /** Nudge magnitude relative to host rate when moderately ahead/behind (applied to host rate). */
-const RATE_NUDGE_DELTA = 0.12;
+const RATE_NUDGE_DELTA = 0.08;
 /** Min change before applying a viewer correction rate vs last applied (reduces setPlaybackRate churn). */
 const VIEWER_RATE_CORRECTION_EPS = 0.028;
 /** First apply / explicit host playhead move: small deadband. */
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
+
+/** Host time ping while playing (RTDB `action: sync`, not `playbackCommand`). */
+const HOST_PLAYBACK_HEARTBEAT_MS = 5_000;
+/**
+ * Heartbeat / host echo: while playing, explicit time jumps (e.g. heartbeat) only seek
+ * when drift exceeds this — avoids micro-seeks on each ping.
+ */
+const EXPLICIT_SEEK_PLAYING_MIN_DRIFT_S = 0.55;
+/**
+ * Viewer heartbeat (`action: sync`): aligned within this — no seek, no rate nudge vs host.
+ */
+const VIEWER_HEARTBEAT_DRIFT_IGNORE_S = 1.2;
+/** Viewer heartbeat: one seek to host if |drift| exceeds this (seconds). */
+const VIEWER_HEARTBEAT_LARGE_SEEK_S = 4.5;
 
 /** Growing `getDuration()` while playing ⇒ treat as YouTube live / DVR window. */
 const LIVE_DURATION_GROWTH_S = 0.75;
@@ -512,6 +526,9 @@ function shouldSeekToRemoteTime(params: {
     const explicitTransport = timeStep > PLAYBACK_EXPLICIT_STEP_S;
 
     if (explicitTransport) {
+      if (isPlaying) {
+        return Math.abs(drift) > EXPLICIT_SEEK_PLAYING_MIN_DRIFT_S;
+      }
       return Math.abs(drift) > SEEK_AFTER_TRANSPORT_JUMP_S;
     }
 
@@ -750,7 +767,7 @@ async function safeSetPlaybackRate(
 }
 
 /**
- * Occasional host time ping (~12s): large drift + light rate nudge only — no command transport.
+ * Host heartbeat (`action: sync`): align to host clock without micro rate-hunting.
  * YouTube live: still follows `state.currentTime` from the host (not the iframe live edge).
  */
 async function viewerApplySyncSnapshot(
@@ -762,25 +779,47 @@ async function viewerApplySyncSnapshot(
   const localT = await player.getCurrentTime();
   const drift = localT - state.currentTime;
   const hostRate = state.playbackRate;
+  const adrift = Math.abs(drift);
 
   if (state.isPlaying) {
-    if (drift < -SEEK_WHILE_PLAYING_LARGE_S) {
-      await player.seekTo(state.currentTime, true);
+    if (adrift <= VIEWER_HEARTBEAT_DRIFT_IGNORE_S) {
+      if (
+        shouldApplyViewerCorrectionRate(
+          lastViewerSyncRateRef.current,
+          hostRate,
+          hostRate,
+        )
+      ) {
+        await safeSetPlaybackRate(player, hostRate);
+        lastViewerSyncRateRef.current = hostRate;
+      }
+      await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+      return;
     }
-    const t2 = await player.getCurrentTime();
-    const d = t2 - state.currentTime;
-    const target = computeViewerPlaybackRate(hostRate, d);
+    if (adrift > VIEWER_HEARTBEAT_LARGE_SEEK_S) {
+      syncLog("viewer heartbeat large drift → seek", {
+        drift,
+        hostTime: state.currentTime,
+      });
+      await player.seekTo(state.currentTime, true);
+      await safeSetPlaybackRate(player, hostRate);
+      lastViewerSyncRateRef.current = hostRate;
+      await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+      return;
+    }
+    /* Moderate drift: keep host rate; avoid playback-rate nudge churn. */
     if (
       shouldApplyViewerCorrectionRate(
         lastViewerSyncRateRef.current,
-        target,
+        hostRate,
         hostRate,
       )
     ) {
-      await safeSetPlaybackRate(player, target);
-      lastViewerSyncRateRef.current = target;
+      await safeSetPlaybackRate(player, hostRate);
+      lastViewerSyncRateRef.current = hostRate;
     }
     await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+    return;
   } else {
     if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
       await player.seekTo(state.currentTime, true);
@@ -994,6 +1033,10 @@ async function viewerApplyLegacyTimeDriven(
       state,
     })
   ) {
+    syncLog("viewer legacy drift seek", {
+      drift: localT - state.currentTime,
+      remoteT: state.currentTime,
+    });
     await player.seekTo(state.currentTime, true);
     didSeek = true;
     tForDrift = await player.getCurrentTime();
@@ -1003,7 +1046,9 @@ async function viewerApplyLegacyTimeDriven(
   const drift = tForDrift - state.currentTime;
   const hostRate = state.playbackRate;
   const targetPlaybackRate = state.isPlaying
-    ? computeViewerPlaybackRate(hostRate, drift)
+    ? Math.abs(drift) < VIEWER_HEARTBEAT_DRIFT_IGNORE_S
+      ? hostRate
+      : computeViewerPlaybackRate(hostRate, drift)
     : hostRate;
 
   const needRate =
@@ -1128,6 +1173,8 @@ function RoomContent() {
   /** Last `prev` passed into `applyRoomStateToPlayer` (for unlock resync pair with `roomStateRef`). */
   const applyPrevSnapshotRef = useRef<RoomState | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);
+  /** Skip redundant host heartbeat RTDB writes when playhead barely moved. */
+  const lastHostHeartbeatSentRef = useRef<number | null>(null);
 
   const isHostRef = useRef(isHost);
 
@@ -1162,6 +1209,7 @@ function RoomContent() {
     setIsLiveStream(false);
     isLiveStreamRef.current = false;
     setLiveBehindSec(null);
+    lastHostHeartbeatSentRef.current = null;
   }, [activeYouTubeVideoId]);
 
   useLayoutEffect(() => {
@@ -1796,6 +1844,17 @@ function RoomContent() {
       const rr = roomRefForWrite.current;
       if (!rr || !isHostRef.current) return;
       hostActionSeqRef.current += 1;
+      if (action !== "sync") {
+        const clipIdx =
+          action === "clip" && typeof partial.currentClipIndex === "number"
+            ? (partial.currentClipIndex as number)
+            : undefined;
+        syncLog("host playback event", {
+          transportAction: action,
+          ...(clipIdx !== undefined ? { currentClipIndex: clipIdx } : {}),
+          clearCommand: Boolean(options?.clearPlaybackCommand),
+        });
+      }
       void update(rr, {
         ...partial,
         ...(options?.clearPlaybackCommand ? { playbackCommand: null } : {}),
@@ -1913,7 +1972,13 @@ function RoomContent() {
         playbackRate: fields.playbackRate,
         commandId,
       };
-      syncLog("host immediate command", playbackCommand);
+      syncLog("host playback event", {
+        type: transportAction,
+        commandId,
+        anchorVideoTime: fields.currentTime,
+        isPlaying: fields.isPlaying,
+        playbackRate: fields.playbackRate,
+      });
       void update(rr, {
         isPlaying: fields.isPlaying,
         currentTime: fields.currentTime,
@@ -2330,10 +2395,13 @@ function RoomContent() {
   );
 
   /**
-   * Host only: infrequent time ping while playing for late join / drift recovery — not command transport.
+   * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
    */
   useEffect(() => {
-    if (!isHost || !roomState?.isPlaying) return;
+    if (!isHost || !roomState?.isPlaying) {
+      lastHostHeartbeatSentRef.current = null;
+      return;
+    }
 
     const tick = () => {
       if (!isHostRef.current) return;
@@ -2346,6 +2414,17 @@ function RoomContent() {
       const pr = roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
       void readYoutubeCurrentTime(player, fb).then((t) => {
         if (!isHostRef.current || !roomStateRef.current?.isPlaying) return;
+        const last = lastHostHeartbeatSentRef.current;
+        if (
+          last !== null &&
+          Math.abs(t - last) < 0.08 &&
+          Math.abs(pr - (roomStateRef.current.playbackRate ?? DEFAULT_PLAYBACK_RATE)) <
+            1e-6
+        ) {
+          return;
+        }
+        lastHostHeartbeatSentRef.current = t;
+        syncLog("host heartbeat", { currentTime: t, playbackRate: pr });
         writeHostTransport(
           {
             isPlaying: true,
@@ -2357,7 +2436,7 @@ function RoomContent() {
       });
     };
 
-    const id = window.setInterval(tick, 12_000);
+    const id = window.setInterval(tick, HOST_PLAYBACK_HEARTBEAT_MS);
     return () => window.clearInterval(id);
   }, [isHost, roomId, roomState?.isPlaying, writeHostTransport]);
 
