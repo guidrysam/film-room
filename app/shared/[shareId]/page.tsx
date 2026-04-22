@@ -44,11 +44,18 @@ export default function SharedTemplatePage() {
   const [loading, setLoading] = useState(true);
   const [template, setTemplate] = useState<SavedSessionDoc | null>(null);
   const [notFound, setNotFound] = useState(false);
+  /** Firestore permission / index / network — distinct from “no matching shareId”. */
+  const [queryError, setQueryError] = useState<{
+    message: string;
+    code?: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!shareId) {
       setNotFound(true);
+      setQueryError(null);
+      setTemplate(null);
       setLoading(false);
       return;
     }
@@ -56,19 +63,28 @@ export default function SharedTemplatePage() {
     void (async () => {
       setLoading(true);
       setNotFound(false);
+      setQueryError(null);
+      setTemplate(null);
       try {
-        const row = await getSavedSessionByShareId(shareId);
+        const result = await getSavedSessionByShareId(shareId);
         if (cancelled) return;
-        if (!row) {
+        if (result.ok) {
+          setTemplate(result.data);
+        } else if (result.kind === "not_found") {
           setNotFound(true);
-          setTemplate(null);
         } else {
-          setTemplate(row.data);
+          setQueryError({
+            message: result.message,
+            code: result.code,
+          });
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setNotFound(true);
-          setTemplate(null);
+          const msg =
+            err instanceof Error && err.message.trim()
+              ? err.message
+              : "Unexpected error while loading this link.";
+          setQueryError({ message: msg });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -101,6 +117,56 @@ export default function SharedTemplatePage() {
     );
   }
 
+  if (queryError) {
+    const isPermission =
+      queryError.code === "permission-denied" ||
+      /permission|insufficient/i.test(queryError.message);
+    const isIndex =
+      queryError.code === "failed-precondition" ||
+      /\bindex\b/i.test(queryError.message);
+    return (
+      <div className="min-h-screen bg-[#030306] px-4 py-16 text-zinc-50">
+        <div className="mx-auto w-full max-w-lg">
+          <div className={panelClass}>
+            <h1 className="mb-2 text-lg font-semibold text-white">
+              Could not load this template
+            </h1>
+            <p className="mb-3 text-sm leading-relaxed text-zinc-300">
+              This shared template could not be loaded. Firestore permissions or
+              index configuration may be blocking access.
+            </p>
+            {isPermission ? (
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-amber-200/90">
+                Likely cause: permission denied (check Firestore rules for
+                collection group queries on{" "}
+                <code className="rounded bg-white/10 px-1 font-mono normal-case">
+                  savedSessions
+                </code>
+                ).
+              </p>
+            ) : null}
+            {isIndex && !isPermission ? (
+              <p className="mb-3 text-xs font-medium uppercase tracking-wide text-amber-200/90">
+                Likely cause: Firestore index — a collection group index on{" "}
+                <code className="rounded bg-white/10 px-1 font-mono normal-case">
+                  shareId
+                </code>{" "}
+                may be required.
+              </p>
+            ) : null}
+            <p className="mb-4 rounded-lg border border-white/[0.08] bg-black/40 px-3 py-2 font-mono text-xs leading-relaxed text-zinc-400">
+              {queryError.code ? `[${queryError.code}] ` : ""}
+              {queryError.message}
+            </p>
+            <Link href="/" className={linkBack}>
+              ← Home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (notFound || !template) {
     return (
       <div className="min-h-screen bg-[#030306] px-4 py-16 text-zinc-50">
@@ -110,7 +176,8 @@ export default function SharedTemplatePage() {
               Template not found
             </h1>
             <p className="mb-6 text-sm text-zinc-400">
-              This link may be invalid or sharing may have been turned off.
+              No saved session matches this link. The share id may be wrong,
+              sharing may be off, or the template was removed.
             </p>
             <Link href="/" className={linkBack}>
               ← Home

@@ -66,6 +66,25 @@ function firestoreErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
+function firestoreErrorCode(err: unknown): string | undefined {
+  if (err && typeof err === "object" && "code" in err) {
+    const c = (err as { code?: unknown }).code;
+    if (typeof c === "string" && c.trim() !== "") return c;
+  }
+  return undefined;
+}
+
+/** Result of `getSavedSessionByShareId` — distinguishes missing template vs Firestore failures. */
+export type SharedSessionLookupResult =
+  | {
+      ok: true;
+      id: string;
+      ownerUserId: string;
+      data: SavedSessionDoc;
+    }
+  | { ok: false; kind: "not_found" }
+  | { ok: false; kind: "query_failed"; code?: string; message: string };
+
 function parseSavedSessionFields(
   v: Record<string, unknown>,
   ownerUserId: string,
@@ -263,19 +282,64 @@ export async function ensureSessionSharing(
 
 /**
  * Fetch a shared template by public `shareId` (collection group query).
+ * Returns `not_found` when the query succeeds but no matching shared doc exists;
+ * returns `query_failed` when Firestore throws (permissions, index, network, etc.).
  */
 export async function getSavedSessionByShareId(
   shareId: string,
-): Promise<{ id: string; ownerUserId: string; data: SavedSessionDoc } | null> {
+): Promise<SharedSessionLookupResult> {
   const trimmed = shareId.trim();
-  if (!trimmed) return null;
+  if (!trimmed) {
+    console.log(
+      "[saved-sessions] getSavedSessionByShareId: empty shareId after trim",
+    );
+    return { ok: false, kind: "not_found" };
+  }
+
+  console.log(
+    "[saved-sessions] getSavedSessionByShareId: request shareId=",
+    trimmed,
+  );
+
   const q = query(
     collectionGroup(firestore, "savedSessions"),
     where("shareId", "==", trimmed),
     limit(1),
   );
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
+
+  console.log(
+    "[saved-sessions] getSavedSessionByShareId: collectionGroup query started (savedSessions.shareId)",
+  );
+
+  let snap;
+  try {
+    snap = await getDocs(q);
+  } catch (err) {
+    const code = firestoreErrorCode(err);
+    const message = firestoreErrorMessage(
+      err,
+      "Firestore collection group query failed.",
+    );
+    console.error(
+      "[saved-sessions] getSavedSessionByShareId: Firestore error",
+      { code, message, err },
+    );
+    return { ok: false, kind: "query_failed", code, message };
+  }
+
+  console.log(
+    "[saved-sessions] getSavedSessionByShareId: query success empty=",
+    snap.empty,
+  );
+
+  if (snap.empty) {
+    console.log(
+      "[saved-sessions] getSavedSessionByShareId: zero results for shareId=",
+      trimmed,
+    );
+    return { ok: false, kind: "not_found" };
+  }
+
   const d = snap.docs[0];
   const pathParts = d.ref.path.split("/");
   const ownerIdx = pathParts.indexOf("users");
@@ -287,8 +351,23 @@ export async function getSavedSessionByShareId(
     d.data() as Record<string, unknown>,
     ownerUserId,
   );
-  if (!v.isShared || !v.shareId) return null;
+  if (!v.isShared || !v.shareId) {
+    console.warn(
+      "[saved-sessions] getSavedSessionByShareId: matched doc is not a shared template (missing isShared/shareId); treating as not_found path=",
+      d.ref.path,
+    );
+    return { ok: false, kind: "not_found" };
+  }
+
+  console.log(
+    "[saved-sessions] getSavedSessionByShareId: resolved template id=",
+    d.id,
+    "ownerUserId=",
+    ownerUserId,
+  );
+
   return {
+    ok: true,
     id: d.id,
     ownerUserId,
     data: {
