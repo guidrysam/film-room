@@ -31,7 +31,10 @@ function setCached(videoId: string, title: string | null, ttlMs: number) {
  */
 export async function GET(request: NextRequest) {
   const videoId = request.nextUrl.searchParams.get("videoId")?.trim() ?? "";
+  console.log("[YT TITLE] request videoId=", videoId || "(empty)");
+
   if (!videoId || !VIDEO_ID_RE.test(videoId)) {
+    console.log("[YT TITLE] invalid or missing videoId (reject)");
     return NextResponse.json(
       { error: "Invalid or missing videoId" },
       { status: 400 },
@@ -40,16 +43,18 @@ export async function GET(request: NextRequest) {
 
   const cached = getCached(videoId);
   if (cached !== undefined) {
+    console.log(
+      "[YT TITLE] cache hit title=",
+      cached === null ? "null" : JSON.stringify(cached),
+    );
     return NextResponse.json({ title: cached });
   }
 
   const apiKey = process.env.YOUTUBE_DATA_API_KEY?.trim();
   if (!apiKey) {
-    console.error("[api/youtube-title] YOUTUBE_DATA_API_KEY is not set");
-    return NextResponse.json(
-      { title: null, error: "YouTube title lookup is not configured on the server." },
-      { status: 503 },
-    );
+    console.warn("[YT TITLE] missing API key (YOUTUBE_DATA_API_KEY)");
+    setCached(videoId, null, 60_000);
+    return NextResponse.json({ title: null }, { status: 200 });
   }
 
   const url = new URL("https://www.googleapis.com/youtube/v3/videos");
@@ -59,18 +64,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const res = await fetch(url.toString(), { cache: "no-store" });
+    console.log("[YT TITLE] response", res.ok ? "ok" : `not ok (${res.status})`);
+
     const data = (await res.json()) as {
       items?: Array<{ snippet?: { title?: string } }>;
       error?: { message?: string; code?: number };
     };
 
     if (!res.ok) {
-      console.error(
-        "[api/youtube-title] YouTube API HTTP",
-        res.status,
+      console.warn(
+        "[YT TITLE] YouTube HTTP error body:",
         data?.error ?? data,
       );
       setCached(videoId, null, 60_000);
+      console.log("[YT TITLE] title=null");
       return NextResponse.json({ title: null }, { status: 200 });
     }
 
@@ -80,10 +87,12 @@ export async function GET(request: NextRequest) {
         ? rawTitle.trim()
         : null;
 
+    console.log("[YT TITLE] title=", title === null ? "null" : JSON.stringify(title));
     setCached(videoId, title, CACHE_TTL_MS);
     return NextResponse.json({ title });
   } catch (err) {
-    console.error("[api/youtube-title] fetch failed:", err);
+    console.warn("[YT TITLE] fetch threw:", err);
+    console.log("[YT TITLE] title=null");
     return NextResponse.json({ title: null }, { status: 200 });
   }
 }

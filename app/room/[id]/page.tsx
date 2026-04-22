@@ -2026,22 +2026,36 @@ function RoomContent() {
         const res = await fetch(
           `/api/youtube-title?videoId=${encodeURIComponent(id)}`,
         );
-        if (res.ok) {
-          const data = (await res.json()) as { title?: string | null };
+        let data: { title?: string | null } = {};
+        try {
+          data = (await res.json()) as { title?: string | null };
+        } catch {
+          console.warn("[CLIP] title fetch failed (could not parse JSON)");
+        }
+        if (!res.ok) {
+          console.warn("[CLIP] title fetch failed", `(HTTP ${res.status})`);
+        } else {
           const t =
             typeof data.title === "string" ? data.title.trim() : "";
-          if (t) label = t;
+          if (t) {
+            label = t;
+            console.log("[CLIP] title fetched:", t);
+          } else {
+            console.warn("[CLIP] title fetch failed (no usable title)");
+          }
         }
       } catch (err) {
-        console.warn("[FilmRoom] youtube title fetch failed:", err);
+        console.warn("[CLIP] title fetch failed", err);
       }
 
       const latest = roomStateRef.current;
       if (!latest) return;
 
-      const newClip = label
-        ? { videoId: id, label }
-        : { videoId: id };
+      const newClip =
+        label && label.length > 0
+          ? { videoId: id, label }
+          : { videoId: id };
+      console.log("[CLIP] final clip object:", newClip);
       const next = [...latest.clips, newClip];
       void update(rr, {
         clips: next,
