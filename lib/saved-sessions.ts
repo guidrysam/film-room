@@ -304,11 +304,12 @@ export async function getSavedSessionByShareId(
   const q = query(
     collectionGroup(firestore, "savedSessions"),
     where("shareId", "==", trimmed),
+    where("isShared", "==", true),
     limit(1),
   );
 
   console.log(
-    "[saved-sessions] getSavedSessionByShareId: collectionGroup query started (savedSessions.shareId)",
+    "[saved-sessions] getSavedSessionByShareId: collectionGroup query started (savedSessions: shareId + isShared==true)",
   );
 
   let snap;
