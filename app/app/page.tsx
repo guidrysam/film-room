@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import {
   ensureSessionSharing,
   listSavedSessions,
+  updateSavedSessionMetadata,
   type SavedSessionDoc,
 } from "@/lib/saved-sessions";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
@@ -28,6 +29,45 @@ const ghostBtn =
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
 
+const UNCATEGORIZED = "Uncategorized";
+
+function buildFolderGroups(
+  rows: Array<{ id: string; data: SavedSessionDoc }>,
+): Array<{
+  folder: string;
+  sessions: Array<{ id: string; data: SavedSessionDoc }>;
+}> {
+  const groups = new Map<
+    string,
+    Array<{ id: string; data: SavedSessionDoc }>
+  >();
+  for (const row of rows) {
+    const label =
+      typeof row.data.folder === "string" && row.data.folder.trim() !== ""
+        ? row.data.folder.trim()
+        : UNCATEGORIZED;
+    const list = groups.get(label) ?? [];
+    list.push(row);
+    groups.set(label, list);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => {
+      const tb = b.data.updatedAt?.toMillis?.() ?? 0;
+      const ta = a.data.updatedAt?.toMillis?.() ?? 0;
+      return tb - ta;
+    });
+  }
+  const folderNames = [...groups.keys()].sort((a, b) => {
+    if (a === UNCATEGORIZED) return 1;
+    if (b === UNCATEGORIZED) return -1;
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
+  return folderNames.map((folder) => ({
+    folder,
+    sessions: groups.get(folder)!,
+  }));
+}
+
 function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message.trim()) return err.message;
   if (err && typeof err === "object" && "message" in err) {
@@ -45,6 +85,15 @@ export default function DashboardPage() {
     Array<{ id: string; data: SavedSessionDoc }>
   >([]);
   const [listLoading, setListLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editFolder, setEditFolder] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const folderGroups = useMemo(
+    () => buildFolderGroups(sessions),
+    [sessions],
+  );
 
   const refreshList = useCallback(async () => {
     if (!user) return;
@@ -123,6 +172,39 @@ export default function DashboardPage() {
     }
 
     void refreshList();
+  };
+
+  const startEditSession = (id: string, data: SavedSessionDoc) => {
+    setEditingId(id);
+    setEditName(data.name);
+    setEditFolder(data.folder?.trim() ?? "");
+  };
+
+  const cancelEditSession = () => {
+    setEditingId(null);
+    setEditName("");
+    setEditFolder("");
+    setEditSaving(false);
+  };
+
+  const saveEditSession = async (sessionId: string) => {
+    if (!user) return;
+    setEditSaving(true);
+    try {
+      await updateSavedSessionMetadata(user.uid, sessionId, {
+        name: editName,
+        folder: editFolder,
+      });
+      cancelEditSession();
+      await refreshList();
+    } catch (err) {
+      console.error("[Dashboard] update session failed:", err);
+      alert(
+        `Could not update session: ${errorMessage(err, "Unknown error while saving.")}`,
+      );
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const loadSavedIntoRoom = (savedId: string, template: SavedSessionDoc) => {
@@ -238,44 +320,107 @@ export default function DashboardPage() {
               No saved sessions yet. Save one from a live room (host).
             </p>
           ) : (
-            <ul className="space-y-2.5">
-              {sessions.map(({ id, data }) => (
-                <li
-                  key={id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/50 px-4 py-3 shadow-md shadow-black/25 ring-1 ring-white/[0.03]"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white">
-                      {data.name}
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      {data.updatedAt
-                        ? data.updatedAt.toDate().toLocaleString()
-                        : "—"}
-                      {" · "}
-                      {data.clips.length} clip
-                      {data.clips.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleShareTemplate(id)}
-                      className={ghostBtn}
-                    >
-                      Share Template
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => loadSavedIntoRoom(id, data)}
-                      className="rounded-lg border border-blue-500/35 bg-blue-600/25 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
-                    >
-                      Load
-                    </button>
-                  </div>
-                </li>
+            <div className="space-y-8">
+              {folderGroups.map(({ folder, sessions: groupSessions }) => (
+                <section key={folder}>
+                  <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-zinc-300">
+                    {folder}
+                  </h2>
+                  <ul className="space-y-2.5">
+                    {groupSessions.map(({ id, data }) => (
+                      <li
+                        key={id}
+                        className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/50 px-4 py-3 shadow-md shadow-black/25 ring-1 ring-white/[0.03]"
+                      >
+                        {editingId === id ? (
+                          <>
+                            <label className="block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                              Name
+                              <input
+                                type="text"
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                className={`${inputClass} mt-1`}
+                              />
+                            </label>
+                            <label className="block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                              Program / folder
+                              <span className="ml-1 font-normal normal-case text-zinc-500">
+                                (optional)
+                              </span>
+                              <input
+                                type="text"
+                                value={editFolder}
+                                onChange={(e) => setEditFolder(e.target.value)}
+                                placeholder="Leave empty for Uncategorized"
+                                className={`${inputClass} mt-1`}
+                              />
+                            </label>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={cancelEditSession}
+                                className={ghostBtn}
+                                disabled={editSaving}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void saveEditSession(id)}
+                                disabled={editSaving}
+                                className="rounded-lg border border-blue-500/35 bg-blue-600/35 px-3 py-1.5 text-xs font-semibold text-white transition hover:border-blue-400/50 hover:bg-blue-600/55 disabled:opacity-50"
+                              >
+                                {editSaving ? "Saving…" : "Save changes"}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-white">
+                                {data.name}
+                              </p>
+                              <p className="text-xs text-zinc-400">
+                                {data.updatedAt
+                                  ? data.updatedAt.toDate().toLocaleString()
+                                  : "—"}
+                                {" · "}
+                                {data.clips.length} clip
+                                {data.clips.length === 1 ? "" : "s"}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => startEditSession(id, data)}
+                                className={ghostBtn}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleShareTemplate(id)}
+                                className={ghostBtn}
+                              >
+                                Share Template
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => loadSavedIntoRoom(id, data)}
+                                className="rounded-lg border border-blue-500/35 bg-blue-600/25 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                              >
+                                Load
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
         </div>
 

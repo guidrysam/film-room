@@ -1056,6 +1056,14 @@ function RoomContent() {
   /** Viewer-only: set true after explicit tap so autopolicy allows playVideo (see overlay). */
   const viewerPlaybackUnlockedRef = useRef(false);
   const [viewerPlaybackUnlocked, setViewerPlaybackUnlocked] = useState(false);
+  /** Save session dialog (name + optional folder). */
+  const [saveSessionOpen, setSaveSessionOpen] = useState(false);
+  const [saveSessionName, setSaveSessionName] = useState("");
+  const [saveSessionFolder, setSaveSessionFolder] = useState("");
+  const [saveSessionOwnerUid, setSaveSessionOwnerUid] = useState<string | null>(
+    null,
+  );
+  const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
   const lastAppliedCommandIdRef = useRef(0);
   const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
@@ -1107,7 +1115,6 @@ function RoomContent() {
 
   useEffect(() => {
     viewerPlaybackUnlockedRef.current = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset draft when room changes
     setClipUrlDraft("");
     setViewerPlaybackUnlocked(false);
     if (chapterNavFlashTimerRef.current !== null) {
@@ -2399,7 +2406,16 @@ function RoomContent() {
     });
   };
 
-  const handleSaveSession = useCallback(async () => {
+  const saveSessionDefaultName = useCallback(
+    () =>
+      `Session ${new Date().toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })}`,
+    [],
+  );
+
+  const openSaveSessionDialog = useCallback(async () => {
     if (!isHost || !roomState) return;
     let u = user;
     if (!u) {
@@ -2410,16 +2426,29 @@ function RoomContent() {
         return;
       }
     }
-    const fallback = `Session ${new Date().toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    })}`;
-    const raw = window.prompt("Session name", fallback);
-    if (raw === null) return;
+    setSaveSessionName(saveSessionDefaultName());
+    setSaveSessionFolder("");
+    setSaveSessionOwnerUid(u.uid);
+    setSaveSessionOpen(true);
+  }, [isHost, roomState, user, saveSessionDefaultName]);
+
+  const closeSaveSessionDialog = useCallback(() => {
+    setSaveSessionOpen(false);
+    setSaveSessionOwnerUid(null);
+    setSaveSessionSaving(false);
+  }, []);
+
+  const confirmSaveSession = useCallback(async () => {
+    if (!isHost || !roomState) return;
+    const uid = saveSessionOwnerUid ?? user?.uid;
+    if (!uid) return;
+    const fallback = saveSessionDefaultName();
     const name =
-      typeof raw === "string" && raw.trim() !== "" ? raw.trim() : fallback;
+      saveSessionName.trim() !== "" ? saveSessionName.trim() : fallback;
+    const folderTrim = saveSessionFolder.trim();
+    setSaveSessionSaving(true);
     try {
-      await saveSessionTemplate(u.uid, {
+      await saveSessionTemplate(uid, {
         name,
         clips: roomState.clips.map(clipToSavedClip),
         chapters: roomState.chapters.map((ch) => ({
@@ -2428,12 +2457,25 @@ function RoomContent() {
           videoId: ch.videoId,
         })),
         currentClipIndex: roomState.currentClipIndex,
+        ...(folderTrim !== "" ? { folder: folderTrim } : {}),
       });
+      closeSaveSessionDialog();
       alert("Session saved.");
     } catch {
       alert("Could not save session. Check Firestore rules and login.");
+    } finally {
+      setSaveSessionSaving(false);
     }
-  }, [isHost, roomState, user]);
+  }, [
+    isHost,
+    roomState,
+    saveSessionOwnerUid,
+    user?.uid,
+    saveSessionName,
+    saveSessionFolder,
+    saveSessionDefaultName,
+    closeSaveSessionDialog,
+  ]);
 
   const chaptersDisplay = useMemo(
     () =>
@@ -2519,6 +2561,9 @@ function RoomContent() {
   const secondaryHostBtn =
     "rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-50 transition duration-150 hover:border-white/20 hover:bg-white/[0.10] active:scale-[0.98] active:bg-white/[0.14] active:border-white/28 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100";
 
+  const saveSessionFieldClass =
+    "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
+
   const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
   const activeChapterIndex =
     roomState?.chapters?.length && roomState.videoId
@@ -2551,6 +2596,7 @@ function RoomContent() {
   const viewerWatchLayout = viewerWatchMode && !isHost;
 
   return (
+    <>
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
         viewerWatchLayout
@@ -2589,7 +2635,7 @@ function RoomContent() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => void handleSaveSession()}
+                  onClick={() => void openSaveSessionDialog()}
                   className={secondaryHostBtn}
                 >
                   Save Session
@@ -2938,6 +2984,71 @@ function RoomContent() {
         </div>
       </div>
     </div>
+    {saveSessionOpen ? (
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+        role="presentation"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) closeSaveSessionDialog();
+        }}
+      >
+        <div
+          className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-zinc-950/95 p-5 shadow-2xl shadow-black/50 ring-1 ring-white/[0.05]"
+          role="dialog"
+          aria-labelledby="save-session-title"
+        >
+          <h2
+            id="save-session-title"
+            className="mb-4 text-sm font-semibold text-white"
+          >
+            Save session
+          </h2>
+          <label className="block text-xs font-medium uppercase tracking-wide text-zinc-400">
+            Name
+            <input
+              type="text"
+              value={saveSessionName}
+              onChange={(e) => setSaveSessionName(e.target.value)}
+              className={saveSessionFieldClass}
+              autoComplete="off"
+            />
+          </label>
+          <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-zinc-400">
+            Program / folder{" "}
+            <span className="font-normal normal-case text-zinc-500">
+              (optional)
+            </span>
+            <input
+              type="text"
+              value={saveSessionFolder}
+              onChange={(e) => setSaveSessionFolder(e.target.value)}
+              placeholder="e.g. U12 / Passing"
+              className={saveSessionFieldClass}
+              autoComplete="off"
+            />
+          </label>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeSaveSessionDialog}
+              className={secondaryHostBtn}
+              disabled={saveSessionSaving}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmSaveSession()}
+              disabled={saveSessionSaving}
+              className="rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saveSessionSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }
 

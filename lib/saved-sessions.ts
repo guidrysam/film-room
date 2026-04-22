@@ -1,6 +1,7 @@
 import {
   collection,
   collectionGroup,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -28,6 +29,8 @@ export type SavedChapter = {
  */
 export type SavedSessionDoc = {
   name: string;
+  /** Optional curriculum / program label for dashboard grouping. */
+  folder?: string;
   clips: SavedClip[];
   chapters: SavedChapter[];
   currentClipIndex: number;
@@ -78,8 +81,14 @@ function parseSavedSessionFields(
     shareIdRaw.trim() !== ""
       ? shareIdRaw.trim()
       : undefined;
+  const folderRaw = v.folder;
+  const folder =
+    typeof folderRaw === "string" && folderRaw.trim() !== ""
+      ? folderRaw.trim()
+      : undefined;
   return {
     name: typeof v.name === "string" ? v.name : "Session",
+    ...(folder ? { folder } : {}),
     clips: Array.isArray(v.clips) ? (v.clips as SavedClip[]) : [],
     chapters: Array.isArray(v.chapters) ? (v.chapters as SavedChapter[]) : [],
     currentClipIndex:
@@ -99,10 +108,14 @@ export async function saveSessionTemplate(
     clips: SavedClip[];
     chapters: SavedChapter[];
     currentClipIndex: number;
+    /** Trimmed; omit or empty to store no folder field. */
+    folder?: string;
   },
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId));
   const now = serverTimestamp();
+  const folderTrim =
+    typeof data.folder === "string" ? data.folder.trim() : "";
   await setDoc(ref, {
     name: data.name,
     clips: data.clips,
@@ -111,8 +124,31 @@ export async function saveSessionTemplate(
     ownerUserId,
     createdAt: now,
     updatedAt: now,
+    ...(folderTrim !== "" ? { folder: folderTrim } : {}),
   });
   return ref.id;
+}
+
+/**
+ * Update display name and optional folder (empty string clears `folder` on the doc).
+ */
+export async function updateSavedSessionMetadata(
+  ownerUserId: string,
+  sessionId: string,
+  patch: { name: string; folder: string },
+): Promise<void> {
+  const ref = doc(sessionsCol(ownerUserId), sessionId);
+  const name =
+    typeof patch.name === "string" && patch.name.trim() !== ""
+      ? patch.name.trim()
+      : "Session";
+  const folderTrim =
+    typeof patch.folder === "string" ? patch.folder.trim() : "";
+  await updateDoc(ref, {
+    name,
+    updatedAt: serverTimestamp(),
+    ...(folderTrim !== "" ? { folder: folderTrim } : { folder: deleteField() }),
+  });
 }
 
 export async function listSavedSessions(
@@ -129,6 +165,7 @@ export async function listSavedSessions(
       id: d.id,
       data: {
         name: v.name,
+        ...(v.folder ? { folder: v.folder } : {}),
         clips: v.clips,
         chapters: v.chapters,
         currentClipIndex: v.currentClipIndex,
@@ -159,6 +196,7 @@ export async function getSavedSession(
   );
   return {
     name: v.name,
+    ...(v.folder ? { folder: v.folder } : {}),
     clips: v.clips,
     chapters: v.chapters,
     currentClipIndex: v.currentClipIndex,
@@ -255,6 +293,7 @@ export async function getSavedSessionByShareId(
     ownerUserId,
     data: {
       name: v.name,
+      ...(v.folder ? { folder: v.folder } : {}),
       clips: v.clips,
       chapters: v.chapters,
       currentClipIndex: v.currentClipIndex,
@@ -274,8 +313,13 @@ export async function duplicateSessionToMyLibrary(
   ownerUserId: string,
   source: SavedSessionDoc,
 ): Promise<string> {
+  const folderDup =
+    typeof source.folder === "string" && source.folder.trim() !== ""
+      ? source.folder.trim()
+      : undefined;
   return saveSessionTemplate(ownerUserId, {
     name: source.name,
+    ...(folderDup ? { folder: folderDup } : {}),
     clips: source.clips.map((c) => ({
       videoId: c.videoId,
       ...(c.label?.trim() ? { label: c.label.trim() } : {}),
