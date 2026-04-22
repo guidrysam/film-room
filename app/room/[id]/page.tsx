@@ -425,6 +425,11 @@ const VIEWER_RATE_CORRECTION_EPS = 0.028;
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
 
+/** Growing `getDuration()` while playing ⇒ treat as YouTube live / DVR window. */
+const LIVE_DURATION_GROWTH_S = 0.75;
+const LIVE_DURATION_MIN_BASE_S = 5;
+const LIVE_EDGE_CLAMP_PAD_S = 0.15;
+
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -654,6 +659,35 @@ async function readYoutubeCurrentTime(
   return fallbackTime;
 }
 
+/** YouTube reported duration (0 if unknown / live not ready). */
+async function readYoutubeDuration(
+  player: YouTubePlayer | null | undefined,
+): Promise<number> {
+  if (!player) return 0;
+  const p = player as YouTubePlayer & {
+    getDuration?: () => number | Promise<number>;
+  };
+  try {
+    const raw = p.getDuration?.();
+    const d = await Promise.resolve(raw);
+    if (typeof d === "number" && Number.isFinite(d) && d > 0) return d;
+  } catch {
+    /* API not ready */
+  }
+  return 0;
+}
+
+/** DVR / VOD end of playable range — max(duration, currentTime) when duration is known. */
+async function readLiveEdgeTime(
+  player: YouTubePlayer | null | undefined,
+  fallbackTime: number,
+): Promise<number> {
+  const ct = await readYoutubeCurrentTime(player, fallbackTime);
+  const dur = await readYoutubeDuration(player);
+  if (dur > 0.25) return Math.max(dur, ct);
+  return ct;
+}
+
 async function readYoutubePlaybackRate(
   player: YouTubePlayer | null | undefined,
   fallback: number,
@@ -715,7 +749,10 @@ async function safeSetPlaybackRate(
   }
 }
 
-/** Occasional host time ping (~12s): large drift + light rate nudge only — no command transport. */
+/**
+ * Occasional host time ping (~12s): large drift + light rate nudge only — no command transport.
+ * YouTube live: still follows `state.currentTime` from the host (not the iframe live edge).
+ */
 async function viewerApplySyncSnapshot(
   player: YouTubePlayer,
   state: RoomState,
@@ -1047,6 +1084,10 @@ function RoomContent() {
   }, [isHost, router, user]);
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
+  const activeYouTubeVideoId = useMemo(
+    () => (roomState?.videoId ?? videoFromUrl ?? "").trim(),
+    [roomState?.videoId, videoFromUrl],
+  );
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const lastAppliedKey = useRef<string>("");
   /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
@@ -1074,6 +1115,12 @@ function RoomContent() {
   const youtubeEndedGuardRef = useRef<{ videoId: string; at: number } | null>(
     null,
   );
+  /** True when the iframe looks like YouTube live (growing duration). */
+  const isLiveStreamRef = useRef(false);
+  const liveGrowthSampleRef = useRef<{ dur: number; at: number } | null>(null);
+  const [isLiveStream, setIsLiveStream] = useState(false);
+  /** Host-only: seconds behind DVR live edge (derived from duration vs currentTime). */
+  const [liveBehindSec, setLiveBehindSec] = useState<number | null>(null);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -1111,7 +1158,15 @@ function RoomContent() {
 
   useEffect(() => {
     youtubeEndedGuardRef.current = null;
-  }, [roomState?.videoId]);
+    liveGrowthSampleRef.current = null;
+    setIsLiveStream(false);
+    isLiveStreamRef.current = false;
+    setLiveBehindSec(null);
+  }, [activeYouTubeVideoId]);
+
+  useLayoutEffect(() => {
+    isLiveStreamRef.current = isLiveStream;
+  }, [isLiveStream]);
 
   useEffect(() => {
     viewerPlaybackUnlockedRef.current = false;
@@ -1656,6 +1711,59 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
 
+  /** Detect YouTube live / DVR window: duration increases while the player is playing. */
+  useEffect(() => {
+    if (!activeYouTubeVideoId) return;
+    const id = window.setInterval(() => {
+      const p = playerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | undefined;
+      if (!p) return;
+      void (async () => {
+        const d = await readYoutubeDuration(p);
+        const st = await readYoutubePlayerState(p);
+        const playing = youtubeStateImpliesPlaying(st);
+        const prev = liveGrowthSampleRef.current;
+        if (
+          playing &&
+          d >= LIVE_DURATION_MIN_BASE_S &&
+          prev !== null &&
+          d > prev.dur + LIVE_DURATION_GROWTH_S
+        ) {
+          syncLog("live mode detected (growing duration)", {
+            prevDur: prev.dur,
+            nextDur: d,
+          });
+          setIsLiveStream(true);
+          isLiveStreamRef.current = true;
+        }
+        liveGrowthSampleRef.current = { dur: d, at: Date.now() };
+      })();
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, [activeYouTubeVideoId]);
+
+  /** Host: how far behind the DVR live edge (seconds). */
+  useEffect(() => {
+    if (!isHost || !isLiveStream) {
+      setLiveBehindSec(null);
+      return;
+    }
+    const tick = () => {
+      const p = playerRef.current?.getInternalPlayer() as YouTubePlayer | undefined;
+      if (!p) return;
+      void (async () => {
+        const fb = roomStateRef.current?.currentTime ?? 0;
+        const ct = await readYoutubeCurrentTime(p, fb);
+        const edge = await readLiveEdgeTime(p, ct);
+        setLiveBehindSec(Math.max(0, edge - ct));
+      })();
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [isHost, isLiveStream, activeYouTubeVideoId]);
+
   const handleViewerPlaybackUnlock = useCallback(() => {
     viewerPlaybackUnlockedRef.current = true;
     setViewerPlaybackUnlocked(true);
@@ -1752,7 +1860,14 @@ function RoomContent() {
         const t = await readYoutubeCurrentTime(player, fb);
         const wallSec = FF_SIM_MS / 1000;
         const extra = (tier - FF_NATIVE_CAP) * wallSec;
-        const newT = Math.max(0, t + extra);
+        let newT = Math.max(0, t + extra);
+        if (isLiveStreamRef.current) {
+          const edge = await readLiveEdgeTime(player, t);
+          newT = Math.min(
+            newT,
+            Math.max(0, edge - LIVE_EDGE_CLAMP_PAD_S),
+          );
+        }
         try {
           (
             player as YouTubePlayer & {
@@ -1822,6 +1937,10 @@ function RoomContent() {
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
       if (event.data !== YT_ENDED) return;
+      if (isLiveStreamRef.current) {
+        syncLog("YT_ENDED ignored (YouTube live mode)");
+        return;
+      }
 
       const vid = roomStateRef.current?.videoId ?? "";
       const now = Date.now();
@@ -2278,11 +2397,56 @@ function RoomContent() {
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
-      const t = await readYoutubeCurrentTime(player, fb);
+      const ct = await readYoutubeCurrentTime(player, fb);
       const playing = roomStateRef.current?.isPlaying ?? false;
+      const edge = await readLiveEdgeTime(player, fb);
+      const target = isLiveStreamRef.current ? edge - 10 : ct - 10;
+      const clamped = Math.max(
+        0,
+        Math.min(target, edge - LIVE_EDGE_CLAMP_PAD_S),
+      );
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
-        currentTime: Math.max(0, t - 10),
+        currentTime: clamped,
+        playbackRate: pr,
+      });
+    })();
+  };
+
+  const handleSeekLiveBack30 = () => {
+    if (!isHost) return;
+    const pr = clearFfIfActive();
+    void (async () => {
+      const player = getPlayer();
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      const ct = await readYoutubeCurrentTime(player, fb);
+      const playing = roomStateRef.current?.isPlaying ?? false;
+      const edge = await readLiveEdgeTime(player, fb);
+      const target = isLiveStreamRef.current ? edge - 30 : ct - 30;
+      const clamped = Math.max(
+        0,
+        Math.min(target, edge - LIVE_EDGE_CLAMP_PAD_S),
+      );
+      writeImmediatePlaybackCommand("seek", {
+        isPlaying: playing,
+        currentTime: clamped,
+        playbackRate: pr,
+      });
+    })();
+  };
+
+  const handleJumpLiveEdge = () => {
+    if (!isHost || !isLiveStream) return;
+    const pr = clearFfIfActive();
+    void (async () => {
+      const player = getPlayer();
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      const playing = roomStateRef.current?.isPlaying ?? false;
+      const edge = await readLiveEdgeTime(player, fb);
+      const clamped = Math.max(0, edge - LIVE_EDGE_CLAMP_PAD_S);
+      writeImmediatePlaybackCommand("seek", {
+        isPlaying: playing,
+        currentTime: clamped,
         playbackRate: pr,
       });
     })();
@@ -2914,6 +3078,13 @@ function RoomContent() {
             {isHost ? (
               <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
                 <div className="flex flex-col items-center gap-1">
+                  {isLiveStream && liveBehindSec !== null ? (
+                    <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
+                      {liveBehindSec < 2.5
+                        ? "LIVE"
+                        : `-${Math.round(liveBehindSec)}s`}
+                    </span>
+                  ) : null}
                   <div className={hostControlsBar}>
                   <button
                     type="button"
@@ -2926,11 +3097,27 @@ function RoomContent() {
                   </button>
                   <button
                     type="button"
+                    onClick={handleSeekLiveBack30}
+                    className={hostChip}
+                  >
+                    -30s
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleSeekBack}
                     className={hostChip}
                   >
                     -10s
                   </button>
+                  {isLiveStream ? (
+                    <button
+                      type="button"
+                      onClick={handleJumpLiveEdge}
+                      className={`${hostChip} border-red-500/35 font-semibold text-red-100`}
+                    >
+                      LIVE
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={handleHostResync}
