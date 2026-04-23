@@ -1106,6 +1106,12 @@ function RoomContent() {
   const searchParams = useSearchParams();
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
+  /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
+  const videoIdFromUrl = useMemo(() => {
+    const raw = videoFromUrl?.trim();
+    if (!raw) return null;
+    return extractYouTubeVideoId(safeDecodeVideoId(raw));
+  }, [videoFromUrl]);
   const loadSavedId = searchParams.get("loadSaved");
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
@@ -1156,8 +1162,8 @@ function RoomContent() {
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const activeYouTubeVideoId = useMemo(
-    () => (roomState?.videoId ?? videoFromUrl ?? "").trim(),
-    [roomState?.videoId, videoFromUrl],
+    () => (roomState?.videoId ?? videoIdFromUrl ?? "").trim(),
+    [roomState?.videoId, videoIdFromUrl],
   );
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const lastAppliedKey = useRef<string>("");
@@ -1387,10 +1393,10 @@ function RoomContent() {
   }, [isHost, roomState]);
 
   useEffect(() => {
-    if (!roomRef || !isHost || !videoFromUrl) return;
+    if (!roomRef || !isHost || !videoIdFromUrl) return;
     if (loadSavedId && authLoading) return;
 
-    const vid = decodeURIComponent(videoFromUrl);
+    const vid = videoIdFromUrl;
 
     void get(roomRef).then(async (snap) => {
       if (snap.exists()) {
@@ -1478,7 +1484,7 @@ function RoomContent() {
   }, [
     roomRef,
     isHost,
-    videoFromUrl,
+    videoIdFromUrl,
     loadSavedId,
     user,
     authLoading,
@@ -2722,9 +2728,7 @@ function RoomContent() {
   };
 
   const handleCopyViewerLink = () => {
-    const raw =
-      roomState?.videoId ??
-      (videoFromUrl ? safeDecodeVideoId(videoFromUrl) : null);
+    const raw = roomState?.videoId ?? videoIdFromUrl;
     if (!roomId || !raw || typeof window === "undefined") return;
     const url = buildViewerRoomUrl(window.location.origin, roomId, raw);
     void navigator.clipboard.writeText(url).then(() => {
@@ -2812,13 +2816,13 @@ function RoomContent() {
     [roomState],
   );
 
-  const effectiveVideoId = roomState?.videoId ?? videoFromUrl;
+  const effectiveVideoId = roomState?.videoId ?? videoIdFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
 
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
-  if (!videoFromUrl) {
+  if (!videoFromUrl?.trim()) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <button
@@ -2848,6 +2852,10 @@ function RoomContent() {
   }
 
   if (!effectiveVideoId) {
+    const invalidMsg =
+      videoFromUrl?.trim() && !videoIdFromUrl
+        ? "Invalid YouTube link."
+        : "Missing video id.";
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <button
@@ -2858,7 +2866,7 @@ function RoomContent() {
           ← Home
         </button>
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <p className="mb-6 text-sm text-zinc-300">Missing video id.</p>
+          <p className="mb-6 text-sm text-zinc-300">{invalidMsg}</p>
           <Link
             href="/"
             className="inline-flex rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
