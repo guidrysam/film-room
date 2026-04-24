@@ -167,6 +167,21 @@ function chapterGameMoment(ch: ChapterEntry): number {
   return ch.gameTime ?? ch.time;
 }
 
+/** Next default label for one-tap "Mark Play" (Play → Play 2 → Play 3 …). */
+function nextMarkPlayLabel(chapters: ChapterEntry[]): string {
+  let maxNum = 0;
+  for (const ch of chapters) {
+    if (ch.label === "Play") {
+      maxNum = Math.max(maxNum, 1);
+    } else {
+      const m = /^Play (\d+)$/.exec(ch.label);
+      if (m) maxNum = Math.max(maxNum, parseInt(m[1]!, 10));
+    }
+  }
+  if (maxNum === 0) return "Play";
+  return `Play ${maxNum + 1}`;
+}
+
 function parseTransportAction(raw: unknown): TransportAction {
   if (
     raw === "init" ||
@@ -1236,6 +1251,9 @@ function RoomContent() {
     null,
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
+  /** Host: brief "Marked" feedback after one-tap Mark Play. */
+  const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
+  const markPlayTimerRef = useRef<number | null>(null);
   /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
   const lastAppliedCommandIdRef = useRef(0);
   const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
@@ -1271,6 +1289,15 @@ function RoomContent() {
   useLayoutEffect(() => {
     roomStateRef.current = roomState;
   }, [roomState]);
+
+  useEffect(() => {
+    return () => {
+      if (markPlayTimerRef.current !== null) {
+        window.clearTimeout(markPlayTimerRef.current);
+        markPlayTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useLayoutEffect(() => {
     isHostRef.current = isHost;
@@ -2281,6 +2308,54 @@ function RoomContent() {
       }).catch(() => {
         /* RTDB */
       });
+    })();
+  }, [isHost]);
+
+  const handleMarkPlay = useCallback(() => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+
+    void (async () => {
+      const player = getPlayer();
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const t = await readYoutubeCurrentTime(
+        player,
+        cur.currentTime ?? 0,
+      );
+      const label = nextMarkPlayLabel(cur.chapters);
+      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const gameTime = gameTimeFromAngleTime(t, curAngle);
+      const refAngle = cur.angles[0] ?? curAngle;
+      const refPlaybackTime = angleTimeFromGameTime(gameTime, refAngle);
+      const canonicalClipId =
+        cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
+      const next: ChapterEntry[] = [
+        ...cur.chapters,
+        {
+          time: refPlaybackTime,
+          gameTime,
+          label,
+          videoId: canonicalClipId,
+        },
+      ];
+      try {
+        await update(rr, {
+          chapters: next,
+          updatedAt: serverTimestamp(),
+        });
+        if (markPlayTimerRef.current !== null) {
+          window.clearTimeout(markPlayTimerRef.current);
+        }
+        setMarkPlayState("marked");
+        markPlayTimerRef.current = window.setTimeout(() => {
+          setMarkPlayState("idle");
+          markPlayTimerRef.current = null;
+        }, 1200);
+      } catch {
+        /* RTDB */
+      }
     })();
   }, [isHost]);
 
@@ -3548,6 +3623,17 @@ function RoomContent() {
                     className={hostChip}
                   >
                     -10s
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleMarkPlay()}
+                    className={`${hostChip} ${
+                      markPlayState === "marked"
+                        ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                        : ""
+                    }`}
+                  >
+                    {markPlayState === "marked" ? "Marked" : "Mark Play"}
                   </button>
                   {isLiveStream ? (
                     <button
