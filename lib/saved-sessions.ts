@@ -14,6 +14,7 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
+import { parseVideoAngles, type VideoAngle } from "@/lib/video-angle";
 
 export type SavedClip = { videoId: string; label?: string };
 
@@ -21,7 +22,11 @@ export type SavedChapter = {
   time: number;
   label: string;
   videoId: string;
+  /** Shared game-clock moment (markers align across camera angles). */
+  gameTime?: number;
 };
+
+export type { VideoAngle };
 
 /**
  * Firestore document under `users/{ownerUserId}/savedSessions/{sessionId}`.
@@ -34,6 +39,9 @@ export type SavedSessionDoc = {
   clips: SavedClip[];
   chapters: SavedChapter[];
   currentClipIndex: number;
+  /** Alternate camera feeds (single-clip sessions); omitted when not used. */
+  angles?: VideoAngle[];
+  currentAngleId?: string;
   ownerUserId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
@@ -105,19 +113,70 @@ function parseSavedSessionFields(
     typeof folderRaw === "string" && folderRaw.trim() !== ""
       ? folderRaw.trim()
       : undefined;
+  const clips: SavedClip[] = Array.isArray(v.clips) ? (v.clips as SavedClip[]) : [];
+  const currentClipIndex =
+    typeof v.currentClipIndex === "number" && Number.isFinite(v.currentClipIndex)
+      ? Math.floor(v.currentClipIndex)
+      : 0;
+  const safeIdx = Math.min(
+    Math.max(0, currentClipIndex),
+    Math.max(0, clips.length - 1),
+  );
+  const fallbackVid = clips[safeIdx]?.videoId ?? clips[0]?.videoId ?? "";
+  const chapters = parseSavedChapters(v.chapters);
+  const angles =
+    typeof fallbackVid === "string" && /^[a-zA-Z0-9_-]{11}$/.test(fallbackVid)
+      ? parseVideoAngles(v.angles, fallbackVid)
+      : parseVideoAngles(undefined, "xxxxxxxxxxx");
+  const currentAngleIdRaw = v.currentAngleId;
+  const currentAngleId =
+    typeof currentAngleIdRaw === "string" &&
+    currentAngleIdRaw.trim() !== "" &&
+    angles.some((a) => a.id === currentAngleIdRaw.trim())
+      ? currentAngleIdRaw.trim()
+      : angles[0]?.id;
   return {
     name: typeof v.name === "string" ? v.name : "Session",
     ...(folder ? { folder } : {}),
-    clips: Array.isArray(v.clips) ? (v.clips as SavedClip[]) : [],
-    chapters: Array.isArray(v.chapters) ? (v.chapters as SavedChapter[]) : [],
-    currentClipIndex:
-      typeof v.currentClipIndex === "number" ? v.currentClipIndex : 0,
+    clips,
+    chapters,
+    currentClipIndex,
+    ...(angles.length > 1
+      ? { angles, currentAngleId: currentAngleId ?? angles[0]!.id }
+      : {}),
     ownerUserId:
       typeof v.ownerUserId === "string" ? v.ownerUserId : ownerUserId,
     createdAt: v.createdAt instanceof Timestamp ? v.createdAt : undefined,
     updatedAt: v.updatedAt instanceof Timestamp ? v.updatedAt : undefined,
     ...(shareId ? { shareId, isShared: true as const } : {}),
   };
+}
+
+function parseSavedChapters(raw: unknown): SavedChapter[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SavedChapter[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.time !== "number" || typeof o.videoId !== "string") {
+      continue;
+    }
+    const label =
+      typeof o.label === "string" && o.label.trim() !== ""
+        ? o.label.trim()
+        : "Chapter";
+    const gameTime =
+      typeof o.gameTime === "number" && Number.isFinite(o.gameTime)
+        ? o.gameTime
+        : undefined;
+    out.push({
+      time: o.time,
+      label,
+      videoId: o.videoId,
+      ...(gameTime !== undefined ? { gameTime } : {}),
+    });
+  }
+  return out;
 }
 
 export async function saveSessionTemplate(
@@ -129,12 +188,16 @@ export async function saveSessionTemplate(
     currentClipIndex: number;
     /** Trimmed; omit or empty to store no folder field. */
     folder?: string;
+    angles?: VideoAngle[];
+    currentAngleId?: string;
   },
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId));
   const now = serverTimestamp();
   const folderTrim =
     typeof data.folder === "string" ? data.folder.trim() : "";
+  const multiAngle =
+    Array.isArray(data.angles) && data.angles.length > 1 ? data.angles : null;
   await setDoc(ref, {
     name: data.name,
     clips: data.clips,
@@ -144,6 +207,16 @@ export async function saveSessionTemplate(
     createdAt: now,
     updatedAt: now,
     ...(folderTrim !== "" ? { folder: folderTrim } : {}),
+    ...(multiAngle
+      ? {
+          angles: multiAngle,
+          currentAngleId:
+            data.currentAngleId &&
+            multiAngle.some((a) => a.id === data.currentAngleId)
+              ? data.currentAngleId
+              : multiAngle[0]!.id,
+        }
+      : {}),
   });
   return ref.id;
 }
@@ -188,6 +261,12 @@ export async function listSavedSessions(
         clips: v.clips,
         chapters: v.chapters,
         currentClipIndex: v.currentClipIndex,
+        ...(Array.isArray(v.angles) && v.angles.length > 1
+          ? {
+              angles: v.angles,
+              currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
+            }
+          : {}),
         ownerUserId: v.ownerUserId,
         createdAt: v.createdAt ?? null,
         updatedAt: v.updatedAt ?? null,
@@ -219,6 +298,12 @@ export async function getSavedSession(
     clips: v.clips,
     chapters: v.chapters,
     currentClipIndex: v.currentClipIndex,
+    ...(Array.isArray(v.angles) && v.angles.length > 1
+      ? {
+          angles: v.angles,
+          currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
+        }
+      : {}),
     ownerUserId: v.ownerUserId,
     createdAt: v.createdAt ?? null,
     updatedAt: v.updatedAt ?? null,
@@ -377,6 +462,12 @@ export async function getSavedSessionByShareId(
       clips: v.clips,
       chapters: v.chapters,
       currentClipIndex: v.currentClipIndex,
+      ...(Array.isArray(v.angles) && v.angles.length > 1
+        ? {
+            angles: v.angles,
+            currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
+          }
+        : {}),
       ownerUserId: v.ownerUserId,
       createdAt: v.createdAt ?? null,
       updatedAt: v.updatedAt ?? null,
@@ -408,10 +499,21 @@ export async function duplicateSessionToMyLibrary(
       time: ch.time,
       label: ch.label,
       videoId: ch.videoId,
+      ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
     })),
     currentClipIndex: Math.min(
       Math.max(0, source.currentClipIndex),
       Math.max(0, source.clips.length - 1),
     ),
+    ...(source.angles && source.angles.length > 1
+      ? {
+          angles: source.angles.map((a) => ({ ...a })),
+          currentAngleId:
+            source.currentAngleId &&
+            source.angles.some((x) => x.id === source.currentAngleId)
+              ? source.currentAngleId
+              : source.angles[0]!.id,
+        }
+      : {}),
   });
 }

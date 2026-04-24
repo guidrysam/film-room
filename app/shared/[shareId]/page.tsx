@@ -238,7 +238,9 @@ export default function SharedTemplatePage() {
                 >
                   <span className="font-medium text-white">{ch.label}</span>
                   <span className="ml-2 font-mono text-xs text-zinc-400">
-                    {formatChapterTime(ch.time)}
+                    {formatChapterTime(
+                      typeof ch.gameTime === "number" ? ch.gameTime : ch.time,
+                    )}
                   </span>
                   <span className="ml-2 font-mono text-[10px] text-zinc-500">
                     {ch.videoId.slice(0, 8)}…

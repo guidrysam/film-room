@@ -34,6 +34,13 @@ import { useAuth } from "@/components/AuthProvider";
 import { TelestratorOverlay } from "@/components/TelestratorOverlay";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
+import {
+  angleTimeFromGameTime,
+  gameTimeFromAngleTime,
+  parseVideoAngles,
+  pickAngle,
+  type VideoAngle,
+} from "@/lib/video-angle";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
@@ -131,6 +138,8 @@ type ChapterEntry = {
   time: number;
   label: string;
   videoId: string;
+  /** Shared game-clock moment (optional; legacy chapters use `time` as game time on the reference angle). */
+  gameTime?: number;
 };
 
 type RoomState = {
@@ -148,7 +157,15 @@ type RoomState = {
   /** Latest immediate transport for play/pause/seek (reconcile uses `action: sync` separately). */
   playbackCommand: PlaybackCommand | null;
   chapters: ChapterEntry[];
+  /** Camera angles (same game clock); synthesized as a single default angle when absent from RTDB. */
+  angles: VideoAngle[];
+  currentAngleId: string;
 };
+
+/** Shared moment for chapter ordering / navigation (legacy: `time` on reference angle). */
+function chapterGameMoment(ch: ChapterEntry): number {
+  return ch.gameTime ?? ch.time;
+}
 
 function parseTransportAction(raw: unknown): TransportAction {
   if (
@@ -189,7 +206,16 @@ function parseChapters(raw: unknown): ChapterEntry[] {
       typeof o.label === "string" && o.label.trim() !== ""
         ? o.label
         : `Chapter ${i + 1}`;
-    out.push({ time: o.time, label, videoId: o.videoId });
+    const gameTime =
+      typeof o.gameTime === "number" && Number.isFinite(o.gameTime)
+        ? o.gameTime
+        : undefined;
+    out.push({
+      time: o.time,
+      label,
+      videoId: o.videoId,
+      ...(gameTime !== undefined ? { gameTime } : {}),
+    });
     i += 1;
   }
   return out;
@@ -212,7 +238,7 @@ function compareChapterOrder(
   const ia = clipSortIndexForOrder(clips, a.videoId);
   const ib = clipSortIndexForOrder(clips, b.videoId);
   if (ia !== ib) return ia - ib;
-  return a.time - b.time;
+  return chapterGameMoment(a) - chapterGameMoment(b);
 }
 
 function sortChaptersForNavigation(
@@ -250,12 +276,13 @@ function chapterStrictlyBeforeCursor(
   clips: ClipEntry[],
   ch: ChapterEntry,
   cursorClipIdx: number,
-  cursorTime: number,
+  cursorMoment: number,
 ): boolean {
   const ci = clipSortIndexForOrder(clips, ch.videoId);
+  const chMoment = chapterGameMoment(ch);
   return (
     ci < cursorClipIdx ||
-    (ci === cursorClipIdx && ch.time < cursorTime - CHAPTER_NAV_EPS)
+    (ci === cursorClipIdx && chMoment < cursorMoment - CHAPTER_NAV_EPS)
   );
 }
 
@@ -263,12 +290,13 @@ function chapterStrictlyAfterCursor(
   clips: ClipEntry[],
   ch: ChapterEntry,
   cursorClipIdx: number,
-  cursorTime: number,
+  cursorMoment: number,
 ): boolean {
   const ci = clipSortIndexForOrder(clips, ch.videoId);
+  const chMoment = chapterGameMoment(ch);
   return (
     ci > cursorClipIdx ||
-    (ci === cursorClipIdx && ch.time > cursorTime + CHAPTER_NAV_EPS)
+    (ci === cursorClipIdx && chMoment > cursorMoment + CHAPTER_NAV_EPS)
   );
 }
 
@@ -276,13 +304,13 @@ function findPrevChapterInSession(
   clips: ClipEntry[],
   chapters: ChapterEntry[],
   cursorClipIdx: number,
-  cursorTime: number,
+  cursorMoment: number,
 ): ChapterEntry | null {
   if (!chapters.length) return null;
   const sorted = sortChaptersForNavigation(clips, chapters);
   let best: ChapterEntry | null = null;
   for (const ch of sorted) {
-    if (chapterStrictlyBeforeCursor(clips, ch, cursorClipIdx, cursorTime)) {
+    if (chapterStrictlyBeforeCursor(clips, ch, cursorClipIdx, cursorMoment)) {
       best = ch;
     }
   }
@@ -293,12 +321,12 @@ function findNextChapterInSession(
   clips: ClipEntry[],
   chapters: ChapterEntry[],
   cursorClipIdx: number,
-  cursorTime: number,
+  cursorMoment: number,
 ): ChapterEntry | null {
   if (!chapters.length) return null;
   const sorted = sortChaptersForNavigation(clips, chapters);
   for (const ch of sorted) {
-    if (chapterStrictlyAfterCursor(clips, ch, cursorClipIdx, cursorTime)) {
+    if (chapterStrictlyAfterCursor(clips, ch, cursorClipIdx, cursorMoment)) {
       return ch;
     }
   }
@@ -310,16 +338,19 @@ const CHAPTER_ACTIVE_UI_EPS = 0.2;
 
 function findActiveChapterIndexForUi(
   chapters: ChapterEntry[],
-  activeVideoId: string,
+  activeClipCanonicalVideoId: string,
   t: number,
+  angle: VideoAngle,
 ): number | null {
   let bestIdx: number | null = null;
   let bestTime = -Infinity;
+  const cursorGame = gameTimeFromAngleTime(t, angle);
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i];
-    if (ch.videoId !== activeVideoId) continue;
-    if (ch.time <= t + CHAPTER_ACTIVE_UI_EPS && ch.time >= bestTime) {
-      bestTime = ch.time;
+    if (ch.videoId !== activeClipCanonicalVideoId) continue;
+    const g = chapterGameMoment(ch);
+    if (g <= cursorGame + CHAPTER_ACTIVE_UI_EPS && g >= bestTime) {
+      bestTime = g;
       bestIdx = i;
     }
   }
@@ -350,7 +381,7 @@ function parseClipEntries(raw: unknown): ClipEntry[] {
   return out;
 }
 
-/** Normalize clip list + index; `videoId` from RTDB is authoritative for the active clip. */
+/** Normalize clip list + index; `videoId` from RTDB is authoritative for the active stream. */
 function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null {
   if (!val) return null;
   const videoIdRaw = val.videoId;
@@ -373,14 +404,35 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     typeof val.currentClipIndex === "number" && Number.isFinite(val.currentClipIndex)
       ? Math.floor(val.currentClipIndex)
       : 0;
-  const matchIdx = clips.findIndex((c) => c.videoId === videoIdRaw);
-  if (matchIdx >= 0) {
-    idx = matchIdx;
-  } else if (idx < 0 || idx >= clips.length) {
+  if (idx < 0 || idx >= clips.length) {
     idx = 0;
   }
 
-  const activeVideoId = clips[idx]?.videoId ?? videoIdRaw;
+  const canonicalClipId = clips[idx]?.videoId ?? videoIdRaw;
+  const angles = parseVideoAngles(val.angles, canonicalClipId);
+
+  const rawAngleId = val.currentAngleId;
+  let currentAngleId =
+    typeof rawAngleId === "string" &&
+    rawAngleId.trim() !== "" &&
+    angles.some((a) => a.id === rawAngleId.trim())
+      ? rawAngleId.trim()
+      : angles[0]!.id;
+
+  const angleByVideo = angles.findIndex((a) => a.videoId === videoIdRaw);
+  if (angleByVideo >= 0) {
+    currentAngleId = angles[angleByVideo]!.id;
+  }
+
+  const matchIdx = clips.findIndex((c) => c.videoId === videoIdRaw);
+  if (angles.length === 1 && matchIdx >= 0) {
+    idx = matchIdx;
+  }
+
+  const activeVideoId =
+    angleByVideo >= 0
+      ? videoIdRaw
+      : pickAngle(angles, currentAngleId).videoId;
 
   return {
     videoId: activeVideoId,
@@ -394,12 +446,14 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     actionId: typeof val.actionId === "number" ? val.actionId : 0,
     playbackCommand: parsePlaybackCommand(val.playbackCommand),
     chapters: parseChapters(val.chapters),
+    angles,
+    currentAngleId,
   };
 }
 
 function stableKey(s: RoomState): string {
   const pc = s.playbackCommand?.commandId ?? 0;
-  return `${s.videoId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}|pc:${pc}`;
+  return `${s.videoId}|${s.currentAngleId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}|pc:${pc}`;
 }
 
 /** Compare Firebase `currentTime` snapshots (often stale during playback). */
@@ -1439,6 +1493,9 @@ function RoomContent() {
               template.clips.length - 1,
             );
             const activeId = template.clips[idx]?.videoId ?? vid;
+            const tplAngles = template.angles;
+            const multiAngle =
+              Array.isArray(tplAngles) && tplAngles.length > 1 ? tplAngles : null;
             void set(roomRef, {
               videoId: activeId,
               clips: template.clips.map((c) => ({
@@ -1448,7 +1505,22 @@ function RoomContent() {
                   : {}),
               })),
               currentClipIndex: idx,
-              chapters: template.chapters ?? [],
+              chapters: (template.chapters ?? []).map((ch) => ({
+                time: ch.time,
+                label: ch.label,
+                videoId: ch.videoId,
+                ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
+              })),
+              ...(multiAngle
+                ? {
+                    angles: multiAngle,
+                    currentAngleId:
+                      template.currentAngleId &&
+                      multiAngle.some((a) => a.id === template.currentAngleId)
+                        ? template.currentAngleId
+                        : multiAngle[0]!.id,
+                  }
+                : {}),
               isPlaying: false,
               currentTime: 0,
               playbackRate: DEFAULT_PLAYBACK_RATE,
@@ -2007,13 +2079,17 @@ function RoomContent() {
         currentTime: number;
         isPlaying: boolean;
         playbackRate: number;
+        /** When switching camera angle / stream while seeking. */
+        videoId?: string;
+        currentAngleId?: string;
       },
     ) => {
       const rr = roomRefForWrite.current;
       if (!rr || !isHostRef.current || !roomId) return;
       hostActionSeqRef.current += 1;
       const commandId = hostActionSeqRef.current;
-      const activeVideoId = roomStateRef.current?.videoId ?? "";
+      const activeVideoId =
+        fields.videoId ?? roomStateRef.current?.videoId ?? "";
       const playbackCommand: PlaybackCommand = {
         type: transportAction,
         roomId,
@@ -2034,6 +2110,8 @@ function RoomContent() {
         isPlaying: fields.isPlaying,
         currentTime: fields.currentTime,
         playbackRate: fields.playbackRate,
+        ...(fields.videoId ? { videoId: fields.videoId } : {}),
+        ...(fields.currentAngleId ? { currentAngleId: fields.currentAngleId } : {}),
         playbackCommand,
         action: transportAction === "resync" ? "resync" : transportAction,
         actionId: commandId,
@@ -2113,14 +2191,24 @@ function RoomContent() {
       const clipIdx = cur.clips.findIndex((c) => c.videoId === chapter.videoId);
       if (clipIdx < 0) return;
 
-      if (chapter.videoId === cur.videoId) {
+      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const gameT = chapterGameMoment(chapter);
+      const seekTime = angleTimeFromGameTime(gameT, curAngle);
+      const sameClip = clipIdx === cur.currentClipIndex;
+
+      if (sameClip) {
         writeImmediatePlaybackCommand("seek", {
-          currentTime: chapter.time,
+          currentTime: seekTime,
           isPlaying: cur.isPlaying,
           playbackRate: pr,
         });
         return;
       }
+
+      const refAngle = cur.angles[0] ?? curAngle;
+      const targetClip = cur.clips[clipIdx]!;
+      const crossSeek = angleTimeFromGameTime(gameT, refAngle);
+      const primaryAngleId = cur.angles[0]?.id ?? cur.currentAngleId;
 
       lastAppliedKey.current = "";
       hostActionSeqRef.current += 1;
@@ -2128,17 +2216,18 @@ function RoomContent() {
       const playbackCommand: PlaybackCommand = {
         type: "seek",
         roomId,
-        activeVideoId: chapter.videoId,
+        activeVideoId: targetClip.videoId,
         issuedAt: Date.now(),
-        anchorVideoTime: chapter.time,
+        anchorVideoTime: crossSeek,
         playbackRate: pr,
         commandId,
       };
       syncLog("host chapter jump (cross-clip)", playbackCommand);
       void update(rr, {
-        videoId: chapter.videoId,
+        videoId: targetClip.videoId,
         currentClipIndex: clipIdx,
-        currentTime: chapter.time,
+        currentTime: crossSeek,
+        currentAngleId: primaryAngleId,
         isPlaying: cur.isPlaying,
         playbackRate: pr,
         playbackCommand,
@@ -2171,12 +2260,19 @@ function RoomContent() {
       );
       const n = cur.chapters.length + 1;
       const label = trimmed.length > 0 ? trimmed : `Chapter ${n}`;
+      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const gameTime = gameTimeFromAngleTime(t, curAngle);
+      const refAngle = cur.angles[0] ?? curAngle;
+      const refPlaybackTime = angleTimeFromGameTime(gameTime, refAngle);
+      const canonicalClipId =
+        cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
-          time: t,
+          time: refPlaybackTime,
+          gameTime,
           label,
-          videoId: cur.videoId,
+          videoId: canonicalClipId,
         },
       ];
       void update(rr, {
@@ -2258,6 +2354,13 @@ function RoomContent() {
     if (!isHost) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
+    const cur = roomStateRef.current;
+    if (cur && cur.angles.length > 1) {
+      window.alert(
+        "Remove extra camera angles before adding another clip to the queue.",
+      );
+      return;
+    }
     const id = extractYouTubeVideoId(clipUrlDraft);
     if (!id) return;
     setClipUrlDraft("");
@@ -2437,6 +2540,20 @@ function RoomContent() {
       if (!clip) return;
       lastAppliedKey.current = "";
       void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+      const resetAngles =
+        cur.angles.length > 1
+          ? {
+              angles: [
+                {
+                  id: "a0",
+                  name: "Main",
+                  videoId: clip.videoId,
+                  offsetFromGameTime: 0,
+                },
+              ],
+              currentAngleId: "a0",
+            }
+          : {};
       writeHostTransport(
         {
           videoId: clip.videoId,
@@ -2444,12 +2561,94 @@ function RoomContent() {
           currentTime: 0,
           isPlaying: false,
           playbackRate: DEFAULT_PLAYBACK_RATE,
+          ...resetAngles,
         },
         "clip",
         { clearPlaybackCommand: true },
       );
     },
     [isHost, roomId, clearFfIfActive, writeHostTransport],
+  );
+
+  const handleAddAngle = useCallback(() => {
+    if (!isHost) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const cur = roomStateRef.current;
+    if (!cur) return;
+    if (cur.clips.length > 1) {
+      window.alert(
+        "Use a single clip in the queue before adding alternate camera angles.",
+      );
+      return;
+    }
+    const rawUrl = window.prompt("Paste YouTube URL for this angle");
+    const id = extractYouTubeVideoId((rawUrl ?? "").trim());
+    if (!id) {
+      window.alert("Invalid YouTube link");
+      return;
+    }
+    if (cur.angles.some((a) => a.videoId === id)) {
+      window.alert("That video is already an angle.");
+      return;
+    }
+    const rawName = window.prompt("Angle name (optional)");
+    const name =
+      typeof rawName === "string" && rawName.trim() !== ""
+        ? rawName.trim()
+        : `Angle ${cur.angles.length + 1}`;
+    const rawOff = window.prompt(
+      "Offset vs game clock in seconds (default 0)",
+      "0",
+    );
+    const off = Number.parseFloat(typeof rawOff === "string" ? rawOff : "0");
+    const offsetFromGameTime = Number.isFinite(off) ? off : 0;
+    const newId = `a_${Date.now().toString(36)}`;
+    const nextAngles: VideoAngle[] = [
+      ...cur.angles.map((a) => ({ ...a })),
+      {
+        id: newId,
+        name,
+        videoId: id,
+        ...(offsetFromGameTime !== 0 ? { offsetFromGameTime } : {}),
+      },
+    ];
+    void update(rr, {
+      angles: nextAngles,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {
+      /* RTDB */
+    });
+  }, [isHost]);
+
+  const handleSelectAngle = useCallback(
+    (angleId: string) => {
+      if (!isHost || !roomId) return;
+      const cur = roomStateRef.current;
+      if (!cur || angleId === cur.currentAngleId) return;
+      const nextAngle = cur.angles.find((a) => a.id === angleId);
+      if (!nextAngle) return;
+      void (async () => {
+        const player = getPlayer();
+        const t = await readYoutubeCurrentTime(
+          player,
+          cur.currentTime ?? 0,
+        );
+        const curAngle = pickAngle(cur.angles, cur.currentAngleId);
+        const gameT = gameTimeFromAngleTime(t, curAngle);
+        const seekTime = angleTimeFromGameTime(gameT, nextAngle);
+        const pr = clearFfIfActive();
+        lastAppliedKey.current = "";
+        writeImmediatePlaybackCommand("seek", {
+          currentTime: seekTime,
+          isPlaying: cur.isPlaying,
+          playbackRate: pr,
+          videoId: nextAngle.videoId,
+          currentAngleId: nextAngle.id,
+        });
+      })();
+    },
+    [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand],
   );
 
   /**
@@ -2643,11 +2842,13 @@ function RoomContent() {
       if (!cur || !cur.chapters.length) return;
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
+      const angle = pickAngle(cur.angles, cur.currentAngleId);
+      const cursorMoment = gameTimeFromAngleTime(t, angle);
       const target = findPrevChapterInSession(
         cur.clips,
         cur.chapters,
         cur.currentClipIndex,
-        t,
+        cursorMoment,
       );
       if (target) jumpToChapter(target);
     })();
@@ -2661,11 +2862,13 @@ function RoomContent() {
       if (!cur || !cur.chapters.length) return;
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
+      const angle = pickAngle(cur.angles, cur.currentAngleId);
+      const cursorMoment = gameTimeFromAngleTime(t, angle);
       const target = findNextChapterInSession(
         cur.clips,
         cur.chapters,
         cur.currentClipIndex,
-        t,
+        cursorMoment,
       );
       if (target) jumpToChapter(target);
     })();
@@ -2786,9 +2989,16 @@ function RoomContent() {
           time: ch.time,
           label: ch.label,
           videoId: ch.videoId,
+          ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
         })),
         currentClipIndex: roomState.currentClipIndex,
         ...(folderTrim !== "" ? { folder: folderTrim } : {}),
+        ...(roomState.angles.length > 1
+          ? {
+              angles: roomState.angles,
+              currentAngleId: roomState.currentAngleId,
+            }
+          : {}),
       });
       closeSaveSessionDialog();
       alert("Session saved.");
@@ -2815,6 +3025,44 @@ function RoomContent() {
         : [],
     [roomState],
   );
+
+  const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
+  const chapterNavMoment =
+    roomState !== null
+      ? gameTimeFromAngleTime(
+          tForChapterHighlight,
+          pickAngle(roomState.angles, roomState.currentAngleId),
+        )
+      : 0;
+  const activeClipCanonicalId =
+    roomState?.clips[roomState.currentClipIndex]?.videoId ?? "";
+  const activeChapterIndex =
+    roomState?.chapters?.length && activeClipCanonicalId
+      ? findActiveChapterIndexForUi(
+          roomState.chapters,
+          activeClipCanonicalId,
+          tForChapterHighlight,
+          pickAngle(roomState.angles, roomState.currentAngleId),
+        )
+      : null;
+  const sessionPrevChapter =
+    roomState && roomState.chapters.length > 0
+      ? findPrevChapterInSession(
+          roomState.clips,
+          roomState.chapters,
+          roomState.currentClipIndex,
+          chapterNavMoment,
+        )
+      : null;
+  const sessionNextChapter =
+    roomState && roomState.chapters.length > 0
+      ? findNextChapterInSession(
+          roomState.clips,
+          roomState.chapters,
+          roomState.currentClipIndex,
+          chapterNavMoment,
+        )
+      : null;
 
   const effectiveVideoId = roomState?.videoId ?? videoIdFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
@@ -2898,35 +3146,6 @@ function RoomContent() {
 
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
-
-  const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
-  const activeChapterIndex =
-    roomState?.chapters?.length && roomState.videoId
-      ? findActiveChapterIndexForUi(
-          roomState.chapters,
-          roomState.videoId,
-          tForChapterHighlight,
-        )
-      : null;
-
-  const sessionPrevChapter =
-    roomState && roomState.chapters.length > 0
-      ? findPrevChapterInSession(
-          roomState.clips,
-          roomState.chapters,
-          roomState.currentClipIndex,
-          tForChapterHighlight,
-        )
-      : null;
-  const sessionNextChapter =
-    roomState && roomState.chapters.length > 0
-      ? findNextChapterInSession(
-          roomState.clips,
-          roomState.chapters,
-          roomState.currentClipIndex,
-          tForChapterHighlight,
-        )
-      : null;
 
   const viewerWatchLayout = viewerWatchMode && !isHost;
   const hostFocusLayout = isHost && hostFocusMode;
@@ -3074,6 +3293,58 @@ function RoomContent() {
           </div>
         ) : null}
 
+        {roomState && roomState.angles.length > 1 ? (
+          <div className={frPanel}>
+            <p className={frPanelTitle}>Camera angle</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {roomState.angles.map((a) => {
+                const active = a.id === roomState.currentAngleId;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    disabled={!isHost}
+                    onClick={() => {
+                      if (isHost) void handleSelectAngle(a.id);
+                    }}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] ${
+                      active
+                        ? "border-blue-500/55 bg-blue-600/25 text-white ring-1 ring-blue-400/35"
+                        : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
+                    } ${!isHost ? "cursor-default opacity-90" : ""}`}
+                  >
+                    {a.name}
+                  </button>
+                );
+              })}
+              {isHost && roomState.clips.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => void handleAddAngle()}
+                  className={secondaryHostBtn}
+                >
+                  Add angle
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : isHost && roomState && roomState.clips.length === 1 ? (
+          <div className={frPanel}>
+            <p className={frPanelTitle}>Camera angle</p>
+            <p className="mb-2 text-xs text-zinc-500">
+              Add alternate YouTube feeds for the same game clock (single clip
+              only).
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleAddAngle()}
+              className={secondaryHostBtn}
+            >
+              Add angle
+            </button>
+          </div>
+        ) : null}
+
         {roomState && isHost ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Chapters</p>
@@ -3115,7 +3386,9 @@ function RoomContent() {
             ) : (
               <ul className="flex flex-col gap-2">
                 {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
-                  const onActiveClip = ch.videoId === roomState.videoId;
+                  const onActiveClip =
+                    ch.videoId ===
+                    roomState.clips[roomState.currentClipIndex]?.videoId;
                   const isCurrentChapter =
                     activeChapterIndex !== null && activeChapterIndex === i;
                   return (
@@ -3142,9 +3415,9 @@ function RoomContent() {
                                 : "text-zinc-400"
                             }`}
                           >
-                            {formatChapterTime(ch.time)}
+                            {formatChapterTime(chapterGameMoment(ch))}
                           </span>
-                          {ch.videoId !== roomState.videoId ? (
+                          {!onActiveClip ? (
                             <span className="ml-2 text-[10px] text-amber-400/85">
                               (other clip)
                             </span>
