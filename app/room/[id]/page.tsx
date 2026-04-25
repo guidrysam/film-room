@@ -2734,6 +2734,53 @@ function RoomContent() {
           videoId: nextAngle.videoId,
           currentAngleId: nextAngle.id,
         });
+
+        const lp = player as YouTubePlayer & {
+          loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
+        };
+        if (typeof lp?.loadVideoById === "function") {
+          syncLog("angle switch loadVideoById used", {
+            videoId: nextAngle.videoId,
+            startSeconds: seekTime,
+          });
+          try {
+            lp.loadVideoById({ videoId: nextAngle.videoId, startSeconds: seekTime });
+          } catch {
+            syncLog("angle switch loadVideoById failed → fallback", {
+              videoId: nextAngle.videoId,
+            });
+          }
+
+          window.setTimeout(() => {
+            const p2 = getPlayer();
+            if (!p2) return;
+            void (async () => {
+              try {
+                p2.playVideo();
+              } catch {
+                /* YouTube API */
+              }
+              window.setTimeout(() => {
+                const p3 = getPlayer();
+                if (!p3) return;
+                void (async () => {
+                  const st3 = await readYoutubePlayerState(p3);
+                  syncLog("angle switch play retry state", { state: st3 });
+                  if (youtubeStateImpliesPlaying(st3)) return;
+                  try {
+                    p3.playVideo();
+                  } catch {
+                    /* YouTube API */
+                  }
+                })();
+              }, 300);
+            })();
+          }, 120);
+        } else {
+          syncLog("angle switch fallback used", {
+            reason: "loadVideoById unavailable",
+          });
+        }
       })();
     },
     [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand],
@@ -3605,7 +3652,7 @@ function RoomContent() {
           >
             <div className="absolute inset-0 overflow-hidden">
               <YouTube
-                key={`${safeDecodeVideoId(effectiveVideoId)}-${isHost ? "host" : "viewer"}`}
+                key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
                 ref={playerRef}
                 videoId={safeDecodeVideoId(effectiveVideoId)}
                 onReady={handlePlayerReady}
@@ -3719,7 +3766,7 @@ function RoomContent() {
               >
                 <div className="absolute inset-0 overflow-hidden">
                   <YouTube
-                    key={`${safeDecodeVideoId(effectiveVideoId)}-${isHost ? "host" : "viewer"}`}
+                    key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
                     ref={playerRef}
                     videoId={safeDecodeVideoId(effectiveVideoId)}
                     onReady={handlePlayerReady}
