@@ -1186,10 +1186,9 @@ function RoomContent() {
   const [copied, setCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
-  /** Viewer pseudo-fullscreen: large stage, minimal chrome (independent of browser fullscreen API). */
-  const [viewerWatchMode, setViewerWatchMode] = useState(false);
-  /** Host-only: expand stage/workspace in-page (not YouTube or browser fullscreen). */
-  const [hostFocusMode, setHostFocusMode] = useState(false);
+  /** Host-only: minimal mobile layout with video dominant + overlay controls. */
+  const [isCleanMode, setIsCleanMode] = useState(false);
+  const hostControlsRef = useRef<HTMLDivElement | null>(null);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1298,6 +1297,18 @@ function RoomContent() {
       }
     };
   }, []);
+
+  const cleanMode = isHost && isCleanMode;
+
+  const handleToggleCleanMode = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isHost) return;
+      const target = e.target as Node | null;
+      if (target && hostControlsRef.current?.contains(target)) return;
+      setIsCleanMode((v) => !v);
+    },
+    [isHost],
+  );
 
   useLayoutEffect(() => {
     isHostRef.current = isHost;
@@ -1420,25 +1431,6 @@ function RoomContent() {
       window.removeEventListener("focus", onVisibleOrFocus);
     };
   }, [roomId]);
-
-  /** Optional: expand viewer layout on small screens in landscape (pseudo watch mode). */
-  useEffect(() => {
-    if (typeof window === "undefined" || isHost) return;
-    const consider = () => {
-      const narrow = window.innerWidth > 0 && window.innerWidth < 768;
-      const landscape =
-        window.innerWidth > window.innerHeight &&
-        window.matchMedia("(orientation: landscape)").matches;
-      setViewerWatchMode(Boolean(narrow && landscape));
-    };
-    consider();
-    window.addEventListener("orientationchange", consider);
-    window.addEventListener("resize", consider);
-    return () => {
-      window.removeEventListener("orientationchange", consider);
-      window.removeEventListener("resize", consider);
-    };
-  }, [isHost]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -3210,6 +3202,15 @@ function RoomContent() {
   const hostControlsBar =
     "pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-zinc-950/92 px-3 py-2.5 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-white/[0.06] sm:gap-2.5 sm:px-4";
 
+  const hostChipClean =
+    "rounded-md border border-white/[0.10] bg-zinc-950/85 px-2 py-1 text-[10px] font-medium text-zinc-50 shadow-sm shadow-black/35 backdrop-blur-md transition duration-150 hover:border-white/18 hover:bg-zinc-900/90 active:scale-[0.97] active:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950";
+
+  const hostChipSyncClean =
+    "rounded-md border border-blue-500/45 bg-blue-950/55 px-2 py-1 text-[10px] font-semibold text-white shadow-sm shadow-blue-950/40 backdrop-blur-md transition duration-150 hover:border-blue-400/60 hover:bg-blue-900/50 active:scale-[0.97] active:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950";
+
+  const hostControlsBarClean =
+    "pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-white/[0.08] bg-zinc-950/90 px-2 py-1.5 shadow-xl shadow-black/55 backdrop-blur-md ring-1 ring-white/[0.06]";
+
   const frPanel =
     "mb-3 w-full rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 text-sm shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
 
@@ -3222,32 +3223,30 @@ function RoomContent() {
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
-  const viewerWatchLayout = viewerWatchMode && !isHost;
-  const hostFocusLayout = isHost && hostFocusMode;
-  const immersiveLayout = viewerWatchLayout || hostFocusLayout;
-
   return (
     <>
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
-        immersiveLayout
-          ? "fixed inset-0 z-40 overflow-hidden bg-[#030306] px-2 pb-2 pt-14 sm:px-3 sm:pt-16"
+        cleanMode
+          ? "fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-[#030306] p-0"
           : "px-4 py-6"
       }`}
     >
-      <button
-        type="button"
-        onClick={handleReturnHome}
-        className={returnHomeBtnClass}
-      >
-        ← Home
-      </button>
+      {!cleanMode ? (
+        <button
+          type="button"
+          onClick={handleReturnHome}
+          className={returnHomeBtnClass}
+        >
+          ← Home
+        </button>
+      ) : null}
       <div
         className={`mx-auto flex w-full flex-1 flex-col ${
-          immersiveLayout ? "max-w-none justify-center" : "max-w-3xl"
+          cleanMode ? "max-w-none justify-center" : "max-w-3xl"
         }`}
       >
-        {!(viewerWatchMode && !isHost) ? (
+        {!cleanMode ? (
           <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
             <p className="min-w-0">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
@@ -3278,20 +3277,12 @@ function RoomContent() {
                 >
                   {copied ? "Copied" : "Copy Viewer Link"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setHostFocusMode((v) => !v)}
-                  className={secondaryHostBtn}
-                  aria-pressed={hostFocusMode}
-                >
-                  {hostFocusMode ? "Exit focus" : "Focus"}
-                </button>
               </div>
             ) : null}
           </div>
         ) : null}
 
-        {isHost && roomState ? (
+        {isHost && roomState && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Clip queue</p>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -3368,7 +3359,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {roomState && roomState.angles.length > 1 ? (
+        {roomState && roomState.angles.length > 1 && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Camera angle</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -3403,7 +3394,7 @@ function RoomContent() {
               ) : null}
             </div>
           </div>
-        ) : isHost && roomState && roomState.clips.length === 1 ? (
+        ) : isHost && roomState && roomState.clips.length === 1 && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Camera angle</p>
             <p className="mb-2 text-xs text-zinc-500">
@@ -3420,7 +3411,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {roomState && isHost ? (
+        {roomState && isHost && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Chapters</p>
             <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -3520,24 +3511,16 @@ function RoomContent() {
               </ul>
             )}
           </div>
-        ) : roomState && !isHost && !viewerWatchMode ? (
+        ) : roomState && !isHost ? (
           <div className="mb-3 flex items-center justify-center rounded-lg border border-white/[0.06] bg-zinc-950/35 px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
             Watching live
-          </div>
-        ) : roomState && !isHost && viewerWatchMode ? (
-          <div className="mb-2 flex items-center justify-center gap-2 text-[11px] text-zinc-500">
-            <span className="font-medium uppercase tracking-wide text-zinc-500">
-              Watching live
-            </span>
-            <span className="text-zinc-600">·</span>
-            <span className="text-zinc-400">Watch mode</span>
           </div>
         ) : null}
 
         <div
           className={`relative w-full overflow-hidden bg-black ${
-            immersiveLayout
-              ? "shrink-0 rounded-none ring-0 shadow-none"
+            cleanMode
+              ? "h-[100dvh] w-[100dvw] rounded-none ring-0 shadow-none"
               : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
         >
@@ -3547,11 +3530,10 @@ function RoomContent() {
             player (black screen) after unlock on some mobile watch layouts.
           */}
           <div
-            className={`relative aspect-video w-full min-h-[12rem] overflow-hidden ${
-              immersiveLayout
-                ? "max-h-[min(100dvw*0.5625,85dvh)] mx-auto w-full max-w-[100dvw]"
-                : ""
+            className={`relative w-full overflow-hidden ${
+              cleanMode ? "h-[100dvh] w-[100dvw]" : "aspect-video min-h-[12rem]"
             }`}
+            onClick={handleToggleCleanMode}
           >
             <div className="absolute inset-0 overflow-hidden">
               <YouTube
@@ -3591,7 +3573,13 @@ function RoomContent() {
               </div>
             ) : null}
             {isHost ? (
-              <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
+              <div
+                className={`pointer-events-none absolute left-1/2 z-30 flex w-[calc(100%-1rem)] -translate-x-1/2 justify-center px-1 ${
+                  cleanMode
+                    ? "bottom-3 top-auto max-w-none"
+                    : "top-2 max-w-2xl sm:top-3"
+                }`}
+              >
                 <div className="flex flex-col items-center gap-1">
                   {isLiveStream && liveBehindSec !== null ? (
                     <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
@@ -3600,34 +3588,37 @@ function RoomContent() {
                         : `-${Math.round(liveBehindSec)}s`}
                     </span>
                   ) : null}
-                  <div className={hostControlsBar}>
+                  <div
+                    ref={hostControlsRef}
+                    className={cleanMode ? hostControlsBarClean : hostControlsBar}
+                  >
                   <button
                     type="button"
                     onClick={() =>
                       roomState?.isPlaying ? handlePause() : handlePlay()
                     }
-                    className={hostChip}
+                    className={cleanMode ? hostChipClean : hostChip}
                   >
                     {roomState?.isPlaying ? "Pause" : "Play"}
                   </button>
                   <button
                     type="button"
                     onClick={handleSeekLiveBack30}
-                    className={hostChip}
+                    className={cleanMode ? hostChipClean : hostChip}
                   >
                     -30s
                   </button>
                   <button
                     type="button"
                     onClick={handleSeekBack}
-                    className={hostChip}
+                    className={cleanMode ? hostChipClean : hostChip}
                   >
                     -10s
                   </button>
                   <button
                     type="button"
                     onClick={() => void handleMarkPlay()}
-                    className={`${hostChip} ${
+                    className={`${cleanMode ? hostChipClean : hostChip} ${
                       markPlayState === "marked"
                         ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
                         : ""
@@ -3639,7 +3630,7 @@ function RoomContent() {
                     <button
                       type="button"
                       onClick={handleJumpLiveEdge}
-                      className={`${hostChip} border-red-500/35 font-semibold text-red-100`}
+                      className={`${cleanMode ? hostChipClean : hostChip} border-red-500/35 font-semibold text-red-100`}
                     >
                       LIVE
                     </button>
@@ -3647,62 +3638,67 @@ function RoomContent() {
                   <button
                     type="button"
                     onClick={handleHostResync}
-                    className={hostChipSync}
+                    className={cleanMode ? hostChipSyncClean : hostChipSync}
                   >
                     Sync
                   </button>
-                  <button
-                    type="button"
-                    onClick={cycleFf}
-                    className={`${hostChip} ${
-                      ffMode !== 0
-                        ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
-                        : ""
-                    }`}
-                  >
-                    {ffMode === 0
-                      ? "FF"
-                      : ffMode === 2
-                        ? "FF 2×"
-                        : ffMode === 4
-                          ? "FF 4×"
-                          : "FF 8×"}
-                  </button>
-                  {HOST_SPEEDS.map((rate) => (
-                    <button
-                      key={rate}
-                      type="button"
-                      onClick={() => handleSpeed(rate)}
-                      className={`${hostChip} ${
-                        Math.abs(
-                          (roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) -
-                            rate,
-                        ) < 1e-6
-                          ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
-                          : ""
-                      }`}
-                    >
-                      {rate === 1 ? "1×" : `${rate}×`}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setTelDrawOn((v) => !v)}
-                    className={
-                      telDrawOn
-                        ? `${hostChip} border-blue-400/45 bg-blue-950/50 font-semibold text-white ring-1 ring-blue-500/30`
-                        : hostChip
-                    }
-                  >
-                    {telDrawOn ? "Draw Off" : "Draw On"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearDrawings}
-                    className={hostChip}
-                  >
-                    Clear
-                  </button>
+                  {!cleanMode ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={cycleFf}
+                        className={`${hostChip} ${
+                          ffMode !== 0
+                            ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
+                            : ""
+                        }`}
+                      >
+                        {ffMode === 0
+                          ? "FF"
+                          : ffMode === 2
+                            ? "FF 2×"
+                            : ffMode === 4
+                              ? "FF 4×"
+                              : "FF 8×"}
+                      </button>
+                      {HOST_SPEEDS.map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => handleSpeed(rate)}
+                          className={`${hostChip} ${
+                            Math.abs(
+                              (roomState?.playbackRate ??
+                                DEFAULT_PLAYBACK_RATE) -
+                                rate,
+                            ) < 1e-6
+                              ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
+                              : ""
+                          }`}
+                        >
+                          {rate === 1 ? "1×" : `${rate}×`}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setTelDrawOn((v) => !v)}
+                        className={
+                          telDrawOn
+                            ? `${hostChip} border-blue-400/45 bg-blue-950/50 font-semibold text-white ring-1 ring-blue-500/30`
+                            : hostChip
+                        }
+                      >
+                        {telDrawOn ? "Draw Off" : "Draw On"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearDrawings}
+                        className={hostChip}
+                      >
+                        Clear
+                      </button>
+                    </>
+                  ) : null}
                   </div>
                 </div>
               </div>
