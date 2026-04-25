@@ -2786,6 +2786,137 @@ function RoomContent() {
     [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand],
   );
 
+  const hostLoadVideoAndPlay = useCallback(
+    (videoId: string, startSeconds: number, logPrefix: string) => {
+      const lp = getPlayer() as YouTubePlayer & {
+        loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
+      };
+      if (typeof lp?.loadVideoById === "function") {
+        syncLog(`${logPrefix} loadVideoById used`, {
+          videoId,
+          startSeconds,
+        });
+        try {
+          lp.loadVideoById({ videoId, startSeconds });
+        } catch {
+          syncLog(`${logPrefix} loadVideoById failed → fallback`, { videoId });
+        }
+      } else {
+        syncLog(`${logPrefix} fallback used`, {
+          reason: "loadVideoById unavailable",
+        });
+      }
+
+      window.setTimeout(() => {
+        const p2 = getPlayer();
+        if (!p2) return;
+        void (async () => {
+          try {
+            p2.playVideo();
+          } catch {
+            /* YouTube API */
+          }
+          window.setTimeout(() => {
+            const p3 = getPlayer();
+            if (!p3) return;
+            void (async () => {
+              const st3 = await readYoutubePlayerState(p3);
+              syncLog(`${logPrefix} play retry state`, { state: st3 });
+              if (youtubeStateImpliesPlaying(st3)) return;
+              try {
+                p3.playVideo();
+              } catch {
+                /* YouTube API */
+              }
+            })();
+          }, 300);
+        })();
+      }, 120);
+    },
+    [],
+  );
+
+  const handleReconnectLive = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    const raw = window.prompt("Paste new YouTube live URL");
+    if (raw === null) return;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const newVideoId = extractYouTubeVideoId(trimmed);
+    if (!newVideoId) {
+      window.alert("Invalid YouTube link or could not find a video id.");
+      return;
+    }
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const idx = cur.currentClipIndex;
+      const oldVideoId = cur.clips[idx]?.videoId ?? cur.videoId;
+      if (newVideoId === oldVideoId) return;
+
+      const player = getPlayer();
+      const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
+      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const gameT = gameTimeFromAngleTime(t, curAngle);
+
+      const nextAngles: VideoAngle[] = cur.angles.map((a) =>
+        a.id === cur.currentAngleId ? { ...a, videoId: newVideoId } : a,
+      );
+      const nextClips: ClipEntry[] = cur.clips.map((c, i) =>
+        i === idx ? { ...c, videoId: newVideoId } : c,
+      );
+      const nextChapters: ChapterEntry[] = cur.chapters.map((ch) =>
+        ch.videoId === oldVideoId ? { ...ch, videoId: newVideoId } : ch,
+      );
+      const angleAfter = pickAngle(nextAngles, cur.currentAngleId);
+      const startSeconds = angleTimeFromGameTime(gameT, angleAfter);
+      const pr = clearFfIfActive();
+      lastAppliedKey.current = "";
+
+      hostActionSeqRef.current += 1;
+      const commandId = hostActionSeqRef.current;
+      const playbackCommand: PlaybackCommand = {
+        type: "resync",
+        roomId,
+        activeVideoId: newVideoId,
+        issuedAt: Date.now(),
+        anchorVideoTime: startSeconds,
+        playbackRate: pr,
+        commandId,
+      };
+
+      syncLog("reconnect live stream", {
+        oldVideoId,
+        newVideoId,
+        gameTime: gameT,
+        startSeconds,
+        currentAngleId: cur.currentAngleId,
+      });
+
+      void update(rr, {
+        videoId: newVideoId,
+        clips: nextClips,
+        currentClipIndex: idx,
+        angles: nextAngles,
+        currentAngleId: cur.currentAngleId,
+        chapters: nextChapters,
+        currentTime: startSeconds,
+        isPlaying: true,
+        playbackRate: pr,
+        playbackCommand,
+        action: "resync",
+        actionId: commandId,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+
+      hostLoadVideoAndPlay(newVideoId, startSeconds, "reconnect live");
+    })();
+  }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
+
   /**
    * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
    */
@@ -3387,6 +3518,13 @@ function RoomContent() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void handleReconnectLive()}
+                  className={secondaryHostBtn}
+                >
+                  Reconnect Live
+                </button>
+                <button
+                  type="button"
                   onClick={handleCopyViewerLink}
                   className={secondaryHostBtn}
                 >
@@ -3742,6 +3880,14 @@ function RoomContent() {
                   ) : null}
                   <button
                     type="button"
+                    onClick={() => void handleReconnectLive()}
+                    className={hostChipClean}
+                    title="Replace active stream URL without losing session"
+                  >
+                    Reconnect
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleHostResync}
                     className={hostChipSyncClean}
                   >
@@ -3855,6 +4001,14 @@ function RoomContent() {
                             LIVE
                           </button>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => void handleReconnectLive()}
+                          className={hostChip}
+                          title="Replace active stream URL without losing session"
+                        >
+                          Reconnect Live
+                        </button>
                         <button
                           type="button"
                           onClick={handleHostResync}
