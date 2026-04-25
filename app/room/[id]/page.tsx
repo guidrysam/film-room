@@ -2707,6 +2707,8 @@ function RoomContent() {
       if (!nextAngle) return;
       void (async () => {
         const player = getPlayer();
+        const st = await readYoutubePlayerState(player);
+        const wasPlaying = youtubeStateImpliesPlaying(st);
         const t = await readYoutubeCurrentTime(
           player,
           cur.currentTime ?? 0,
@@ -2726,10 +2728,11 @@ function RoomContent() {
           nextAngleId: nextAngle.id,
           nextVideoId: nextAngle.videoId,
           seekTime,
+          wasPlaying,
         });
         writeImmediatePlaybackCommand("resync", {
           currentTime: seekTime,
-          isPlaying: true,
+          isPlaying: wasPlaying,
           playbackRate: pr,
           videoId: nextAngle.videoId,
           currentAngleId: nextAngle.id,
@@ -2737,14 +2740,18 @@ function RoomContent() {
 
         const lp = player as YouTubePlayer & {
           loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
+          cueVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
         };
-        if (typeof lp?.loadVideoById === "function") {
+        if (wasPlaying && typeof lp?.loadVideoById === "function") {
           syncLog("angle switch loadVideoById used", {
             videoId: nextAngle.videoId,
             startSeconds: seekTime,
           });
           try {
-            lp.loadVideoById({ videoId: nextAngle.videoId, startSeconds: seekTime });
+            lp.loadVideoById({
+              videoId: nextAngle.videoId,
+              startSeconds: seekTime,
+            });
           } catch {
             syncLog("angle switch loadVideoById failed → fallback", {
               videoId: nextAngle.videoId,
@@ -2776,9 +2783,30 @@ function RoomContent() {
               }, 300);
             })();
           }, 120);
-        } else {
+          return;
+        }
+
+        if (!wasPlaying && typeof lp?.cueVideoById === "function") {
+          syncLog("angle switch cueVideoById used (paused)", {
+            videoId: nextAngle.videoId,
+            startSeconds: seekTime,
+          });
+          try {
+            lp.cueVideoById({
+              videoId: nextAngle.videoId,
+              startSeconds: seekTime,
+            });
+          } catch {
+            syncLog("angle switch cueVideoById failed → fallback", {
+              videoId: nextAngle.videoId,
+            });
+          }
+          return;
+        }
+
+        if (typeof lp?.loadVideoById !== "function") {
           syncLog("angle switch fallback used", {
-            reason: "loadVideoById unavailable",
+            reason: "load/cue video methods unavailable",
           });
         }
       })();
