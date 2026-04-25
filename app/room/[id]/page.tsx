@@ -1463,6 +1463,7 @@ function RoomContent() {
   const pendingAngleAutoplayRef = useRef<{
     videoId: string;
     commandId: number;
+    seekTime: number;
   } | null>(null);
 
   useEffect(() => {
@@ -2706,9 +2707,6 @@ function RoomContent() {
       if (!nextAngle) return;
       void (async () => {
         const player = getPlayer();
-        const st = await readYoutubePlayerState(player);
-        const wasPlaying =
-          typeof st === "number" ? youtubeStateImpliesPlaying(st) : cur.isPlaying;
         const t = await readYoutubeCurrentTime(
           player,
           cur.currentTime ?? 0,
@@ -2719,12 +2717,19 @@ function RoomContent() {
         const pr = clearFfIfActive();
         lastAppliedKey.current = "";
         const nextCommandId = hostActionSeqRef.current + 1;
-        pendingAngleAutoplayRef.current = wasPlaying
-          ? { videoId: nextAngle.videoId, commandId: nextCommandId }
-          : null;
-        writeImmediatePlaybackCommand("seek", {
+        pendingAngleAutoplayRef.current = {
+          videoId: nextAngle.videoId,
+          commandId: nextCommandId,
+          seekTime,
+        };
+        syncLog("angle switch command", {
+          nextAngleId: nextAngle.id,
+          nextVideoId: nextAngle.videoId,
+          seekTime,
+        });
+        writeImmediatePlaybackCommand("resync", {
           currentTime: seekTime,
-          isPlaying: wasPlaying,
+          isPlaying: true,
           playbackRate: pr,
           videoId: nextAngle.videoId,
           currentAngleId: nextAngle.id,
@@ -3016,19 +3021,42 @@ function RoomContent() {
       s.isPlaying
     ) {
       pendingAngleAutoplayRef.current = null;
+      syncLog("angle switch autoplay", {
+        videoId: s.videoId,
+        seekTime: pending.seekTime,
+      });
       window.setTimeout(() => {
         const pp = getPlayer();
         if (!pp) return;
         void (async () => {
-          const st = await readYoutubePlayerState(pp);
-          if (youtubeStateImpliesPlaying(st)) return;
           try {
-            pp.playVideo();
+            pp.seekTo?.(pending.seekTime, true);
           } catch {
-            /* YouTube autoplay / readiness */
+            /* YouTube API */
           }
+          const st = await readYoutubePlayerState(pp);
+          if (!youtubeStateImpliesPlaying(st)) {
+            try {
+              pp.playVideo();
+            } catch {
+              /* YouTube autoplay / readiness */
+            }
+          }
+          window.setTimeout(() => {
+            const p2 = getPlayer();
+            if (!p2) return;
+            void (async () => {
+              const st2 = await readYoutubePlayerState(p2);
+              if (youtubeStateImpliesPlaying(st2)) return;
+              try {
+                p2.playVideo();
+              } catch {
+                /* YouTube autoplay / readiness */
+              }
+            })();
+          }, 250);
         })();
-      }, 100);
+      }, 120);
     }
   }, [applyRoomStateToPlayer]);
 
