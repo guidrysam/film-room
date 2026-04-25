@@ -3228,7 +3228,7 @@ function RoomContent() {
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
         cleanMode
-          ? "fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-[#030306] p-0"
+          ? "fixed inset-0 z-40 flex h-[100dvh] w-[100dvw] flex-col overflow-hidden bg-[#030306] p-0"
           : "px-4 py-6"
       }`}
     >
@@ -3242,8 +3242,8 @@ function RoomContent() {
         </button>
       ) : null}
       <div
-        className={`mx-auto flex w-full flex-1 flex-col ${
-          cleanMode ? "max-w-none justify-center" : "max-w-3xl"
+        className={`mx-auto flex w-full flex-1 flex-col min-h-0 ${
+          cleanMode ? "max-w-none justify-center md:min-h-0" : "max-w-3xl"
         }`}
       >
         {!cleanMode ? (
@@ -3520,19 +3520,19 @@ function RoomContent() {
         <div
           className={`relative w-full overflow-hidden bg-black ${
             cleanMode
-              ? "flex h-[100dvh] w-[100dvw] flex-col rounded-none ring-0 shadow-none"
+              ? "flex min-h-0 w-full flex-1 flex-col rounded-none ring-0 shadow-none md:h-[100dvh] md:w-[100dvw] md:overflow-hidden"
               : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
           }`}
         >
+          {cleanMode ? (
+            <div className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-y-contain md:min-h-0 md:flex-1 md:overflow-hidden">
           {/*
             Always keep aspect-video: absolutely positioned YouTube/iframe does not
             contribute height — flex-1/min-h-0 without aspect ratio collapsed the
             player (black screen) after unlock on some mobile watch layouts.
           */}
           <div
-            className={`relative w-full overflow-hidden ${
-              cleanMode ? "min-h-0 flex-1" : "aspect-video min-h-[12rem]"
-            }`}
+            className="relative aspect-video w-full shrink-0 overflow-hidden md:aspect-auto md:min-h-0 md:flex-1"
             onClick={handleToggleCleanMode}
           >
             <div className="absolute inset-0 overflow-hidden">
@@ -3572,127 +3572,10 @@ function RoomContent() {
                 </div>
               </div>
             ) : null}
-            {isHost && !cleanMode ? (
-              <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
-                <div className="flex flex-col items-center gap-1">
-                  {isLiveStream && liveBehindSec !== null ? (
-                    <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
-                      {liveBehindSec < 2.5
-                        ? "LIVE"
-                        : `-${Math.round(liveBehindSec)}s`}
-                    </span>
-                  ) : null}
-                  <div ref={hostControlsRef} className={hostControlsBar}>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        roomState?.isPlaying ? handlePause() : handlePlay()
-                      }
-                      className={hostChip}
-                    >
-                      {roomState?.isPlaying ? "Pause" : "Play"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSeekLiveBack30}
-                      className={hostChip}
-                    >
-                      -30s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSeekBack}
-                      className={hostChip}
-                    >
-                      -10s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleMarkPlay()}
-                      className={`${hostChip} ${
-                        markPlayState === "marked"
-                          ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
-                          : ""
-                      }`}
-                    >
-                      {markPlayState === "marked" ? "Marked" : "Mark Play"}
-                    </button>
-                    {isLiveStream ? (
-                      <button
-                        type="button"
-                        onClick={handleJumpLiveEdge}
-                        className={`${hostChip} border-red-500/35 font-semibold text-red-100`}
-                      >
-                        LIVE
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={handleHostResync}
-                      className={hostChipSync}
-                    >
-                      Sync
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cycleFf}
-                      className={`${hostChip} ${
-                        ffMode !== 0
-                          ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
-                          : ""
-                      }`}
-                    >
-                      {ffMode === 0
-                        ? "FF"
-                        : ffMode === 2
-                          ? "FF 2×"
-                          : ffMode === 4
-                            ? "FF 4×"
-                            : "FF 8×"}
-                    </button>
-                    {HOST_SPEEDS.map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => handleSpeed(rate)}
-                        className={`${hostChip} ${
-                          Math.abs(
-                            (roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE) -
-                              rate,
-                          ) < 1e-6
-                            ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
-                            : ""
-                        }`}
-                      >
-                        {rate === 1 ? "1×" : `${rate}×`}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setTelDrawOn((v) => !v)}
-                      className={
-                        telDrawOn
-                          ? `${hostChip} border-blue-400/45 bg-blue-950/50 font-semibold text-white ring-1 ring-blue-500/30`
-                          : hostChip
-                      }
-                    >
-                      {telDrawOn ? "Draw Off" : "Draw On"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleClearDrawings}
-                      className={hostChip}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
           </div>
-          {isHost && cleanMode ? (
-            <div className="pointer-events-none z-30 w-full px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
-              <div className="pointer-events-auto mx-auto flex w-full max-w-none flex-col items-center gap-1">
+          {isHost ? (
+            <div className="z-30 w-full shrink-0 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
+              <div className="mx-auto flex w-full max-w-none flex-col items-center gap-1">
                 {isLiveStream && liveBehindSec !== null ? (
                   <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
                     {liveBehindSec < 2.5 ? "LIVE" : `-${Math.round(liveBehindSec)}s`}
@@ -3751,8 +3634,178 @@ function RoomContent() {
                   </button>
                 </div>
               </div>
+              <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
             </div>
           ) : null}
+            </div>
+          ) : (
+            <>
+              {/*
+                Always keep aspect-video: absolutely positioned YouTube/iframe does not
+                contribute height — flex-1/min-h-0 without aspect ratio collapsed the
+                player (black screen) after unlock on some mobile watch layouts.
+              */}
+              <div
+                className="relative aspect-video w-full min-h-[12rem] overflow-hidden"
+                onClick={handleToggleCleanMode}
+              >
+                <div className="absolute inset-0 overflow-hidden">
+                  <YouTube
+                    key={`${safeDecodeVideoId(effectiveVideoId)}-${isHost ? "host" : "viewer"}`}
+                    ref={playerRef}
+                    videoId={safeDecodeVideoId(effectiveVideoId)}
+                    onReady={handlePlayerReady}
+                    onStateChange={handleYoutubeStateChange}
+                    className="absolute left-0 top-0 h-full w-full"
+                    iframeClassName="absolute left-0 top-0 h-full w-full"
+                    opts={youtubePlayerOpts}
+                  />
+                </div>
+                <TelestratorOverlay
+                  roomId={roomId}
+                  isHost={isHost}
+                  drawEnabled={telDrawOn}
+                />
+                {!isHost && !viewerPlaybackUnlocked ? (
+                  <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
+                    <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-950/90 p-8 text-center shadow-2xl shadow-black/60 ring-1 ring-white/[0.05]">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                        Viewer
+                      </p>
+                      <p className="mb-6 text-sm leading-relaxed text-zinc-300">
+                        Enable playback to follow the host. Audio and video stay in
+                        sync after you continue.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleViewerPlaybackUnlock}
+                        className="w-full rounded-xl bg-blue-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                      >
+                        Tap to enable playback
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {isHost ? (
+                  <div className="pointer-events-none absolute left-1/2 top-2 z-30 flex w-[calc(100%-1rem)] max-w-2xl -translate-x-1/2 justify-center px-1 sm:top-3">
+                    <div className="flex flex-col items-center gap-1">
+                      {isLiveStream && liveBehindSec !== null ? (
+                        <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
+                          {liveBehindSec < 2.5
+                            ? "LIVE"
+                            : `-${Math.round(liveBehindSec)}s`}
+                        </span>
+                      ) : null}
+                      <div ref={hostControlsRef} className={hostControlsBar}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            roomState?.isPlaying ? handlePause() : handlePlay()
+                          }
+                          className={hostChip}
+                        >
+                          {roomState?.isPlaying ? "Pause" : "Play"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSeekLiveBack30}
+                          className={hostChip}
+                        >
+                          -30s
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSeekBack}
+                          className={hostChip}
+                        >
+                          -10s
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkPlay()}
+                          className={`${hostChip} ${
+                            markPlayState === "marked"
+                              ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                              : ""
+                          }`}
+                        >
+                          {markPlayState === "marked" ? "Marked" : "Mark Play"}
+                        </button>
+                        {isLiveStream ? (
+                          <button
+                            type="button"
+                            onClick={handleJumpLiveEdge}
+                            className={`${hostChip} border-red-500/35 font-semibold text-red-100`}
+                          >
+                            LIVE
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={handleHostResync}
+                          className={hostChipSync}
+                        >
+                          Sync
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cycleFf}
+                          className={`${hostChip} ${
+                            ffMode !== 0
+                              ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
+                              : ""
+                          }`}
+                        >
+                          {ffMode === 0
+                            ? "FF"
+                            : ffMode === 2
+                              ? "FF 2×"
+                              : ffMode === 4
+                                ? "FF 4×"
+                                : "FF 8×"}
+                        </button>
+                        {HOST_SPEEDS.map((rate) => (
+                          <button
+                            key={rate}
+                            type="button"
+                            onClick={() => handleSpeed(rate)}
+                            className={`${hostChip} ${
+                              Math.abs(
+                                (roomState?.playbackRate ??
+                                  DEFAULT_PLAYBACK_RATE) - rate,
+                              ) < 1e-6
+                                ? "border-blue-500/70 !bg-blue-600 !font-semibold !text-white shadow-[0_0_14px_-3px_rgba(59,130,246,0.55)] ring-2 ring-blue-400/45"
+                                : ""
+                            }`}
+                          >
+                            {rate === 1 ? "1×" : `${rate}×`}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setTelDrawOn((v) => !v)}
+                          className={
+                            telDrawOn
+                              ? `${hostChip} border-blue-400/45 bg-blue-950/50 font-semibold text-white ring-1 ring-blue-500/30`
+                              : hostChip
+                          }
+                        >
+                          {telDrawOn ? "Draw Off" : "Draw On"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleClearDrawings}
+                          className={hostChip}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
