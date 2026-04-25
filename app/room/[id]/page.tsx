@@ -1455,6 +1455,15 @@ function RoomContent() {
   });
 
   const hostActionSeqRef = useRef(1);
+  /**
+   * Host-only: when switching camera angles (videoId swap), remember whether the
+   * host was actively playing so we can re-issue `playVideo()` shortly after the
+   * new iframe is ready (avoids "stuck paused" after remount).
+   */
+  const pendingAngleAutoplayRef = useRef<{
+    videoId: string;
+    commandId: number;
+  } | null>(null);
 
   useEffect(() => {
     if (isHost && roomState && typeof roomState.actionId === "number") {
@@ -2697,6 +2706,9 @@ function RoomContent() {
       if (!nextAngle) return;
       void (async () => {
         const player = getPlayer();
+        const st = await readYoutubePlayerState(player);
+        const wasPlaying =
+          typeof st === "number" ? youtubeStateImpliesPlaying(st) : cur.isPlaying;
         const t = await readYoutubeCurrentTime(
           player,
           cur.currentTime ?? 0,
@@ -2706,9 +2718,13 @@ function RoomContent() {
         const seekTime = angleTimeFromGameTime(gameT, nextAngle);
         const pr = clearFfIfActive();
         lastAppliedKey.current = "";
+        const nextCommandId = hostActionSeqRef.current + 1;
+        pendingAngleAutoplayRef.current = wasPlaying
+          ? { videoId: nextAngle.videoId, commandId: nextCommandId }
+          : null;
         writeImmediatePlaybackCommand("seek", {
           currentTime: seekTime,
-          isPlaying: cur.isPlaying,
+          isPlaying: wasPlaying,
           playbackRate: pr,
           videoId: nextAngle.videoId,
           currentAngleId: nextAngle.id,
@@ -2990,6 +3006,30 @@ function RoomContent() {
     if (key === lastAppliedKey.current) return;
     const gen = ++applyRoomGenRef.current;
     void applyRoomStateToPlayer(s, null, gen);
+
+    if (!isHostRef.current) return;
+    const pending = pendingAngleAutoplayRef.current;
+    if (
+      pending &&
+      pending.videoId === s.videoId &&
+      pending.commandId === s.actionId &&
+      s.isPlaying
+    ) {
+      pendingAngleAutoplayRef.current = null;
+      window.setTimeout(() => {
+        const pp = getPlayer();
+        if (!pp) return;
+        void (async () => {
+          const st = await readYoutubePlayerState(pp);
+          if (youtubeStateImpliesPlaying(st)) return;
+          try {
+            pp.playVideo();
+          } catch {
+            /* YouTube autoplay / readiness */
+          }
+        })();
+      }, 100);
+    }
   }, [applyRoomStateToPlayer]);
 
   const handleClearDrawings = () => {
