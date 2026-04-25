@@ -1189,8 +1189,6 @@ function RoomContent() {
   /** Host-only: minimal mobile layout with video dominant. */
   const [isCleanMode, setIsCleanMode] = useState(false);
   const hostControlsRef = useRef<HTMLDivElement | null>(null);
-  const cleanWrapperRef = useRef<HTMLDivElement | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
@@ -1301,44 +1299,6 @@ function RoomContent() {
   }, []);
 
   const cleanMode = isHost && isCleanMode;
-
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onFs = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
-    };
-    onFs();
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
-  }, []);
-
-  const toggleHostFullscreen = useCallback(async () => {
-    if (!isHost) return;
-    if (typeof document === "undefined") return;
-    const root = cleanWrapperRef.current;
-    if (!root) {
-      setIsCleanMode(true);
-      return;
-    }
-
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        return;
-      }
-      const el = root as HTMLElement & {
-        requestFullscreen?: () => Promise<void>;
-      };
-      if (typeof el.requestFullscreen !== "function") {
-        setIsCleanMode(true);
-        return;
-      }
-      await el.requestFullscreen();
-      setIsCleanMode(true);
-    } catch {
-      setIsCleanMode(true);
-    }
-  }, [isHost]);
 
   const handleToggleCleanMode = useCallback(
     (e: React.MouseEvent) => {
@@ -3266,7 +3226,6 @@ function RoomContent() {
   return (
     <>
     <div
-      ref={cleanWrapperRef}
       className={`flex min-h-screen flex-col text-zinc-50 ${
         cleanMode
           ? "fixed inset-0 z-40 h-[100dvh] w-[100dvw] overflow-hidden bg-[#030306] p-0"
@@ -3789,13 +3748,6 @@ function RoomContent() {
                     className={hostChipSyncClean}
                   >
                     Sync
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void toggleHostFullscreen()}
-                    className={hostChipClean}
-                  >
-                    {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                   </button>
                 </div>
               </div>
