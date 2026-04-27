@@ -208,8 +208,21 @@ function computeOffsetsFromActualStartTimes(
   angles: VideoAngle[],
 ): VideoAngle[] | null {
   if (angles.length < 2) return null;
-  const masterStartMs = parseActualStartMs(angles[0]?.actualStartTime);
-  if (masterStartMs === null) return null;
+  const candidates = angles
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      startMs: parseActualStartMs(a.actualStartTime),
+    }))
+    .filter((x) => x.startMs !== null) as Array<{
+    id: string;
+    name: string;
+    startMs: number;
+  }>;
+  if (candidates.length < 2) return null;
+  candidates.sort((a, b) => a.startMs - b.startMs);
+  const master = candidates[0]!;
+  const masterStartMs = master.startMs;
   const next: VideoAngle[] = [];
   let computedCount = 0;
   for (const a of angles) {
@@ -227,6 +240,10 @@ function computeOffsetsFromActualStartTimes(
     });
   }
   if (computedCount < 2) return null;
+  syncLog("auto sync angles master (earliest actualStartTime)", {
+    masterAngleId: master.id,
+    masterAngleName: master.name,
+  });
   return next;
 }
 
@@ -3112,7 +3129,7 @@ function RoomContent() {
         setAutoSyncAnglesStatus({
           kind: "error",
           message:
-            "Could not auto-sync from YouTube start times. Use manual sync.",
+            "Could not auto-sync: need start times for at least two angles.",
         });
         return;
       }
