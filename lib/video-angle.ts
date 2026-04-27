@@ -16,11 +16,7 @@ export function angleTimeFromGameTime(
   gameTime: number,
   angle: VideoAngle,
 ): number {
-  const offset = angle.offsetFromGameTime ?? 0;
-  // Sign: `angleTime = gameTime + offsetFromGameTime`.
-  // If an angle started *later* in real time than the master stream, its offset must be negative
-  // so that, at the same real-world moment, its YouTube time is smaller (it has been live for less time).
-  return Math.max(0, gameTime + offset);
+  return clampedAnglePlaybackTimeFromGameTime(gameTime, angle);
 }
 
 export function gameTimeFromAngleTime(
@@ -28,7 +24,35 @@ export function gameTimeFromAngleTime(
   angle: VideoAngle,
 ): number {
   const offset = angle.offsetFromGameTime ?? 0;
+  // If playback is held at 0 before the stream exists, treat all pre-start playback as mapping to
+  // the boundary game moment right when the stream becomes available.
+  if (angleTime <= 0 && offset < 0) {
+    return -offset;
+  }
   return angleTime - offset;
+}
+
+/** Seconds this angle's real-world start is after the master clock origin (>= 0). */
+export function realClockStartOffsetSecFromAngleOffset(angle: VideoAngle): number {
+  const off = angle.offsetFromGameTime ?? 0;
+  return Math.max(0, -off);
+}
+
+/** Raw mapping before clamping to valid YouTube time (can be negative for not-yet-started angles). */
+export function effectiveAngleTimeFromGameTime(
+  gameTime: number,
+  angle: VideoAngle,
+): number {
+  const offset = angle.offsetFromGameTime ?? 0;
+  return gameTime + offset;
+}
+
+/** YouTube playback time for a given shared gameTime (held at 0 until the stream exists). */
+export function clampedAnglePlaybackTimeFromGameTime(
+  gameTime: number,
+  angle: VideoAngle,
+): number {
+  return Math.max(0, effectiveAngleTimeFromGameTime(gameTime, angle));
 }
 
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
