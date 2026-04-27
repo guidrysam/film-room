@@ -3095,6 +3095,98 @@ function RoomContent() {
     { kind: "idle" } | { kind: "success"; message: string } | { kind: "error"; message: string }
   >({ kind: "idle" });
 
+  type YtMetaDebugRow = {
+    angleId: string;
+    angleName: string;
+    videoId: string;
+    meta: YouTubeVideoMeta | null;
+    apiError: string | null;
+    currentOffsetFromGameTime: number;
+    /** (earliest actualStartTime − this angle's actualStartTime) in seconds; null if not computable. */
+    realClockStartOffsetSec: number | null;
+    exampleAtGameTime60: number;
+  };
+
+  const [showYtMetaDebug, setShowYtMetaDebug] = useState(false);
+  const [ytMetaDebugRows, setYtMetaDebugRows] = useState<YtMetaDebugRow[]>([]);
+  const [ytMetaDebugFetchedAt, setYtMetaDebugFetchedAt] = useState<number | null>(
+    null,
+  );
+
+  const handleShowYoutubeMetadata = useCallback(() => {
+    if (!isHost || !roomId) return;
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || cur.angles.length < 2) return;
+
+      const results = await Promise.all(
+        cur.angles.map(async (a) => {
+          let apiError: string | null = null;
+          let meta: YouTubeVideoMeta | null = null;
+          try {
+            const res = await fetch(
+              `/api/youtube-video-meta?videoId=${encodeURIComponent(a.videoId)}`,
+              { cache: "no-store" },
+            );
+            const json = (await res.json()) as
+              | { ok: true; meta: YouTubeVideoMeta }
+              | { ok: false; error?: string };
+            if (!res.ok || !json || (json as { ok?: unknown }).ok !== true) {
+              apiError =
+                typeof (json as { error?: unknown }).error === "string"
+                  ? (json as { error: string }).error
+                  : `HTTP ${res.status}`;
+            } else {
+              meta = (json as { ok: true; meta: YouTubeVideoMeta }).meta;
+            }
+          } catch {
+            apiError = "Fetch failed";
+          }
+          return { angle: a, meta, apiError };
+        }),
+      );
+
+      const starts = results
+        .map((r) => ({
+          angle: r.angle,
+          startMs: parseActualStartMs(r.meta?.actualStartTime),
+        }))
+        .filter((x) => x.startMs !== null) as Array<{
+        angle: VideoAngle;
+        startMs: number;
+      }>;
+      starts.sort((a, b) => a.startMs - b.startMs);
+      const masterMs = starts.length ? starts[0]!.startMs : null;
+
+      const rows: YtMetaDebugRow[] = results.map(({ angle, meta, apiError }) => {
+        const angleStartMs = parseActualStartMs(meta?.actualStartTime);
+        const realClockStartOffsetSec =
+          masterMs !== null && angleStartMs !== null
+            ? (masterMs - angleStartMs) / 1000
+            : null;
+        const currentOffset = angle.offsetFromGameTime ?? 0;
+        const exampleAtGameTime60 = angleTimeFromGameTime(60, {
+          ...angle,
+          offsetFromGameTime: currentOffset,
+        });
+        return {
+          angleId: angle.id,
+          angleName: angle.name,
+          videoId: angle.videoId,
+          meta,
+          apiError,
+          currentOffsetFromGameTime: currentOffset,
+          realClockStartOffsetSec,
+          exampleAtGameTime60,
+        };
+      });
+
+      setYtMetaDebugRows(rows);
+      setYtMetaDebugFetchedAt(Date.now());
+      setShowYtMetaDebug(true);
+    })();
+  }, [isHost, roomId]);
+
   const handleAutoSyncAngles = useCallback(() => {
     if (!isHost || !roomId) return;
     const rr = roomRefForWrite.current;
@@ -3880,6 +3972,24 @@ function RoomContent() {
                 </button>
               ) : null}
               {isHost ? (
+                <button
+                  type="button"
+                  onClick={() => void handleShowYoutubeMetadata()}
+                  className={secondaryHostBtn}
+                >
+                  Show YouTube Metadata
+                </button>
+              ) : null}
+              {isHost && showYtMetaDebug ? (
+                <button
+                  type="button"
+                  onClick={() => setShowYtMetaDebug(false)}
+                  className={secondaryHostBtn}
+                >
+                  Hide Metadata
+                </button>
+              ) : null}
+              {isHost ? (
                 <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
                   <button
                     type="button"
@@ -3943,6 +4053,92 @@ function RoomContent() {
               <p className="mt-2 text-xs text-amber-300">
                 {autoSyncAnglesStatus.message}
               </p>
+            ) : null}
+            {isHost && showYtMetaDebug && ytMetaDebugRows.length ? (
+              <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-950/20 p-3 text-[11px] text-amber-50">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold uppercase tracking-wide text-amber-200/90">
+                    YouTube metadata (debug)
+                  </p>
+                  {ytMetaDebugFetchedAt ? (
+                    <span className="font-mono text-[10px] text-amber-200/70">
+                      fetched {new Date(ytMetaDebugFetchedAt).toLocaleTimeString()}
+                    </span>
+                  ) : null}
+                </div>
+                <ul className="flex flex-col gap-3">
+                  {ytMetaDebugRows.map((row) => (
+                    <li
+                      key={row.angleId}
+                      className="rounded-md border border-white/10 bg-black/35 p-2"
+                    >
+                      <p className="font-semibold text-zinc-100">
+                        {row.angleName}{" "}
+                        <span className="font-mono text-[10px] text-zinc-400">
+                          ({row.angleId})
+                        </span>
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] text-zinc-300">
+                        videoId: {row.videoId}
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        title:{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.meta?.title ?? "—"}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        actualStartTime:{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.meta?.actualStartTime ?? "—"}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        scheduledStartTime:{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.meta?.scheduledStartTime ?? "—"}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        embeddable:{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.meta?.embeddable === undefined
+                            ? "—"
+                            : String(row.meta.embeddable)}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        API error:{" "}
+                        <span className="font-mono text-[10px] text-amber-200">
+                          {row.apiError ?? "—"}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        current offsetFromGameTime (RTDB):{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.currentOffsetFromGameTime}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-300">
+                        realClockStartOffset (earliest start − this start, s):{" "}
+                        <span className="font-mono text-[10px] text-zinc-200">
+                          {row.realClockStartOffsetSec === null
+                            ? "—"
+                            : row.realClockStartOffsetSec}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-zinc-400">
+                        At shared gameTime <span className="font-mono">60</span>s →
+                        seek to{" "}
+                        <span className="font-mono text-zinc-200">
+                          {row.exampleAtGameTime60.toFixed(2)}s
+                        </span>{" "}
+                        (using current RTDB offset)
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
           </div>
         ) : isHost && roomState && roomState.clips.length === 1 && !cleanMode ? (
