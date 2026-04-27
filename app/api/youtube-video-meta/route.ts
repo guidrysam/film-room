@@ -10,6 +10,22 @@ type YouTubeMeta = {
   embeddable?: boolean;
 };
 
+type YouTubeApiErrorResponse = {
+  error?: {
+    code?: number;
+    message?: string;
+    errors?: Array<{
+      domain?: string;
+      reason?: string;
+      message?: string;
+      locationType?: string;
+      location?: string;
+    }>;
+    status?: string;
+    details?: unknown;
+  };
+};
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const videoId = (searchParams.get("videoId") ?? "").trim();
@@ -44,8 +60,35 @@ export async function GET(request: Request) {
   }
 
   if (!res.ok) {
+    let raw: unknown = null;
+    try {
+      raw = await res.json();
+    } catch {
+      raw = null;
+    }
+    const parsed = raw as YouTubeApiErrorResponse;
+    const first = Array.isArray(parsed?.error?.errors)
+      ? parsed.error.errors[0]
+      : undefined;
     return NextResponse.json(
-      { ok: false, error: "YouTube API error." },
+      {
+        ok: false,
+        error: "YouTube API error",
+        status: res.status,
+        details: parsed?.error?.details ?? undefined,
+        reason:
+          typeof first?.reason === "string" && first.reason.trim() !== ""
+            ? first.reason
+            : typeof parsed?.error?.status === "string" && parsed.error.status.trim() !== ""
+              ? parsed.error.status
+              : undefined,
+        message:
+          typeof parsed?.error?.message === "string" && parsed.error.message.trim() !== ""
+            ? parsed.error.message
+            : typeof first?.message === "string" && first.message.trim() !== ""
+              ? first.message
+              : undefined,
+      },
       { status: 502 },
     );
   }

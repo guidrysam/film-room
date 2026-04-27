@@ -3101,6 +3101,8 @@ function RoomContent() {
     videoId: string;
     meta: YouTubeVideoMeta | null;
     apiError: string | null;
+    apiErrorReason: string | null;
+    apiErrorMessage: string | null;
     currentOffsetFromGameTime: number;
     /** (earliest actualStartTime − this angle's actualStartTime) in seconds; null if not computable. */
     realClockStartOffsetSec: number | null;
@@ -3122,6 +3124,8 @@ function RoomContent() {
       const results = await Promise.all(
         cur.angles.map(async (a) => {
           let apiError: string | null = null;
+          let apiErrorReason: string | null = null;
+          let apiErrorMessage: string | null = null;
           let meta: YouTubeVideoMeta | null = null;
           try {
             const res = await fetch(
@@ -3130,19 +3134,33 @@ function RoomContent() {
             );
             const json = (await res.json()) as
               | { ok: true; meta: YouTubeVideoMeta }
-              | { ok: false; error?: string };
+              | {
+                  ok: false;
+                  error?: string;
+                  reason?: string;
+                  message?: string;
+                  status?: number;
+                };
             if (!res.ok || !json || (json as { ok?: unknown }).ok !== true) {
               apiError =
                 typeof (json as { error?: unknown }).error === "string"
                   ? (json as { error: string }).error
                   : `HTTP ${res.status}`;
+              apiErrorReason =
+                typeof (json as { reason?: unknown }).reason === "string"
+                  ? (json as { reason: string }).reason
+                  : null;
+              apiErrorMessage =
+                typeof (json as { message?: unknown }).message === "string"
+                  ? (json as { message: string }).message
+                  : null;
             } else {
               meta = (json as { ok: true; meta: YouTubeVideoMeta }).meta;
             }
           } catch {
             apiError = "Fetch failed";
           }
-          return { angle: a, meta, apiError };
+          return { angle: a, meta, apiError, apiErrorReason, apiErrorMessage };
         }),
       );
 
@@ -3158,7 +3176,8 @@ function RoomContent() {
       starts.sort((a, b) => a.startMs - b.startMs);
       const masterMs = starts.length ? starts[0]!.startMs : null;
 
-      const rows: YtMetaDebugRow[] = results.map(({ angle, meta, apiError }) => {
+      const rows: YtMetaDebugRow[] = results.map(
+        ({ angle, meta, apiError, apiErrorReason, apiErrorMessage }) => {
         const angleStartMs = parseActualStartMs(meta?.actualStartTime);
         const realClockStartOffsetSec =
           masterMs !== null && angleStartMs !== null
@@ -3175,6 +3194,8 @@ function RoomContent() {
           videoId: angle.videoId,
           meta,
           apiError,
+          apiErrorReason,
+          apiErrorMessage,
           currentOffsetFromGameTime: currentOffset,
           realClockStartOffsetSec,
           exampleAtGameTime60,
@@ -4113,6 +4134,17 @@ function RoomContent() {
                           {row.apiError ?? "—"}
                         </span>
                       </p>
+                      {row.apiErrorReason || row.apiErrorMessage ? (
+                        <p className="mt-1 text-zinc-400">
+                          <span className="font-semibold text-zinc-300">
+                            details:
+                          </span>{" "}
+                          <span className="font-mono text-[10px] text-amber-100">
+                            {row.apiErrorReason ? `reason=${row.apiErrorReason} ` : ""}
+                            {row.apiErrorMessage ? `message=${row.apiErrorMessage}` : ""}
+                          </span>
+                        </p>
+                      ) : null}
                       <p className="mt-1 text-zinc-300">
                         current offsetFromGameTime (RTDB):{" "}
                         <span className="font-mono text-[10px] text-zinc-200">
