@@ -596,6 +596,13 @@ const MULTI_VIEW_DRIFT_PLAY_PERIODIC_S = 5;
 /** User-driven sync while primary is paused (review): seek secondary if drift exceeds this. */
 const MULTI_VIEW_DRIFT_PAUSE_CORRECT_S = 1;
 
+/** One-shot Auto Sync refinement from live playback drift (Multi View only). */
+const AUTO_SYNC_REFINE_MIN_DRIFT_S = 1;
+const AUTO_SYNC_REFINE_MAX_DRIFT_S = 30;
+const AUTO_SYNC_REFINE_POLL_MS = 400;
+const AUTO_SYNC_REFINE_MAX_WAIT_MS = 6400;
+const AUTO_SYNC_REFINE_SETTLE_MS = 500;
+
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -3564,27 +3571,134 @@ function RoomContent() {
         })),
       });
 
-      void update(rr, {
-        angles: computed,
-        currentAngleId: cur.currentAngleId,
-        updatedAt: serverTimestamp(),
-      }).catch(() => {
-        /* RTDB */
-      });
+      try {
+        await update(rr, {
+          angles: computed,
+          currentAngleId: cur.currentAngleId,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        setAutoSyncAnglesStatus({
+          kind: "error",
+          message: "Auto Sync failed to save angles. Check your connection and try again.",
+        });
+        return;
+      }
 
-      const detailLines = computed.map((a) => {
+      let anglesForDetail: VideoAngle[] = computed;
+      let refinedAbs: number | null = null;
+
+      if (coachViewModeRef.current === "multi") {
+        const primary = getPlayer();
+        const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+          | YouTubePlayer
+          | undefined;
+        if (primary && secondary) {
+          const activeAngle = pickAngle(computed, cur.currentAngleId);
+          const secondaryAngle =
+            computed.find((a) => a.id !== activeAngle.id) ?? null;
+          const rs = roomStateRef.current;
+          if (secondaryAngle && rs && rs.videoId === activeAngle.videoId) {
+            const waitUntil = Date.now() + AUTO_SYNC_REFINE_MAX_WAIT_MS;
+            for (;;) {
+              const stP = await readYoutubePlayerState(primary);
+              const stS = await readYoutubePlayerState(secondary);
+              const pBusy =
+                stP === YT_BUFFERING || stP === YT_UNSTARTED;
+              const sBusy =
+                stS === YT_BUFFERING || stS === YT_UNSTARTED;
+              if (!pBusy && !sBusy) break;
+              if (Date.now() >= waitUntil) break;
+              await new Promise<void>((r) =>
+                window.setTimeout(r, AUTO_SYNC_REFINE_POLL_MS),
+              );
+            }
+            await new Promise<void>((r) =>
+              window.setTimeout(r, AUTO_SYNC_REFINE_SETTLE_MS),
+            );
+
+            const stP2 = await readYoutubePlayerState(primary);
+            const stS2 = await readYoutubePlayerState(secondary);
+            const stillBusy =
+              stP2 === YT_BUFFERING ||
+              stP2 === YT_UNSTARTED ||
+              stS2 === YT_BUFFERING ||
+              stS2 === YT_UNSTARTED;
+            if (!stillBusy) {
+              const fb = roomStateRef.current?.currentTime ?? 0;
+              const primaryT = await readYoutubeCurrentTime(primary, fb);
+              const gameT = gameTimeFromAngleTime(primaryT, activeAngle);
+              const secEff = effectiveAngleTimeFromGameTime(
+                gameT,
+                secondaryAngle,
+              );
+              if (secEff >= 0) {
+                const expectedSecondary = angleTimeFromGameTime(
+                  gameT,
+                  secondaryAngle,
+                );
+                const secondaryActual = await readYoutubeCurrentTime(
+                  secondary,
+                  expectedSecondary,
+                );
+                const drift = secondaryActual - expectedSecondary;
+                const ad = Math.abs(drift);
+                if (
+                  ad >= AUTO_SYNC_REFINE_MIN_DRIFT_S &&
+                  ad <= AUTO_SYNC_REFINE_MAX_DRIFT_S
+                ) {
+                  const nextAngles: VideoAngle[] = computed.map((a) =>
+                    a.id === secondaryAngle.id
+                      ? {
+                          ...a,
+                          offsetFromGameTime:
+                            (a.offsetFromGameTime ?? 0) + drift,
+                          autoOffsetSource: "youtube_start_time",
+                        }
+                      : { ...a },
+                  );
+                  try {
+                    await update(rr, {
+                      angles: nextAngles,
+                      currentAngleId: cur.currentAngleId,
+                      updatedAt: serverTimestamp(),
+                    });
+                    anglesForDetail = nextAngles;
+                    refinedAbs = ad;
+                    syncLog("auto sync refine (playback drift)", {
+                      secondaryAngleId: secondaryAngle.id,
+                      drift,
+                      expectedSecondary,
+                      secondaryActual,
+                    });
+                    syncSecondaryPlayersOnce("auto-sync-refine");
+                  } catch {
+                    /* RTDB refine write — keep initial offsets */
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const detailLines = anglesForDetail.map((a) => {
         const startAt = realClockStartOffsetSecFromAngleOffset(a);
         return `${a.name} starts at gameTime: ${startAt.toFixed(0)}s of the master clock`;
       });
 
+      const baseSuccessMsg =
+        "Synced by stream start time. Game time is measured from earliest stream.";
       setAutoSyncAnglesStatus({
         kind: "success",
         message:
-          "Synced by stream start time. Game time is measured from earliest stream.",
+          refinedAbs !== null
+            ? `${baseSuccessMsg} Auto Sync refined by ${refinedAbs.toFixed(1)} seconds.`
+            : baseSuccessMsg,
         detailLines,
       });
     })();
-  }, [isHost, roomId]);
+  }, [isHost, roomId, syncSecondaryPlayersOnce]);
 
   /**
    * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
