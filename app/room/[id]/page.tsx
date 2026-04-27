@@ -587,6 +587,15 @@ const LIVE_DURATION_GROWTH_S = 0.75;
 const LIVE_DURATION_MIN_BASE_S = 5;
 const LIVE_EDGE_CLAMP_PAD_S = 0.15;
 
+/** Host Multi View secondary: avoid rapid YouTube seeks (ms since last secondary seekTo). */
+const MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS = 5000;
+/** User-driven / event sync while primary is playing: only seek secondary if drift exceeds this. */
+const MULTI_VIEW_DRIFT_PLAY_CORRECT_S = 3;
+/** Periodic health check while primary is playing: only seek if drift exceeds this (and cooldown ok). */
+const MULTI_VIEW_DRIFT_PLAY_PERIODIC_S = 5;
+/** User-driven sync while primary is paused (review): seek secondary if drift exceeds this. */
+const MULTI_VIEW_DRIFT_PAUSE_CORRECT_S = 1;
+
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -1325,6 +1334,10 @@ function RoomContent() {
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   const [coachViewMode, setCoachViewMode] = useState<"single" | "multi">("single");
+  const coachViewModeRef = useRef(coachViewMode);
+  useLayoutEffect(() => {
+    coachViewModeRef.current = coachViewMode;
+  }, [coachViewMode]);
   /** Host: brief "Marked" feedback after one-tap Mark Play. */
   const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
   const markPlayTimerRef = useRef<number | null>(null);
@@ -2009,6 +2022,7 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
   const secondaryPlayerRef = useRef<InstanceType<typeof YouTube>>(null);
+  const multiViewSecondaryLastSeekAtRef = useRef(0);
 
   useEffect(() => {
     if (!isHost || !roomState || roomState.angles.length < 2) {
@@ -2016,24 +2030,35 @@ function RoomContent() {
     }
   }, [isHost, roomState, coachViewMode]);
 
-  useEffect(() => {
-    if (!isHost || coachViewMode !== "multi") return;
-    const cur = roomStateRef.current;
-    if (!cur || cur.angles.length < 2) return;
-    const tick = () => {
-      const s = roomStateRef.current;
-      if (!s || s.angles.length < 2) return;
-      const activeAngle = pickAngle(s.angles, s.currentAngleId);
-      const secondaryAngle =
-        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+  const syncSecondaryPlayersOnce = useCallback(
+    (reason: string, opts?: { mode?: "user" | "periodic" }) => {
+      if (!isHostRef.current) return;
+      if (coachViewModeRef.current !== "multi") return;
+      const s0 = roomStateRef.current;
+      if (!s0?.angles?.length || s0.angles.length < 2) return;
       const primary = getPlayer();
       const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
         | YouTubePlayer
         | undefined;
       if (!primary || !secondary) return;
-      const fb = s.currentTime ?? 0;
+
+      const mode = opts?.mode ?? "user";
+      const periodic = mode === "periodic";
+
       void (async () => {
-        const t = await readYoutubeCurrentTime(primary, fb);
+        const s = roomStateRef.current;
+        if (!s?.angles?.length || s.angles.length < 2) return;
+        const activeAngle = pickAngle(s.angles, s.currentAngleId);
+        const secondaryAngle =
+          s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+
+        const fb = s.currentTime ?? 0;
+        let t: number;
+        try {
+          t = await readYoutubeCurrentTime(primary, fb);
+        } catch {
+          return;
+        }
         const gameT = gameTimeFromAngleTime(t, activeAngle);
         const secondaryStartOffset =
           realClockStartOffsetSecFromAngleOffset(secondaryAngle);
@@ -2045,12 +2070,7 @@ function RoomContent() {
           secondaryEffective < 0
             ? 0
             : angleTimeFromGameTime(gameT, secondaryAngle);
-        let actual = expected;
-        try {
-          actual = await secondary.getCurrentTime();
-        } catch {
-          /* YouTube API */
-        }
+
         if (secondaryEffective < 0) {
           const remaining = -secondaryEffective;
           setMultiViewSecondaryHold((prev) => {
@@ -2067,49 +2087,112 @@ function RoomContent() {
             }
             return next;
           });
+        } else {
+          setMultiViewSecondaryHold(null);
+        }
+
+        let stPre: number | undefined;
+        try {
+          stPre = await readYoutubePlayerState(secondary);
+        } catch {
+          return;
+        }
+        if (stPre === YT_BUFFERING || stPre === YT_UNSTARTED) {
+          syncLog("multi view secondary skip (not ready)", {
+            reason,
+            mode,
+            state:
+              stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
+          });
+          return;
+        }
+
+        let actual = expected;
+        try {
+          actual = await secondary.getCurrentTime();
+        } catch {
+          /* YouTube API */
+        }
+
+        const now = Date.now();
+        const cooldownOk =
+          now - multiViewSecondaryLastSeekAtRef.current >=
+          MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS;
+        const playing = s.isPlaying;
+        const drift = Math.abs(actual - expected);
+
+        if (secondaryEffective < 0) {
           if (Math.abs(actual) > 0.5) {
-            syncLog("multi view secondary pre-start hold @ 0", {
-              activeAngleId: activeAngle.id,
-              secondaryAngleId: secondaryAngle.id,
-              secondaryStartOffsetSec: secondaryStartOffset,
-              gameTime: gameT,
-              secondaryEffective,
-              actualSecondaryTime: actual,
-            });
-            try {
-              secondary.seekTo?.(0, true);
-            } catch {
-              /* YouTube API */
+            const allowSeek = !periodic || cooldownOk;
+            if (allowSeek) {
+              syncLog("multi view secondary pre-start hold @ 0", {
+                reason,
+                mode,
+                activeAngleId: activeAngle.id,
+                secondaryAngleId: secondaryAngle.id,
+                secondaryStartOffsetSec: secondaryStartOffset,
+                gameTime: gameT,
+                secondaryEffective,
+                actualSecondaryTime: actual,
+              });
+              try {
+                secondary.seekTo?.(0, true);
+                multiViewSecondaryLastSeekAtRef.current = Date.now();
+              } catch {
+                /* YouTube API */
+              }
             }
           }
         } else {
-          setMultiViewSecondaryHold(null);
-          if (Math.abs(actual - expected) > 1.0) {
-            syncLog("multi view secondary drift", {
-              activeAngleId: activeAngle.id,
-              activeOffset: activeAngle.offsetFromGameTime ?? 0,
-              secondaryAngleId: secondaryAngle.id,
-              secondaryOffset: secondaryAngle.offsetFromGameTime ?? 0,
-              secondaryStartOffsetSec: secondaryStartOffset,
-              activeTime: t,
-              gameTime: gameT,
-              secondaryEffective,
+          let shouldSeek = false;
+          if (playing) {
+            if (periodic) {
+              shouldSeek =
+                drift > MULTI_VIEW_DRIFT_PLAY_PERIODIC_S && cooldownOk;
+            } else {
+              shouldSeek = drift > MULTI_VIEW_DRIFT_PLAY_CORRECT_S;
+            }
+          } else if (!periodic) {
+            shouldSeek = drift > MULTI_VIEW_DRIFT_PAUSE_CORRECT_S;
+          }
+
+          if (shouldSeek) {
+            const stMid = await readYoutubePlayerState(secondary);
+            if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) {
+              syncLog("multi view secondary seek aborted (buffering)", {
+                reason,
+                mode,
+              });
+              return;
+            }
+            syncLog("multi view secondary seek", {
+              reason,
+              mode,
+              drift,
               expectedSecondaryTime: expected,
               actualSecondaryTime: actual,
+              playing,
             });
             try {
               secondary.seekTo?.(expected, true);
+              multiViewSecondaryLastSeekAtRef.current = Date.now();
             } catch {
               /* YouTube API */
             }
           }
         }
+
         try {
           secondary.mute?.();
         } catch {
           /* YouTube API */
         }
+
         const stSecondary = await readYoutubePlayerState(secondary);
+        if (stSecondary === YT_BUFFERING || stSecondary === YT_UNSTARTED) {
+          return;
+        }
+
         if (secondaryEffective < 0) {
           if (stSecondary !== YT_PAUSED) {
             try {
@@ -2136,14 +2219,33 @@ function RoomContent() {
           }
         }
       })();
-    };
-    tick();
-    const id = window.setInterval(tick, 1800);
-    return () => {
-      window.clearInterval(id);
+    },
+    [],
+  );
+
+  /** First time entering Multi View: align secondary once (host). */
+  useEffect(() => {
+    if (!isHost || coachViewMode !== "multi") return;
+    const tid = window.setTimeout(() => {
+      syncSecondaryPlayersOnce("enter-multi-view");
+    }, 220);
+    return () => window.clearTimeout(tid);
+  }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
+
+  /** Rare drift correction while playing; paused review avoids periodic seeks here. */
+  useEffect(() => {
+    if (!isHost || coachViewMode !== "multi") return;
+    const id = window.setInterval(() => {
+      syncSecondaryPlayersOnce("periodic", { mode: "periodic" });
+    }, MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS);
+    return () => window.clearInterval(id);
+  }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
+
+  useEffect(() => {
+    if (coachViewMode !== "multi") {
       setMultiViewSecondaryHold(null);
-    };
-  }, [isHost, coachViewMode]);
+    }
+  }, [coachViewMode]);
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
   useEffect(() => {
@@ -2471,6 +2573,7 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: pr,
         });
+        window.setTimeout(() => syncSecondaryPlayersOnce("chapter-jump"), 80);
         return;
       }
 
@@ -2503,11 +2606,22 @@ function RoomContent() {
         action: "seek",
         actionId: commandId,
         updatedAt: serverTimestamp(),
-      }).catch(() => {
-        /* RTDB */
-      });
+      })
+        .then(() => {
+          window.setTimeout(() => syncSecondaryPlayersOnce("chapter-jump"), 140);
+        })
+        .catch(() => {
+          /* RTDB */
+        });
     },
-    [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand, showHostNotice],
+    [
+      isHost,
+      roomId,
+      clearFfIfActive,
+      writeImmediatePlaybackCommand,
+      showHostNotice,
+      syncSecondaryPlayersOnce,
+    ],
   );
 
   const handleAddChapter = useCallback(() => {
@@ -2946,6 +3060,8 @@ function RoomContent() {
       const nextAngle = cur.angles.find((a) => a.id === angleId);
       if (!nextAngle) return;
       void (async () => {
+        const scheduleMultiViewSecondary = () =>
+          window.setTimeout(() => syncSecondaryPlayersOnce("angle-switch"), 420);
         const player = getPlayer();
         const st = await readYoutubePlayerState(player);
         const wasPlaying = youtubeStateImpliesPlaying(st);
@@ -3004,6 +3120,7 @@ function RoomContent() {
               } catch {
                 /* YouTube API */
               }
+              scheduleMultiViewSecondary();
             }, 160);
             return;
           }
@@ -3019,12 +3136,14 @@ function RoomContent() {
                 videoId: nextAngle.videoId,
               });
             }
+            scheduleMultiViewSecondary();
             return;
           }
 
           syncLog("angle switch pre-start fallback used", {
             reason: "load/cue video methods unavailable",
           });
+          scheduleMultiViewSecondary();
           return;
         }
 
@@ -3093,6 +3212,7 @@ function RoomContent() {
               }, 300);
             })();
           }, 120);
+          scheduleMultiViewSecondary();
           return;
         }
 
@@ -3111,6 +3231,7 @@ function RoomContent() {
               videoId: nextAngle.videoId,
             });
           }
+          scheduleMultiViewSecondary();
           return;
         }
 
@@ -3119,9 +3240,17 @@ function RoomContent() {
             reason: "load/cue video methods unavailable",
           });
         }
+        scheduleMultiViewSecondary();
       })();
     },
-    [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand, showHostNotice],
+    [
+      isHost,
+      roomId,
+      clearFfIfActive,
+      writeImmediatePlaybackCommand,
+      showHostNotice,
+      syncSecondaryPlayersOnce,
+    ],
   );
 
   const hostLoadVideoAndPlay = useCallback(
@@ -3533,6 +3662,7 @@ function RoomContent() {
         currentTime: t,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("play"), 0);
     })();
   };
 
@@ -3548,6 +3678,7 @@ function RoomContent() {
         currentTime: t,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("pause"), 0);
     })();
   };
 
@@ -3570,6 +3701,7 @@ function RoomContent() {
         currentTime: clamped,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("seek-back-10"), 0);
     })();
   };
 
@@ -3592,6 +3724,7 @@ function RoomContent() {
         currentTime: clamped,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("seek-back-30"), 0);
     })();
   };
 
@@ -3609,6 +3742,7 @@ function RoomContent() {
         currentTime: clamped,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("live-edge"), 0);
     })();
   };
 
@@ -3637,6 +3771,7 @@ function RoomContent() {
         isPlaying,
         playbackRate: pr,
       });
+      window.setTimeout(() => syncSecondaryPlayersOnce("host-resync"), 0);
     })();
   };
 
@@ -3686,6 +3821,7 @@ function RoomContent() {
       setFfMode(0);
     }
     writeHostTransport({ playbackRate: rate }, "rate");
+    window.setTimeout(() => syncSecondaryPlayersOnce("speed"), 0);
   };
 
   const handlePlayerReady = useCallback(() => {
