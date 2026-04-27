@@ -3135,12 +3135,13 @@ function RoomContent() {
       }
 
       syncLog("auto sync angles (youtube start time)", {
-        master: computed[0]?.videoId,
         offsets: computed.map((a) => ({
           id: a.id,
+          name: a.name,
           videoId: a.videoId,
           offsetFromGameTime: a.offsetFromGameTime ?? 0,
           actualStartTime: a.actualStartTime,
+          exampleAtGameTime60: angleTimeFromGameTime(60, a),
         })),
       });
 
@@ -3154,7 +3155,8 @@ function RoomContent() {
 
       setAutoSyncAnglesStatus({
         kind: "success",
-        message: "Auto-synced offsets from YouTube stream start times.",
+        message:
+          "Synced by stream start time. Game time is measured from earliest stream.",
       });
     })();
   }, [isHost, roomId]);
