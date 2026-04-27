@@ -4526,6 +4526,7 @@ function RoomContent() {
     if (!primary || !pip) return;
 
     void (async () => {
+      const SEEK_EPS = 0.75;
       const fb = s.currentTime ?? 0;
       const tActive = await readYoutubeCurrentTime(primary, fb);
       const gameT = gameTimeFromAngleTime(tActive, activeAngle);
@@ -4565,16 +4566,33 @@ function RoomContent() {
       const activePlayer = swapped ? primary : pip;
       const pipPlayer = swapped ? pip : primary;
 
-      // Seek both players to the same shared game time; keep play/pause stable.
+      // Only seek when drift is meaningful (avoid micro-jumps).
+      let activeNow = nextActiveT;
+      let pipNow = nextPipT;
       try {
-        activePlayer.seekTo?.(nextActiveT, true);
+        activeNow = await readYoutubeCurrentTime(activePlayer, nextActiveT);
       } catch {
-        /* YouTube API */
+        /* player not ready */
       }
       try {
-        pipPlayer.seekTo?.(nextPipT, true);
+        pipNow = await readYoutubeCurrentTime(pipPlayer, nextPipT);
       } catch {
-        /* YouTube API */
+        /* player not ready */
+      }
+
+      if (Math.abs(activeNow - nextActiveT) > SEEK_EPS) {
+        try {
+          activePlayer.seekTo?.(nextActiveT, true);
+        } catch {
+          /* YouTube API */
+        }
+      }
+      if (Math.abs(pipNow - nextPipT) > SEEK_EPS) {
+        try {
+          pipPlayer.seekTo?.(nextPipT, true);
+        } catch {
+          /* YouTube API */
+        }
       }
 
       try {
@@ -4608,6 +4626,7 @@ function RoomContent() {
         }
       }
 
+      // Audio: exactly one unmuted — focused video only.
       try {
         activePlayer.unMute?.();
       } catch {
@@ -5799,6 +5818,16 @@ function RoomContent() {
                       }
                     }}
                   >
+                    {!hostFocusAngleId ||
+                    hostFocusAngleId === hostMultiAngles.activeAngle.id ? (
+                      <span className="pointer-events-none absolute left-2 top-2 z-[2] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
+                        {hostMultiAngles.activeAngle.name}
+                      </span>
+                    ) : (
+                      <span className="pointer-events-none absolute left-1 top-1 z-[2] rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white/90">
+                        Tap to switch
+                      </span>
+                    )}
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-primary-slot"
@@ -5872,6 +5901,16 @@ function RoomContent() {
                       }
                     }}
                   >
+                    {!hostFocusAngleId ||
+                    hostFocusAngleId === hostMultiAngles.activeAngle.id ? (
+                      <span className="pointer-events-none absolute left-1 top-1 z-[2] rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white/90">
+                        Tap to switch
+                      </span>
+                    ) : (
+                      <span className="pointer-events-none absolute left-2 top-2 z-[2] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
+                        {hostMultiAngles.secondaryAngle.name}
+                      </span>
+                    )}
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-secondary-slot"
@@ -6428,6 +6467,16 @@ function RoomContent() {
                           }
                         }}
                       >
+                        {!hostFocusAngleId ||
+                        hostFocusAngleId === hostMultiAngles.activeAngle.id ? (
+                          <span className="pointer-events-none absolute left-2 top-2 z-[2] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
+                            {hostMultiAngles.activeAngle.name}
+                          </span>
+                        ) : (
+                          <span className="pointer-events-none absolute left-1 top-1 z-[2] rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white/90">
+                            Tap to switch
+                          </span>
+                        )}
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-primary-slot"
@@ -6501,6 +6550,16 @@ function RoomContent() {
                           }
                         }}
                       >
+                        {!hostFocusAngleId ||
+                        hostFocusAngleId === hostMultiAngles.activeAngle.id ? (
+                          <span className="pointer-events-none absolute left-1 top-1 z-[2] rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white/90">
+                            Tap to switch
+                          </span>
+                        ) : (
+                          <span className="pointer-events-none absolute left-2 top-2 z-[2] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
+                            {hostMultiAngles.secondaryAngle.name}
+                          </span>
+                        )}
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-secondary-slot"
