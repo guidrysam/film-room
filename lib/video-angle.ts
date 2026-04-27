@@ -1,58 +1,40 @@
-/** One camera / feed for the same game clock (shared markers use `gameTime`). */
+/** One camera / feed; offsets are playback-time deltas vs the session active angle (archive model). */
 export type VideoAngle = {
   id: string;
   name: string;
   videoId: string;
+  /** Seconds added to the active angle's YouTube time to get this angle's target time. */
   offsetFromGameTime?: number;
   /**
-   * YouTube live stream metadata. If available for all angles, offsets can be derived automatically.
+   * Legacy YouTube stream metadata (ignored for sync; manual sync may still record).
    * ISO timestamp, e.g. "2026-04-26T01:23:45Z".
    */
   actualStartTime?: string;
   autoOffsetSource?: "youtube_start_time" | "manual" | "unknown";
 };
 
-export function angleTimeFromGameTime(
-  gameTime: number,
-  angle: VideoAngle,
+/**
+ * Archive sync: active angle is at `activePlaybackTime` on YouTube; return this angle's
+ * aligned playback time (may be negative before that stream exists).
+ */
+export function playbackTimeForAngleFromActiveAnchor(
+  activePlaybackTime: number,
+  targetAngle: VideoAngle,
+  activeAngle: VideoAngle,
 ): number {
-  return clampedAnglePlaybackTimeFromGameTime(gameTime, angle);
+  const oa = activeAngle.offsetFromGameTime ?? 0;
+  const ot = targetAngle.offsetFromGameTime ?? 0;
+  return activePlaybackTime + (ot - oa);
 }
 
-export function gameTimeFromAngleTime(
-  angleTime: number,
-  angle: VideoAngle,
+/** Earliest active-angle playback time where the secondary stream is at >= 0 (two-angle room). */
+export function sharedMultiAngleArchivePlaybackFloor(
+  active: VideoAngle,
+  secondary: VideoAngle,
 ): number {
-  const offset = angle.offsetFromGameTime ?? 0;
-  // If playback is held at 0 before the stream exists, treat all pre-start playback as mapping to
-  // the boundary game moment right when the stream becomes available.
-  if (angleTime <= 0 && offset < 0) {
-    return -offset;
-  }
-  return angleTime - offset;
-}
-
-/** Seconds this angle's real-world start is after the master clock origin (>= 0). */
-export function realClockStartOffsetSecFromAngleOffset(angle: VideoAngle): number {
-  const off = angle.offsetFromGameTime ?? 0;
-  return Math.max(0, -off);
-}
-
-/** Raw mapping before clamping to valid YouTube time (can be negative for not-yet-started angles). */
-export function effectiveAngleTimeFromGameTime(
-  gameTime: number,
-  angle: VideoAngle,
-): number {
-  const offset = angle.offsetFromGameTime ?? 0;
-  return gameTime + offset;
-}
-
-/** YouTube playback time for a given shared gameTime (held at 0 until the stream exists). */
-export function clampedAnglePlaybackTimeFromGameTime(
-  gameTime: number,
-  angle: VideoAngle,
-): number {
-  return Math.max(0, effectiveAngleTimeFromGameTime(gameTime, angle));
+  const d =
+    (secondary.offsetFromGameTime ?? 0) - (active.offsetFromGameTime ?? 0);
+  return d < 0 ? -d : 0;
 }
 
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;

@@ -36,12 +36,10 @@ import { TelestratorOverlay } from "@/components/TelestratorOverlay";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
 import {
-  angleTimeFromGameTime,
-  effectiveAngleTimeFromGameTime,
-  gameTimeFromAngleTime,
   parseVideoAngles,
   pickAngle,
-  realClockStartOffsetSecFromAngleOffset,
+  playbackTimeForAngleFromActiveAnchor,
+  sharedMultiAngleArchivePlaybackFloor,
   type VideoAngle,
 } from "@/lib/video-angle";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
@@ -197,27 +195,14 @@ type RoomState = {
   /** Latest immediate transport for play/pause/seek (reconcile uses `action: sync` separately). */
   playbackCommand: PlaybackCommand | null;
   chapters: ChapterEntry[];
-  /** Camera angles (same game clock); synthesized as a single default angle when absent from RTDB. */
+  /** Camera angles; synthesized as a single default angle when absent from RTDB. */
   angles: VideoAngle[];
   currentAngleId: string;
-  /** When true, background YouTube metadata auto-sync must not run or overwrite offsets. */
+  /** UI flag after manual sync (no automatic background sync in archive mode). */
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
   manualSyncAt?: number;
 };
-
-type YouTubeVideoMeta = {
-  videoId: string;
-  title?: string;
-  actualStartTime?: string;
-  scheduledStartTime?: string;
-  embeddable?: boolean;
-};
-
-/** Shared moment for chapter ordering / navigation (legacy: `time` on reference angle). */
-function chapterGameMoment(ch: ChapterEntry): number {
-  return ch.gameTime ?? ch.time;
-}
 
 /** Next default label for one-tap "Mark Play" (Play → Play 2 → Play 3 …). */
 function nextMarkPlayLabel(chapters: ChapterEntry[]): string {
@@ -239,63 +224,6 @@ function formatCountdownMmSs(totalSec: number): string {
   const mm = Math.floor(s / 60);
   const ss = s % 60;
   return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-}
-
-function parseActualStartMs(v: string | undefined): number | null {
-  if (!v) return null;
-  const t = Date.parse(v);
-  return Number.isFinite(t) ? t : null;
-}
-
-/**
- * Compute offsets from YouTube `actualStartTime`.
- *
- * Sign is intentional:
- * - We define \(angleTime = gameTime + offsetFromGameTime\)
- * - If angle B started later than master by +18s, then at the same real moment,
- *   B's YouTube time is ~18s smaller ⇒ offset = masterStart - angleStart = -18.
- */
-function computeOffsetsFromActualStartTimes(
-  angles: VideoAngle[],
-): VideoAngle[] | null {
-  if (angles.length < 2) return null;
-  const candidates = angles
-    .map((a) => ({
-      id: a.id,
-      name: a.name,
-      startMs: parseActualStartMs(a.actualStartTime),
-    }))
-    .filter((x) => x.startMs !== null) as Array<{
-    id: string;
-    name: string;
-    startMs: number;
-  }>;
-  if (candidates.length < 2) return null;
-  candidates.sort((a, b) => a.startMs - b.startMs);
-  const master = candidates[0]!;
-  const masterStartMs = master.startMs;
-  const next: VideoAngle[] = [];
-  let computedCount = 0;
-  for (const a of angles) {
-    const startMs = parseActualStartMs(a.actualStartTime);
-    if (startMs === null) {
-      next.push({ ...a });
-      continue;
-    }
-    const offset = (masterStartMs - startMs) / 1000;
-    computedCount += 1;
-    next.push({
-      ...a,
-      offsetFromGameTime: offset,
-      autoOffsetSource: "youtube_start_time",
-    });
-  }
-  if (computedCount < 2) return null;
-  syncLog("auto sync angles master (earliest actualStartTime)", {
-    masterAngleId: master.id,
-    masterAngleName: master.name,
-  });
-  return next;
 }
 
 function parseTransportAction(raw: unknown): TransportAction {
@@ -369,7 +297,7 @@ function compareChapterOrder(
   const ia = clipSortIndexForOrder(clips, a.videoId);
   const ib = clipSortIndexForOrder(clips, b.videoId);
   if (ia !== ib) return ia - ib;
-  return chapterGameMoment(a) - chapterGameMoment(b);
+  return a.time - b.time;
 }
 
 function sortChaptersForNavigation(
@@ -410,7 +338,7 @@ function chapterStrictlyBeforeCursor(
   cursorMoment: number,
 ): boolean {
   const ci = clipSortIndexForOrder(clips, ch.videoId);
-  const chMoment = chapterGameMoment(ch);
+  const chMoment = ch.time;
   return (
     ci < cursorClipIdx ||
     (ci === cursorClipIdx && chMoment < cursorMoment - CHAPTER_NAV_EPS)
@@ -424,7 +352,7 @@ function chapterStrictlyAfterCursor(
   cursorMoment: number,
 ): boolean {
   const ci = clipSortIndexForOrder(clips, ch.videoId);
-  const chMoment = chapterGameMoment(ch);
+  const chMoment = ch.time;
   return (
     ci > cursorClipIdx ||
     (ci === cursorClipIdx && chMoment > cursorMoment + CHAPTER_NAV_EPS)
@@ -470,18 +398,23 @@ const CHAPTER_ACTIVE_UI_EPS = 0.2;
 function findActiveChapterIndexForUi(
   chapters: ChapterEntry[],
   activeClipCanonicalVideoId: string,
-  t: number,
-  angle: VideoAngle,
+  tActive: number,
+  activeAngle: VideoAngle,
+  refAngle: VideoAngle,
 ): number | null {
   let bestIdx: number | null = null;
   let bestTime = -Infinity;
-  const cursorGame = gameTimeFromAngleTime(t, angle);
+  const cursorRef = playbackTimeForAngleFromActiveAnchor(
+    tActive,
+    refAngle,
+    activeAngle,
+  );
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i];
     if (ch.videoId !== activeClipCanonicalVideoId) continue;
-    const g = chapterGameMoment(ch);
-    if (g <= cursorGame + CHAPTER_ACTIVE_UI_EPS && g >= bestTime) {
-      bestTime = g;
+    const chRef = ch.time;
+    if (chRef <= cursorRef + CHAPTER_ACTIVE_UI_EPS && chRef >= bestTime) {
+      bestTime = chRef;
       bestIdx = i;
     }
   }
@@ -638,26 +571,8 @@ const LIVE_DURATION_GROWTH_S = 0.75;
 const LIVE_DURATION_MIN_BASE_S = 5;
 const LIVE_EDGE_CLAMP_PAD_S = 0.15;
 
-/** Host Multi View secondary: avoid rapid YouTube seeks (ms since last secondary seekTo). */
-const MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS = 5000;
 /** User-driven / event sync while primary is playing: only seek secondary if drift exceeds this. */
 const MULTI_VIEW_DRIFT_PLAY_CORRECT_S = 3;
-/** Periodic health check while primary is playing: only seek if drift exceeds this (and cooldown ok). */
-const MULTI_VIEW_DRIFT_PLAY_PERIODIC_S = 5;
-/** User-driven sync while primary is paused (review): seek secondary if drift exceeds this. */
-const MULTI_VIEW_DRIFT_PAUSE_CORRECT_S = 1;
-/** Host Multi View: gentle drift correction interval (not aggressive micro-seeks). */
-const MULTI_VIEW_GENTLE_RESYNC_INTERVAL_MS = 60_000;
-/** Gentle timer: seek secondary only when drift exceeds this (seconds). */
-const MULTI_VIEW_GENTLE_RESYNC_DRIFT_S = 2;
-
-/** One-shot Auto Sync refinement from live playback drift (Multi View only). */
-const AUTO_SYNC_REFINE_MIN_DRIFT_S = 1;
-const AUTO_SYNC_REFINE_MAX_DRIFT_S = 30;
-const AUTO_SYNC_REFINE_POLL_MS = 400;
-const AUTO_SYNC_REFINE_MAX_WAIT_MS = 6400;
-const AUTO_SYNC_REFINE_SETTLE_MS = 500;
-
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -1708,14 +1623,6 @@ function RoomContent() {
     }, ms);
   }, []);
 
-  const commonSyncStartGameTime = useCallback((angles: VideoAngle[]): number => {
-    let maxStart = 0;
-    for (const a of angles) {
-      maxStart = Math.max(maxStart, realClockStartOffsetSecFromAngleOffset(a));
-    }
-    return maxStart;
-  }, []);
-
   useEffect(() => {
     if (isHost && roomState && typeof roomState.actionId === "number") {
       hostActionSeqRef.current = Math.max(
@@ -2161,7 +2068,6 @@ function RoomContent() {
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
   const secondaryPlayerRef = useRef<InstanceType<typeof YouTube>>(null);
-  const multiViewSecondaryLastSeekAtRef = useRef(0);
 
   useEffect(() => {
     if (!isHost || !roomState || roomState.angles.length < 2) {
@@ -2169,208 +2075,155 @@ function RoomContent() {
     }
   }, [isHost, roomState, coachViewMode]);
 
-  const syncSecondaryPlayersOnce = useCallback(
-    (reason: string, opts?: { mode?: "user" | "periodic" }) => {
-      if (!isHostRef.current) return;
-      if (coachViewModeRef.current !== "multi") return;
-      const s0 = roomStateRef.current;
-      if (!s0?.angles?.length || s0.angles.length < 2) return;
-      const primary = getPlayer();
-      const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
-        | YouTubePlayer
-        | undefined;
-      if (!primary || !secondary) return;
+  const syncSecondaryPlayersOnce = useCallback((reason: string) => {
+    if (!isHostRef.current) return;
+    if (coachViewModeRef.current !== "multi") return;
+    const s0 = roomStateRef.current;
+    if (!s0?.angles?.length || s0.angles.length < 2) return;
+    const primary = getPlayer();
+    const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+      | YouTubePlayer
+      | undefined;
+    if (!primary || !secondary) return;
 
-      const mode = opts?.mode ?? "user";
-      const periodic = mode === "periodic";
+    void (async () => {
+      const s = roomStateRef.current;
+      if (!s?.angles?.length || s.angles.length < 2) return;
+      const activeAngle = pickAngle(s.angles, s.currentAngleId);
+      const secondaryAngle =
+        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
 
-      void (async () => {
-        const s = roomStateRef.current;
-        if (!s?.angles?.length || s.angles.length < 2) return;
-        const activeAngle = pickAngle(s.angles, s.currentAngleId);
-        const secondaryAngle =
-          s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+      const fb = s.currentTime ?? 0;
+      let anchor: number;
+      try {
+        anchor = await readYoutubeCurrentTime(primary, fb);
+      } catch {
+        return;
+      }
+      const rawSecondary = playbackTimeForAngleFromActiveAnchor(
+        anchor,
+        secondaryAngle,
+        activeAngle,
+      );
 
-        const fb = s.currentTime ?? 0;
-        let t: number;
+      if (rawSecondary < 0) {
+        setMultiViewSecondaryHold((prev) => {
+          const next = {
+            angleId: secondaryAngle.id,
+            countdownSec: -rawSecondary,
+          };
+          if (
+            prev &&
+            prev.angleId === next.angleId &&
+            Math.abs(prev.countdownSec - next.countdownSec) < 0.35
+          ) {
+            return prev;
+          }
+          return next;
+        });
+      } else {
+        setMultiViewSecondaryHold(null);
+      }
+
+      let stPre: number | undefined;
+      try {
+        stPre = await readYoutubePlayerState(secondary);
+      } catch {
+        return;
+      }
+      if (stPre === YT_BUFFERING || stPre === YT_UNSTARTED) {
+        syncLog("multi view secondary skip (not ready)", {
+          reason,
+          state:
+            stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
+        });
+        return;
+      }
+
+      const expected = Math.max(0, rawSecondary);
+
+      if (rawSecondary < 0) {
         try {
-          t = await readYoutubeCurrentTime(primary, fb);
+          secondary.seekTo?.(0, true);
         } catch {
-          return;
+          /* YouTube API */
         }
-        const gameT = gameTimeFromAngleTime(t, activeAngle);
-        const secondaryStartOffset =
-          realClockStartOffsetSecFromAngleOffset(secondaryAngle);
-        const secondaryEffective = effectiveAngleTimeFromGameTime(
-          gameT,
-          secondaryAngle,
-        );
-        const expected =
-          secondaryEffective < 0
-            ? 0
-            : angleTimeFromGameTime(gameT, secondaryAngle);
-
-        if (secondaryEffective < 0) {
-          const remaining = -secondaryEffective;
-          setMultiViewSecondaryHold((prev) => {
-            const next = {
-              angleId: secondaryAngle.id,
-              countdownSec: remaining,
-            };
-            if (
-              prev &&
-              prev.angleId === next.angleId &&
-              Math.abs(prev.countdownSec - next.countdownSec) < 0.35
-            ) {
-              return prev;
-            }
-            return next;
-          });
-        } else {
-          setMultiViewSecondaryHold(null);
-        }
-
-        let stPre: number | undefined;
-        try {
-          stPre = await readYoutubePlayerState(secondary);
-        } catch {
-          return;
-        }
-        if (stPre === YT_BUFFERING || stPre === YT_UNSTARTED) {
-          syncLog("multi view secondary skip (not ready)", {
-            reason,
-            mode,
-            state:
-              stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
-          });
-          return;
-        }
-
+      } else {
         let actual = expected;
         try {
           actual = await secondary.getCurrentTime();
         } catch {
           /* YouTube API */
         }
-
-        const now = Date.now();
-        const cooldownOk =
-          now - multiViewSecondaryLastSeekAtRef.current >=
-          MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS;
-        const playing = s.isPlaying;
         const drift = Math.abs(actual - expected);
-
-        if (secondaryEffective < 0) {
-          if (Math.abs(actual) > 0.5) {
-            const allowSeek = !periodic || cooldownOk;
-            if (allowSeek) {
-              syncLog("multi view secondary pre-start hold @ 0", {
-                reason,
-                mode,
-                activeAngleId: activeAngle.id,
-                secondaryAngleId: secondaryAngle.id,
-                secondaryStartOffsetSec: secondaryStartOffset,
-                gameTime: gameT,
-                secondaryEffective,
-                actualSecondaryTime: actual,
-              });
-              try {
-                secondary.seekTo?.(0, true);
-                multiViewSecondaryLastSeekAtRef.current = Date.now();
-              } catch {
-                /* YouTube API */
-              }
-            }
-          }
-        } else {
-          let shouldSeek = false;
-          if (playing) {
-            if (periodic) {
-              shouldSeek =
-                drift > MULTI_VIEW_DRIFT_PLAY_PERIODIC_S && cooldownOk;
-            } else {
-              shouldSeek = drift > MULTI_VIEW_DRIFT_PLAY_CORRECT_S;
-            }
-          } else if (!periodic) {
-            shouldSeek = drift > MULTI_VIEW_DRIFT_PAUSE_CORRECT_S;
-          }
-
-          if (shouldSeek) {
-            const stMid = await readYoutubePlayerState(secondary);
-            if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) {
-              syncLog("multi view secondary seek aborted (buffering)", {
-                reason,
-                mode,
-              });
-              return;
-            }
-            syncLog("multi view secondary seek", {
+        if (drift > MULTI_VIEW_DRIFT_PLAY_CORRECT_S) {
+          const stMid = await readYoutubePlayerState(secondary);
+          if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) {
+            syncLog("multi view secondary seek aborted (buffering)", {
               reason,
-              mode,
-              drift,
-              expectedSecondaryTime: expected,
-              actualSecondaryTime: actual,
-              playing,
             });
-            try {
-              secondary.seekTo?.(expected, true);
-              multiViewSecondaryLastSeekAtRef.current = Date.now();
-            } catch {
-              /* YouTube API */
-            }
+            return;
+          }
+          syncLog("multi view secondary seek", {
+            reason,
+            drift,
+            expectedSecondaryTime: expected,
+            actualSecondaryTime: actual,
+            playing: s.isPlaying,
+          });
+          try {
+            secondary.seekTo?.(expected, true);
+          } catch {
+            /* YouTube API */
           }
         }
+      }
 
+      try {
+        secondary.mute?.();
+      } catch {
+        /* YouTube API */
+      }
+
+      try {
+        primary.unMute?.();
+      } catch {
+        /* YouTube API */
+      }
+
+      const stSecondary = await readYoutubePlayerState(secondary);
+      if (stSecondary === YT_BUFFERING || stSecondary === YT_UNSTARTED) {
+        return;
+      }
+
+      if (rawSecondary < 0) {
+        if (stSecondary !== YT_PAUSED) {
+          try {
+            secondary.pauseVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+      } else if (s.isPlaying) {
+        if (!youtubeStateImpliesPlaying(stSecondary)) {
+          try {
+            secondary.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+      } else if (stSecondary !== YT_PAUSED) {
         try {
-          secondary.mute?.();
+          secondary.pauseVideo?.();
         } catch {
           /* YouTube API */
         }
-
-        try {
-          primary.unMute?.();
-        } catch {
-          /* YouTube API */
-        }
-
-        const stSecondary = await readYoutubePlayerState(secondary);
-        if (stSecondary === YT_BUFFERING || stSecondary === YT_UNSTARTED) {
-          return;
-        }
-
-        if (secondaryEffective < 0) {
-          if (stSecondary !== YT_PAUSED) {
-            try {
-              secondary.pauseVideo?.();
-            } catch {
-              /* YouTube API */
-            }
-          }
-        } else if (s.isPlaying) {
-          if (!youtubeStateImpliesPlaying(stSecondary)) {
-            try {
-              secondary.playVideo?.();
-            } catch {
-              /* YouTube API */
-            }
-          }
-        } else {
-          if (stSecondary !== YT_PAUSED) {
-            try {
-              secondary.pauseVideo?.();
-            } catch {
-              /* YouTube API */
-            }
-          }
-        }
-      })();
-    },
-    [],
-  );
+      }
+    })();
+  }, []);
 
   /**
-   * Host Multi View: after a transport write, drive the secondary iframe immediately
-   * from shared game time (same conversion as periodic sync) — do not rely on drift-only sync.
+   * Host Multi View: after a transport write, align secondary to active anchor playback + offsets.
    */
   const applyHostMultiViewSecondaryDirect = useCallback(
     (opts: {
@@ -2397,21 +2250,18 @@ function RoomContent() {
         const secondaryAngle =
           s2.angles.find((a) => a.id !== activeAngle.id) ?? s2.angles[0]!;
 
-        const gameT = gameTimeFromAngleTime(
-          opts.primaryAnchorTime,
+        const anchor = opts.primaryAnchorTime;
+        const rawSecondary = playbackTimeForAngleFromActiveAnchor(
+          anchor,
+          secondaryAngle,
           activeAngle,
         );
-        const secondaryEffective = effectiveAngleTimeFromGameTime(
-          gameT,
-          secondaryAngle,
-        );
 
-        if (secondaryEffective < 0) {
-          const remaining = -secondaryEffective;
+        if (rawSecondary < 0) {
           setMultiViewSecondaryHold((prev) => {
             const next = {
               angleId: secondaryAngle.id,
-              countdownSec: remaining,
+              countdownSec: -rawSecondary,
             };
             if (
               prev &&
@@ -2447,10 +2297,9 @@ function RoomContent() {
           /* YouTube API */
         }
 
-        if (secondaryEffective < 0) {
+        if (rawSecondary < 0) {
           try {
             secondary.seekTo?.(0, true);
-            multiViewSecondaryLastSeekAtRef.current = Date.now();
           } catch {
             /* YouTube API */
           }
@@ -2460,10 +2309,9 @@ function RoomContent() {
             /* YouTube API */
           }
         } else {
-          const expected = angleTimeFromGameTime(gameT, secondaryAngle);
+          const expected = rawSecondary;
           try {
             secondary.seekTo?.(expected, true);
-            multiViewSecondaryLastSeekAtRef.current = Date.now();
           } catch {
             /* YouTube API */
           }
@@ -2515,119 +2363,6 @@ function RoomContent() {
     }, 220);
     return () => window.clearTimeout(tid);
   }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
-
-  /**
-   * Gentle Multi View drift correction while playing (host): infrequent, only if drift > 2s.
-   * Skipped during manual sync or while either player is buffering/unstarted.
-   */
-  useEffect(() => {
-    if (!isHost || coachViewMode !== "multi" || !roomState?.isPlaying) return;
-    const id = window.setInterval(() => {
-      if (!isHostRef.current) return;
-      if (coachViewModeRef.current !== "multi") return;
-      if (isManualSyncModeRef.current) return;
-      if (!roomStateRef.current?.isPlaying) return;
-
-      void (async () => {
-        const s = roomStateRef.current;
-        if (!s?.angles?.length || s.angles.length < 2) return;
-        const primary = getPlayer();
-        const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
-          | YouTubePlayer
-          | undefined;
-        if (!primary || !secondary) return;
-
-        const activeAngle = pickAngle(s.angles, s.currentAngleId);
-        const secondaryAngle =
-          s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
-        const fb = s.currentTime ?? 0;
-        let t: number;
-        try {
-          t = await readYoutubeCurrentTime(primary, fb);
-        } catch {
-          return;
-        }
-        const gameT = gameTimeFromAngleTime(t, activeAngle);
-        const secondaryEffective = effectiveAngleTimeFromGameTime(
-          gameT,
-          secondaryAngle,
-        );
-        if (secondaryEffective < 0) return;
-
-        const expected = angleTimeFromGameTime(gameT, secondaryAngle);
-        let stP: number | undefined;
-        let stS: number | undefined;
-        try {
-          stP = await readYoutubePlayerState(primary);
-          stS = await readYoutubePlayerState(secondary);
-        } catch {
-          return;
-        }
-        if (
-          stP === YT_BUFFERING ||
-          stP === YT_UNSTARTED ||
-          stS === YT_BUFFERING ||
-          stS === YT_UNSTARTED
-        ) {
-          return;
-        }
-
-        let actual = expected;
-        try {
-          actual = await secondary.getCurrentTime();
-        } catch {
-          /* YouTube API */
-        }
-        const drift = Math.abs(actual - expected);
-        if (drift <= MULTI_VIEW_GENTLE_RESYNC_DRIFT_S) return;
-
-        const now = Date.now();
-        if (
-          now - multiViewSecondaryLastSeekAtRef.current <
-          MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS
-        ) {
-          return;
-        }
-
-        syncLog("multi view gentle resync secondary", {
-          drift,
-          expectedSecondaryTime: expected,
-          actualSecondaryTime: actual,
-        });
-        try {
-          secondary.seekTo?.(expected, true);
-          multiViewSecondaryLastSeekAtRef.current = Date.now();
-        } catch {
-          /* YouTube API */
-        }
-        try {
-          await safeSetPlaybackRate(secondary, s.playbackRate);
-        } catch {
-          /* YouTube API */
-        }
-        const stAfter = await readYoutubePlayerState(secondary);
-        if (stAfter === YT_BUFFERING || stAfter === YT_UNSTARTED) return;
-        if (s.isPlaying && !youtubeStateImpliesPlaying(stAfter)) {
-          try {
-            secondary.playVideo?.();
-          } catch {
-            /* YouTube API */
-          }
-        }
-        try {
-          secondary.mute?.();
-        } catch {
-          /* YouTube API */
-        }
-        try {
-          primary.unMute?.();
-        } catch {
-          /* YouTube API */
-        }
-      })();
-    }, MULTI_VIEW_GENTLE_RESYNC_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [isHost, coachViewMode, roomState?.isPlaying]);
 
   useEffect(() => {
     if (coachViewMode !== "multi") {
@@ -2701,8 +2436,9 @@ function RoomContent() {
       if (!Number.isFinite(t)) return;
       const B = { angleId: cur.currentAngleId, time: t };
 
-      const gameTime = A.time;
-      const offsetB = B.time - gameTime;
+      const angleARow = cur.angles.find((a) => a.id === A.angleId);
+      const oA = angleARow?.offsetFromGameTime ?? 0;
+      const offsetB = B.time - A.time + oA;
       if (!Number.isFinite(offsetB)) return;
 
       const hit = cur.angles.find((a) => a.id === B.angleId);
@@ -2747,19 +2483,23 @@ function RoomContent() {
       const curAngle = pickAngle(nextAngles, cur.currentAngleId);
       const fb = cur.currentTime ?? 0;
       const playerT = await readYoutubeCurrentTime(player, fb);
-      const gameT = gameTimeFromAngleTime(playerT, curAngle);
-      const effB =
+      const rawB =
         angleB !== undefined
-          ? effectiveAngleTimeFromGameTime(gameT, angleB)
+          ? playbackTimeForAngleFromActiveAnchor(playerT, angleB, curAngle)
           : 0;
 
       let notice = `Angles synced (offset ${offsetB.toFixed(1)}s).`;
-      if (angleB !== undefined && effB < 0) {
-        notice += ` This angle starts later (${(-effB).toFixed(1)}s).`;
+      if (angleB !== undefined && rawB < 0) {
+        notice += ` This angle starts later (${(-rawB).toFixed(1)}s).`;
       }
-      const syncStartGameT = commonSyncStartGameTime(nextAngles);
-      if (gameT < syncStartGameT - 0.25) {
-        notice += ` Both angles start together at ${formatCountdownMmSs(syncStartGameT)}. Use Jump to Sync Start.`;
+      const act = pickAngle(nextAngles, cur.currentAngleId);
+      const sec = nextAngles.find((a) => a.id !== act.id);
+      const floor =
+        sec !== undefined
+          ? sharedMultiAngleArchivePlaybackFloor(act, sec)
+          : 0;
+      if (floor > 0.25 && playerT < floor - 0.25) {
+        notice += ` Both angles align from ${formatCountdownMmSs(floor)} on the active feed. Use Jump to Sync Start.`;
       }
       showHostNotice(notice);
 
@@ -2774,7 +2514,6 @@ function RoomContent() {
     isManualSyncMode,
     showHostNotice,
     syncSecondaryPlayersOnce,
-    commonSyncStartGameTime,
   ]);
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
@@ -3120,15 +2859,19 @@ function RoomContent() {
       if (clipIdx < 0) return;
 
       const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const gameT = chapterGameMoment(chapter);
-      if (effectiveAngleTimeFromGameTime(gameT, curAngle) < 0) {
+      const refAngle = cur.angles[0] ?? curAngle;
+      const seekTime = playbackTimeForAngleFromActiveAnchor(
+        chapter.time,
+        curAngle,
+        refAngle,
+      );
+      if (seekTime < 0) {
         showHostNotice(
           `This angle had not started yet for this marker (${curAngle.name}).`,
         );
         return;
       }
       const pr = clearFfIfActive();
-      const seekTime = angleTimeFromGameTime(gameT, curAngle);
       const sameClip = clipIdx === cur.currentClipIndex;
 
       if (sameClip) {
@@ -3146,9 +2889,8 @@ function RoomContent() {
         return;
       }
 
-      const refAngle = cur.angles[0] ?? curAngle;
       const targetClip = cur.clips[clipIdx]!;
-      const crossSeek = angleTimeFromGameTime(gameT, refAngle);
+      const crossSeek = chapter.time;
       const primaryAngleId = cur.angles[0]?.id ?? cur.currentAngleId;
 
       lastAppliedKey.current = "";
@@ -3214,16 +2956,18 @@ function RoomContent() {
       const n = cur.chapters.length + 1;
       const label = trimmed.length > 0 ? trimmed : `Chapter ${n}`;
       const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const gameTime = gameTimeFromAngleTime(t, curAngle);
       const refAngle = cur.angles[0] ?? curAngle;
-      const refPlaybackTime = angleTimeFromGameTime(gameTime, refAngle);
+      const refPlaybackTime = playbackTimeForAngleFromActiveAnchor(
+        t,
+        refAngle,
+        curAngle,
+      );
       const canonicalClipId =
         cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
           time: refPlaybackTime,
-          gameTime,
           label,
           videoId: canonicalClipId,
         },
@@ -3252,16 +2996,18 @@ function RoomContent() {
       );
       const label = nextMarkPlayLabel(cur.chapters);
       const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const gameTime = gameTimeFromAngleTime(t, curAngle);
       const refAngle = cur.angles[0] ?? curAngle;
-      const refPlaybackTime = angleTimeFromGameTime(gameTime, refAngle);
+      const refPlaybackTime = playbackTimeForAngleFromActiveAnchor(
+        t,
+        refAngle,
+        curAngle,
+      );
       const canonicalClipId =
         cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
           time: refPlaybackTime,
-          gameTime,
           label,
           videoId: canonicalClipId,
         },
@@ -3599,7 +3345,7 @@ function RoomContent() {
         ? rawName.trim()
         : `Angle ${cur.angles.length + 1}`;
     const rawOff = window.prompt(
-      "Offset vs game clock in seconds (default 0)",
+      "Offset vs active playback in seconds (default 0)",
       "0",
     );
     const off = Number.parseFloat(typeof rawOff === "string" ? rawOff : "0");
@@ -3640,27 +3386,27 @@ function RoomContent() {
           cur.currentTime ?? 0,
         );
         const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-        const gameT = gameTimeFromAngleTime(t, curAngle);
         const pr = clearFfIfActive();
-        const nextEffective = effectiveAngleTimeFromGameTime(gameT, nextAngle);
+        const rawNext = playbackTimeForAngleFromActiveAnchor(
+          t,
+          nextAngle,
+          curAngle,
+        );
         const lp = player as YouTubePlayer & {
           loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
           cueVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
         };
 
-        if (nextEffective < 0) {
+        if (rawNext < 0) {
           pendingAngleAutoplayRef.current = null;
           lastAppliedKey.current = "";
-          const startAt = realClockStartOffsetSecFromAngleOffset(nextAngle);
           showHostNotice(
-            `${nextAngle.name} has not started yet. Starts in ${formatCountdownMmSs(-nextEffective)} (starts at ${startAt.toFixed(0)}s on the master clock).`,
+            `${nextAngle.name} has not started yet. Starts in ${formatCountdownMmSs(-rawNext)} on the active feed.`,
           );
           syncLog("angle switch pre-start", {
             nextAngleId: nextAngle.id,
             nextVideoId: nextAngle.videoId,
-            gameTime: gameT,
-            nextEffective,
-            startAtGameTimeSec: startAt,
+            rawNext,
             wasPlaying,
           });
           writeImmediatePlaybackCommand("resync", {
@@ -3717,7 +3463,7 @@ function RoomContent() {
           return;
         }
 
-        const seekTime = angleTimeFromGameTime(gameT, nextAngle);
+        const seekTime = Math.max(0, rawNext);
         lastAppliedKey.current = "";
         const nextCommandId = hostActionSeqRef.current + 1;
         pendingAngleAutoplayRef.current = wasPlaying
@@ -3895,8 +3641,6 @@ function RoomContent() {
 
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
-      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const gameT = gameTimeFromAngleTime(t, curAngle);
 
       const nextAngles: VideoAngle[] = cur.angles.map((a) =>
         a.id === cur.currentAngleId ? { ...a, videoId: newVideoId } : a,
@@ -3907,8 +3651,7 @@ function RoomContent() {
       const nextChapters: ChapterEntry[] = cur.chapters.map((ch) =>
         ch.videoId === oldVideoId ? { ...ch, videoId: newVideoId } : ch,
       );
-      const angleAfter = pickAngle(nextAngles, cur.currentAngleId);
-      const startSeconds = angleTimeFromGameTime(gameT, angleAfter);
+      const startSeconds = Math.max(0, t);
       const pr = clearFfIfActive();
       lastAppliedKey.current = "";
 
@@ -3927,7 +3670,6 @@ function RoomContent() {
       syncLog("reconnect live stream", {
         oldVideoId,
         newVideoId,
-        gameTime: gameT,
         startSeconds,
         currentAngleId: cur.currentAngleId,
       });
@@ -3954,216 +3696,7 @@ function RoomContent() {
     })();
   }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
 
-  const autoSyncLastAttemptKeyRef = useRef<string>("");
-
-  const runBackgroundAutoSyncAngles = useCallback(() => {
-    if (!isHost || !roomId) return;
-    const rr = roomRefForWrite.current;
-    if (!rr) return;
-    void (async () => {
-      const cur = roomStateRef.current;
-      if (!cur || cur.angles.length < 2) return;
-      if (cur.manualSyncLocked === true) {
-        return;
-      }
-
-      // Avoid spamming YouTube metadata calls.
-      const attemptKey = cur.angles.map((a) => a.videoId).join("|");
-      if (attemptKey && attemptKey === autoSyncLastAttemptKeyRef.current) {
-        return;
-      }
-
-      const shouldTry = cur.angles.some(
-        (a) => (a.autoOffsetSource ?? "unknown") !== "manual",
-      );
-      if (!shouldTry) return;
-
-      autoSyncLastAttemptKeyRef.current = attemptKey;
-
-      const metas: Array<YouTubeVideoMeta | null> = await Promise.all(
-        cur.angles.map(async (a) => {
-          try {
-            const res = await fetch(
-              `/api/youtube-video-meta?videoId=${encodeURIComponent(a.videoId)}`,
-              { cache: "no-store" },
-            );
-            const json = (await res.json()) as
-              | { ok: true; meta: YouTubeVideoMeta }
-              | { ok: false; error: string };
-            if (!res.ok || !json || (json as { ok?: unknown }).ok !== true) {
-              return null;
-            }
-            return (json as { ok: true; meta: YouTubeVideoMeta }).meta;
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      const withTimes: VideoAngle[] = cur.angles.map((a, i) => {
-        const m = metas[i];
-        if (!m || m.videoId !== a.videoId) return { ...a, autoOffsetSource: a.autoOffsetSource ?? "unknown" };
-        return {
-          ...a,
-          ...(typeof m.actualStartTime === "string" ? { actualStartTime: m.actualStartTime } : {}),
-          autoOffsetSource: a.autoOffsetSource ?? "unknown",
-        };
-      });
-
-      const computed = computeOffsetsFromActualStartTimes(withTimes);
-      if (!computed) {
-        return;
-      }
-
-      syncLog("auto sync angles (youtube start time)", {
-        offsets: computed.map((a) => ({
-          id: a.id,
-          name: a.name,
-          videoId: a.videoId,
-          offsetFromGameTime: a.offsetFromGameTime ?? 0,
-          actualStartTime: a.actualStartTime,
-          exampleEffectiveAtGameTime60: effectiveAngleTimeFromGameTime(60, a),
-          examplePlaybackAtGameTime60: angleTimeFromGameTime(60, a),
-        })),
-      });
-
-      // Do not override manual sync offsets.
-      const merged: VideoAngle[] = computed.map((a) => {
-        const prev = cur.angles.find((x) => x.id === a.id);
-        if (prev?.autoOffsetSource === "manual") {
-          return { ...prev };
-        }
-        return {
-          ...a,
-          autoOffsetSource: "youtube_start_time",
-        };
-      });
-
-      try {
-        await update(rr, {
-          angles: merged,
-          currentAngleId: cur.currentAngleId,
-          updatedAt: serverTimestamp(),
-        });
-      } catch {
-        return;
-      }
-
-      let refinedAbs: number | null = null;
-
-      if (coachViewModeRef.current === "multi") {
-        const primary = getPlayer();
-        const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
-          | YouTubePlayer
-          | undefined;
-        if (primary && secondary) {
-          const activeAngle = pickAngle(merged, cur.currentAngleId);
-          const secondaryAngle =
-            merged.find((a) => a.id !== activeAngle.id) ?? null;
-          const rs = roomStateRef.current;
-          if (
-            secondaryAngle &&
-            rs &&
-            rs.videoId === activeAngle.videoId &&
-            rs.manualSyncLocked !== true &&
-            secondaryAngle.autoOffsetSource !== "manual"
-          ) {
-            const waitUntil = Date.now() + AUTO_SYNC_REFINE_MAX_WAIT_MS;
-            for (;;) {
-              const stP = await readYoutubePlayerState(primary);
-              const stS = await readYoutubePlayerState(secondary);
-              const pBusy =
-                stP === YT_BUFFERING || stP === YT_UNSTARTED;
-              const sBusy =
-                stS === YT_BUFFERING || stS === YT_UNSTARTED;
-              if (!pBusy && !sBusy) break;
-              if (Date.now() >= waitUntil) break;
-              await new Promise<void>((r) =>
-                window.setTimeout(r, AUTO_SYNC_REFINE_POLL_MS),
-              );
-            }
-            await new Promise<void>((r) =>
-              window.setTimeout(r, AUTO_SYNC_REFINE_SETTLE_MS),
-            );
-
-            const stP2 = await readYoutubePlayerState(primary);
-            const stS2 = await readYoutubePlayerState(secondary);
-            const stillBusy =
-              stP2 === YT_BUFFERING ||
-              stP2 === YT_UNSTARTED ||
-              stS2 === YT_BUFFERING ||
-              stS2 === YT_UNSTARTED;
-            if (!stillBusy) {
-              const fb = roomStateRef.current?.currentTime ?? 0;
-              const primaryT = await readYoutubeCurrentTime(primary, fb);
-              const gameT = gameTimeFromAngleTime(primaryT, activeAngle);
-              const secEff = effectiveAngleTimeFromGameTime(
-                gameT,
-                secondaryAngle,
-              );
-              if (secEff >= 0) {
-                const expectedSecondary = angleTimeFromGameTime(
-                  gameT,
-                  secondaryAngle,
-                );
-                const secondaryActual = await readYoutubeCurrentTime(
-                  secondary,
-                  expectedSecondary,
-                );
-                const drift = secondaryActual - expectedSecondary;
-                const ad = Math.abs(drift);
-                if (
-                  ad >= AUTO_SYNC_REFINE_MIN_DRIFT_S &&
-                  ad <= AUTO_SYNC_REFINE_MAX_DRIFT_S
-                ) {
-                  const nextAngles: VideoAngle[] = merged.map((a) =>
-                    a.id === secondaryAngle.id
-                      ? {
-                          ...a,
-                          offsetFromGameTime:
-                            (a.offsetFromGameTime ?? 0) + drift,
-                          autoOffsetSource: "youtube_start_time",
-                        }
-                      : { ...a },
-                  );
-                  try {
-                    await update(rr, {
-                      angles: nextAngles,
-                      currentAngleId: cur.currentAngleId,
-                      updatedAt: serverTimestamp(),
-                    });
-                    refinedAbs = ad;
-                    syncLog("auto sync refine (playback drift)", {
-                      secondaryAngleId: secondaryAngle.id,
-                      drift,
-                      expectedSecondary,
-                      secondaryActual,
-                    });
-                    syncSecondaryPlayersOnce("auto-sync-refine");
-                  } catch {
-                    /* RTDB refine write — keep initial offsets */
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      if (refinedAbs !== null) {
-        syncLog("auto sync refined (abs sec)", { refinedAbs });
-      }
-    })();
-  }, [isHost, roomId, syncSecondaryPlayersOnce]);
-
-  // Host-only: silently attempt Auto Sync whenever a multi-angle session is present.
-  useEffect(() => {
-    if (!isHost || !roomId) return;
-    if (!roomState || roomState.angles.length < 2) return;
-    const tid = window.setTimeout(() => runBackgroundAutoSyncAngles(), 350);
-    return () => window.clearTimeout(tid);
-  }, [isHost, roomId, roomState, runBackgroundAutoSyncAngles]);
-
-  /** Host Multi View: nudge the non-active angle’s offset vs game clock, then re-align secondary. */
+  /** Host Multi View: nudge the non-active angle’s offset vs active playback, then re-align secondary. */
   const handleNudgeSecondaryOffset = useCallback(
     (deltaSec: number) => {
       if (!isHost || !roomId) return;
@@ -4378,12 +3911,21 @@ function RoomContent() {
     const cur = roomStateRef.current;
     if (!cur || cur.angles.length < 2) return;
     const pr = clearFfIfActive();
-    const startGameT = commonSyncStartGameTime(cur.angles);
     const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
     const secondaryAngle =
       cur.angles.find((a) => a.id !== activeAngle.id) ?? cur.angles[0]!;
-    const activeTarget = angleTimeFromGameTime(startGameT, activeAngle);
-    const secondaryTarget = angleTimeFromGameTime(startGameT, secondaryAngle);
+    const activeTarget = sharedMultiAngleArchivePlaybackFloor(
+      activeAngle,
+      secondaryAngle,
+    );
+    const secondaryTarget = Math.max(
+      0,
+      playbackTimeForAngleFromActiveAnchor(
+        activeTarget,
+        secondaryAngle,
+        activeAngle,
+      ),
+    );
 
     // Write to room (paused) using the same playbackCommand path viewers understand.
     writeImmediatePlaybackCommand("seek", {
@@ -4422,7 +3964,6 @@ function RoomContent() {
     isHost,
     roomId,
     clearFfIfActive,
-    commonSyncStartGameTime,
     writeImmediatePlaybackCommand,
     showHostNotice,
   ]);
@@ -4448,22 +3989,28 @@ function RoomContent() {
       const SEEK_EPS = 0.75;
       const fb = s.currentTime ?? 0;
       const tActive = await readYoutubeCurrentTime(primary, fb);
-      const gameT = gameTimeFromAngleTime(tActive, activeAngle);
       const swapped = hostFocusAngleIdRef.current === pipAngle.id;
       const nextActiveAngle = swapped ? activeAngle : pipAngle;
       const nextPipAngle = swapped ? pipAngle : activeAngle;
 
-      const nextActiveEff = effectiveAngleTimeFromGameTime(gameT, nextActiveAngle);
-      const nextPipEff = effectiveAngleTimeFromGameTime(gameT, nextPipAngle);
+      const nextActiveT = playbackTimeForAngleFromActiveAnchor(
+        tActive,
+        nextActiveAngle,
+        activeAngle,
+      );
+      const nextPipRaw = playbackTimeForAngleFromActiveAnchor(
+        tActive,
+        nextPipAngle,
+        activeAngle,
+      );
 
       const wasPlaying = s.isPlaying;
       const pr = clearFfIfActive();
 
-      // If the would-be active angle hasn't started, do not swap or disturb the valid stream.
-      if (nextActiveEff < 0) {
-        const startAt = realClockStartOffsetSecFromAngleOffset(nextActiveAngle);
+      // If the would-be focused angle hasn't started, do not swap or disturb the valid stream.
+      if (nextActiveT < 0) {
         showHostNotice(
-          `${nextActiveAngle.name} has not started yet. Starts at ${formatCountdownMmSs(startAt)} on the master clock.`,
+          `${nextActiveAngle.name} has not started yet. Starts in ${formatCountdownMmSs(-nextActiveT)} on the active feed.`,
         );
         // Keep the existing active stream audible.
         try {
@@ -4479,8 +4026,7 @@ function RoomContent() {
         return;
       }
 
-      const nextActiveT = angleTimeFromGameTime(gameT, nextActiveAngle);
-      const nextPipT = nextPipEff < 0 ? 0 : angleTimeFromGameTime(gameT, nextPipAngle);
+      const nextPipT = Math.max(0, nextPipRaw);
 
       const activePlayer = swapped ? primary : pip;
       const pipPlayer = swapped ? pip : primary;
@@ -4614,13 +4160,9 @@ function RoomContent() {
       manualSyncLocked: null,
       manualSyncAt: null,
       updatedAt: serverTimestamp(),
-    })
-      .then(() => {
-        autoSyncLastAttemptKeyRef.current = "";
-      })
-      .catch(() => {
-        /* RTDB */
-      });
+    }).catch(() => {
+      /* RTDB */
+    });
   }, [isHost, roomId]);
 
   const handleHostScrubCommit = useCallback(
@@ -4717,8 +4259,9 @@ function RoomContent() {
       if (!cur || !cur.chapters.length) return;
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
-      const angle = pickAngle(cur.angles, cur.currentAngleId);
-      const cursorMoment = gameTimeFromAngleTime(t, angle);
+      const active = pickAngle(cur.angles, cur.currentAngleId);
+      const ref = cur.angles[0] ?? active;
+      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref, active);
       const target = findPrevChapterInSession(
         cur.clips,
         cur.chapters,
@@ -4737,8 +4280,9 @@ function RoomContent() {
       if (!cur || !cur.chapters.length) return;
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
-      const angle = pickAngle(cur.angles, cur.currentAngleId);
-      const cursorMoment = gameTimeFromAngleTime(t, angle);
+      const active = pickAngle(cur.angles, cur.currentAngleId);
+      const ref = cur.angles[0] ?? active;
+      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref, active);
       const target = findNextChapterInSession(
         cur.clips,
         cur.chapters,
@@ -4964,20 +4508,30 @@ function RoomContent() {
   const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
   const chapterNavMoment =
     roomState !== null
-      ? gameTimeFromAngleTime(
-          tForChapterHighlight,
-          pickAngle(roomState.angles, roomState.currentAngleId),
-        )
+      ? (() => {
+          const active = pickAngle(
+            roomState.angles,
+            roomState.currentAngleId,
+          );
+          const ref = roomState.angles[0] ?? active;
+          return playbackTimeForAngleFromActiveAnchor(
+            tForChapterHighlight,
+            ref,
+            active,
+          );
+        })()
       : 0;
   const activeClipCanonicalId =
     roomState?.clips[roomState.currentClipIndex]?.videoId ?? "";
   const activeChapterIndex =
-    roomState?.chapters?.length && activeClipCanonicalId
+    roomState?.chapters?.length && activeClipCanonicalId && roomState
       ? findActiveChapterIndexForUi(
           roomState.chapters,
           activeClipCanonicalId,
           tForChapterHighlight,
           pickAngle(roomState.angles, roomState.currentAngleId),
+          roomState.angles[0] ??
+            pickAngle(roomState.angles, roomState.currentAngleId),
         )
       : null;
   const sessionPrevChapter =
@@ -5593,7 +5147,7 @@ function RoomContent() {
                                 : "text-zinc-400"
                             }`}
                           >
-                            {formatChapterTime(chapterGameMoment(ch))}
+                            {formatChapterTime(ch.time)}
                           </span>
                           {!onActiveClip ? (
                             <span className="ml-2 text-[10px] text-amber-400/85">
