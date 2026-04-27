@@ -3935,133 +3935,28 @@ function RoomContent() {
     })();
   }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
 
-  const [autoSyncAnglesStatus, setAutoSyncAnglesStatus] = useState<
-    | { kind: "idle" }
-    | { kind: "success"; message: string; detailLines?: string[] }
-    | { kind: "error"; message: string }
-  >({ kind: "idle" });
+  const autoSyncLastAttemptKeyRef = useRef<string>("");
 
-  type YtMetaDebugRow = {
-    angleId: string;
-    angleName: string;
-    videoId: string;
-    meta: YouTubeVideoMeta | null;
-    apiError: string | null;
-    apiErrorReason: string | null;
-    apiErrorMessage: string | null;
-    currentOffsetFromGameTime: number;
-    /** (earliest actualStartTime − this angle's actualStartTime) in seconds; null if not computable. */
-    realClockStartOffsetSec: number | null;
-    exampleAtGameTime60: number;
-  };
-
-  const [showYtMetaDebug, setShowYtMetaDebug] = useState(false);
-  const [ytMetaDebugRows, setYtMetaDebugRows] = useState<YtMetaDebugRow[]>([]);
-  const [ytMetaDebugFetchedAt, setYtMetaDebugFetchedAt] = useState<number | null>(
-    null,
-  );
-
-  const handleShowYoutubeMetadata = useCallback(() => {
-    if (!isHost || !roomId) return;
-    void (async () => {
-      const cur = roomStateRef.current;
-      if (!cur || cur.angles.length < 2) return;
-
-      const results = await Promise.all(
-        cur.angles.map(async (a) => {
-          let apiError: string | null = null;
-          let apiErrorReason: string | null = null;
-          let apiErrorMessage: string | null = null;
-          let meta: YouTubeVideoMeta | null = null;
-          try {
-            const res = await fetch(
-              `/api/youtube-video-meta?videoId=${encodeURIComponent(a.videoId)}`,
-              { cache: "no-store" },
-            );
-            const json = (await res.json()) as
-              | { ok: true; meta: YouTubeVideoMeta }
-              | {
-                  ok: false;
-                  error?: string;
-                  reason?: string;
-                  message?: string;
-                  status?: number;
-                };
-            if (!res.ok || !json || (json as { ok?: unknown }).ok !== true) {
-              apiError =
-                typeof (json as { error?: unknown }).error === "string"
-                  ? (json as { error: string }).error
-                  : `HTTP ${res.status}`;
-              apiErrorReason =
-                typeof (json as { reason?: unknown }).reason === "string"
-                  ? (json as { reason: string }).reason
-                  : null;
-              apiErrorMessage =
-                typeof (json as { message?: unknown }).message === "string"
-                  ? (json as { message: string }).message
-                  : null;
-            } else {
-              meta = (json as { ok: true; meta: YouTubeVideoMeta }).meta;
-            }
-          } catch {
-            apiError = "Fetch failed";
-          }
-          return { angle: a, meta, apiError, apiErrorReason, apiErrorMessage };
-        }),
-      );
-
-      const starts = results
-        .map((r) => ({
-          angle: r.angle,
-          startMs: parseActualStartMs(r.meta?.actualStartTime),
-        }))
-        .filter((x) => x.startMs !== null) as Array<{
-        angle: VideoAngle;
-        startMs: number;
-      }>;
-      starts.sort((a, b) => a.startMs - b.startMs);
-      const masterMs = starts.length ? starts[0]!.startMs : null;
-
-      const rows: YtMetaDebugRow[] = results.map(
-        ({ angle, meta, apiError, apiErrorReason, apiErrorMessage }) => {
-        const angleStartMs = parseActualStartMs(meta?.actualStartTime);
-        const realClockStartOffsetSec =
-          masterMs !== null && angleStartMs !== null
-            ? (masterMs - angleStartMs) / 1000
-            : null;
-        const currentOffset = angle.offsetFromGameTime ?? 0;
-        const exampleAtGameTime60 = effectiveAngleTimeFromGameTime(60, {
-          ...angle,
-          offsetFromGameTime: currentOffset,
-        });
-        return {
-          angleId: angle.id,
-          angleName: angle.name,
-          videoId: angle.videoId,
-          meta,
-          apiError,
-          apiErrorReason,
-          apiErrorMessage,
-          currentOffsetFromGameTime: currentOffset,
-          realClockStartOffsetSec,
-          exampleAtGameTime60,
-        };
-      });
-
-      setYtMetaDebugRows(rows);
-      setYtMetaDebugFetchedAt(Date.now());
-      setShowYtMetaDebug(true);
-    })();
-  }, [isHost, roomId]);
-
-  const handleAutoSyncAngles = useCallback(() => {
+  const runBackgroundAutoSyncAngles = useCallback(() => {
     if (!isHost || !roomId) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur || cur.angles.length < 2) return;
-      setAutoSyncAnglesStatus({ kind: "idle" });
+
+      // Avoid spamming YouTube metadata calls.
+      const attemptKey = cur.angles.map((a) => a.videoId).join("|");
+      if (attemptKey && attemptKey === autoSyncLastAttemptKeyRef.current) {
+        return;
+      }
+
+      const shouldTry = cur.angles.some(
+        (a) => (a.autoOffsetSource ?? "unknown") !== "manual",
+      );
+      if (!shouldTry) return;
+
+      autoSyncLastAttemptKeyRef.current = attemptKey;
 
       const metas: Array<YouTubeVideoMeta | null> = await Promise.all(
         cur.angles.map(async (a) => {
@@ -4095,11 +3990,6 @@ function RoomContent() {
 
       const computed = computeOffsetsFromActualStartTimes(withTimes);
       if (!computed) {
-        setAutoSyncAnglesStatus({
-          kind: "error",
-          message:
-            "Could not auto-sync: need start times for at least two angles.",
-        });
         return;
       }
 
@@ -4115,21 +4005,28 @@ function RoomContent() {
         })),
       });
 
+      // Do not override manual sync offsets.
+      const merged: VideoAngle[] = computed.map((a) => {
+        const prev = cur.angles.find((x) => x.id === a.id);
+        if (prev?.autoOffsetSource === "manual") {
+          return { ...prev };
+        }
+        return {
+          ...a,
+          autoOffsetSource: "youtube_start_time",
+        };
+      });
+
       try {
         await update(rr, {
-          angles: computed,
+          angles: merged,
           currentAngleId: cur.currentAngleId,
           updatedAt: serverTimestamp(),
         });
       } catch {
-        setAutoSyncAnglesStatus({
-          kind: "error",
-          message: "Auto Sync failed to save angles. Check your connection and try again.",
-        });
         return;
       }
 
-      let anglesForDetail: VideoAngle[] = computed;
       let refinedAbs: number | null = null;
 
       if (coachViewModeRef.current === "multi") {
@@ -4138,9 +4035,9 @@ function RoomContent() {
           | YouTubePlayer
           | undefined;
         if (primary && secondary) {
-          const activeAngle = pickAngle(computed, cur.currentAngleId);
+          const activeAngle = pickAngle(merged, cur.currentAngleId);
           const secondaryAngle =
-            computed.find((a) => a.id !== activeAngle.id) ?? null;
+            merged.find((a) => a.id !== activeAngle.id) ?? null;
           const rs = roomStateRef.current;
           if (secondaryAngle && rs && rs.videoId === activeAngle.videoId) {
             const waitUntil = Date.now() + AUTO_SYNC_REFINE_MAX_WAIT_MS;
@@ -4191,7 +4088,7 @@ function RoomContent() {
                   ad >= AUTO_SYNC_REFINE_MIN_DRIFT_S &&
                   ad <= AUTO_SYNC_REFINE_MAX_DRIFT_S
                 ) {
-                  const nextAngles: VideoAngle[] = computed.map((a) =>
+                  const nextAngles: VideoAngle[] = merged.map((a) =>
                     a.id === secondaryAngle.id
                       ? {
                           ...a,
@@ -4207,7 +4104,6 @@ function RoomContent() {
                       currentAngleId: cur.currentAngleId,
                       updatedAt: serverTimestamp(),
                     });
-                    anglesForDetail = nextAngles;
                     refinedAbs = ad;
                     syncLog("auto sync refine (playback drift)", {
                       secondaryAngleId: secondaryAngle.id,
@@ -4225,24 +4121,19 @@ function RoomContent() {
           }
         }
       }
-
-      const detailLines = anglesForDetail.map((a) => {
-        const startAt = realClockStartOffsetSecFromAngleOffset(a);
-        return `${a.name} starts at gameTime: ${startAt.toFixed(0)}s of the master clock`;
-      });
-
-      const baseSuccessMsg =
-        "Synced by stream start time. Game time is measured from earliest stream.";
-      setAutoSyncAnglesStatus({
-        kind: "success",
-        message:
-          refinedAbs !== null
-            ? `${baseSuccessMsg} Auto Sync refined by ${refinedAbs.toFixed(1)} seconds.`
-            : baseSuccessMsg,
-        detailLines,
-      });
+      if (refinedAbs !== null) {
+        syncLog("auto sync refined (abs sec)", { refinedAbs });
+      }
     })();
   }, [isHost, roomId, syncSecondaryPlayersOnce]);
+
+  // Host-only: silently attempt Auto Sync whenever a multi-angle session is present.
+  useEffect(() => {
+    if (!isHost || !roomId) return;
+    if (!roomState || roomState.angles.length < 2) return;
+    const tid = window.setTimeout(() => runBackgroundAutoSyncAngles(), 350);
+    return () => window.clearTimeout(tid);
+  }, [isHost, roomId, roomState, runBackgroundAutoSyncAngles]);
 
   /** Host Multi View: nudge the non-active angle’s offset vs game clock, then re-align secondary. */
   const handleNudgeSecondaryOffset = useCallback(
@@ -5305,22 +5196,13 @@ function RoomContent() {
             <p className={frPanelTitle}>Camera angle</p>
             <div className="flex flex-wrap items-center gap-2">
               {isHost ? (
-                <button
-                  type="button"
-                  onClick={() => void handleAutoSyncAngles()}
-                  className={secondaryHostBtn}
-                >
-                  Auto Sync Angles
-                </button>
-              ) : null}
-              {isHost ? (
                 !isManualSyncMode ? (
                   <button
                     type="button"
                     onClick={handleManualSyncEnter}
                     className={secondaryHostBtn}
                   >
-                    Manual Sync
+                    Sync Angles
                   </button>
                 ) : (
                   <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto">
@@ -5358,24 +5240,6 @@ function RoomContent() {
                     </div>
                   </div>
                 )
-              ) : null}
-              {isHost ? (
-                <button
-                  type="button"
-                  onClick={() => void handleShowYoutubeMetadata()}
-                  className={secondaryHostBtn}
-                >
-                  Show YouTube Metadata
-                </button>
-              ) : null}
-              {isHost && showYtMetaDebug ? (
-                <button
-                  type="button"
-                  onClick={() => setShowYtMetaDebug(false)}
-                  className={secondaryHostBtn}
-                >
-                  Hide Metadata
-                </button>
               ) : null}
               {isHost ? (
                 <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
@@ -5502,122 +5366,8 @@ function RoomContent() {
                 </button>
               ) : null}
             </div>
-            {autoSyncAnglesStatus.kind === "success" ? (
-              <div className="mt-2 space-y-2 text-xs text-emerald-200">
-                <p>{autoSyncAnglesStatus.message}</p>
-                {autoSyncAnglesStatus.detailLines?.length ? (
-                  <ul className="ml-4 list-disc space-y-1 font-mono text-[10px] text-emerald-100/90">
-                    {autoSyncAnglesStatus.detailLines.map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : autoSyncAnglesStatus.kind === "error" ? (
-              <p className="mt-2 text-xs text-amber-300">
-                {autoSyncAnglesStatus.message}
-              </p>
-            ) : null}
             {isHost && hostNotice ? (
               <p className="mt-2 text-xs text-amber-200">{hostNotice}</p>
-            ) : null}
-            {isHost && showYtMetaDebug && ytMetaDebugRows.length ? (
-              <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-950/20 p-3 text-[11px] text-amber-50">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold uppercase tracking-wide text-amber-200/90">
-                    YouTube metadata (debug)
-                  </p>
-                  {ytMetaDebugFetchedAt ? (
-                    <span className="font-mono text-[10px] text-amber-200/70">
-                      fetched {new Date(ytMetaDebugFetchedAt).toLocaleTimeString()}
-                    </span>
-                  ) : null}
-                </div>
-                <ul className="flex flex-col gap-3">
-                  {ytMetaDebugRows.map((row) => (
-                    <li
-                      key={row.angleId}
-                      className="rounded-md border border-white/10 bg-black/35 p-2"
-                    >
-                      <p className="font-semibold text-zinc-100">
-                        {row.angleName}{" "}
-                        <span className="font-mono text-[10px] text-zinc-400">
-                          ({row.angleId})
-                        </span>
-                      </p>
-                      <p className="mt-1 font-mono text-[10px] text-zinc-300">
-                        videoId: {row.videoId}
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        title:{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.meta?.title ?? "—"}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        actualStartTime:{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.meta?.actualStartTime ?? "—"}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        scheduledStartTime:{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.meta?.scheduledStartTime ?? "—"}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        embeddable:{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.meta?.embeddable === undefined
-                            ? "—"
-                            : String(row.meta.embeddable)}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        API error:{" "}
-                        <span className="font-mono text-[10px] text-amber-200">
-                          {row.apiError ?? "—"}
-                        </span>
-                      </p>
-                      {row.apiErrorReason || row.apiErrorMessage ? (
-                        <p className="mt-1 text-zinc-400">
-                          <span className="font-semibold text-zinc-300">
-                            details:
-                          </span>{" "}
-                          <span className="font-mono text-[10px] text-amber-100">
-                            {row.apiErrorReason ? `reason=${row.apiErrorReason} ` : ""}
-                            {row.apiErrorMessage ? `message=${row.apiErrorMessage}` : ""}
-                          </span>
-                        </p>
-                      ) : null}
-                      <p className="mt-1 text-zinc-300">
-                        current offsetFromGameTime (RTDB):{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.currentOffsetFromGameTime}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-300">
-                        realClockStartOffset (earliest start − this start, s):{" "}
-                        <span className="font-mono text-[10px] text-zinc-200">
-                          {row.realClockStartOffsetSec === null
-                            ? "—"
-                            : row.realClockStartOffsetSec}
-                        </span>
-                      </p>
-                      <p className="mt-1 text-zinc-400">
-                        At shared gameTime <span className="font-mono">60</span>s →
-                        effective angle time{" "}
-                        <span className="font-mono text-zinc-200">
-                          {row.exampleAtGameTime60.toFixed(2)}s
-                        </span>{" "}
-                        (negative means not started yet; playback clamps to{" "}
-                        <span className="font-mono text-zinc-200">0</span>)
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
             ) : null}
           </div>
         ) : isHost && roomState && roomState.clips.length === 1 && !cleanMode ? (
