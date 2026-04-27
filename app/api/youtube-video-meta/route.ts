@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   const key = process.env.YOUTUBE_DATA_API_KEY;
   if (!key || !key.trim()) {
     return NextResponse.json(
-      { ok: false, error: "Missing server configuration." },
+      { ok: false, error: "Missing YOUTUBE_DATA_API_KEY server configuration" },
       { status: 500 },
     );
   }
