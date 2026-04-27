@@ -621,6 +621,10 @@ const MULTI_VIEW_DRIFT_PLAY_CORRECT_S = 3;
 const MULTI_VIEW_DRIFT_PLAY_PERIODIC_S = 5;
 /** User-driven sync while primary is paused (review): seek secondary if drift exceeds this. */
 const MULTI_VIEW_DRIFT_PAUSE_CORRECT_S = 1;
+/** Host Multi View: gentle drift correction interval (not aggressive micro-seeks). */
+const MULTI_VIEW_GENTLE_RESYNC_INTERVAL_MS = 60_000;
+/** Gentle timer: seek secondary only when drift exceeds this (seconds). */
+const MULTI_VIEW_GENTLE_RESYNC_DRIFT_S = 2;
 
 /** One-shot Auto Sync refinement from live playback drift (Multi View only). */
 const AUTO_SYNC_REFINE_MIN_DRIFT_S = 1;
@@ -912,6 +916,22 @@ async function readLiveEdgeTime(
   const dur = await readYoutubeDuration(player);
   if (dur > 0.25) return Math.max(dur, ct);
   return ct;
+}
+
+/** Host -10 / -30: always step back from current playhead; clamp upper only when a live edge exists. */
+async function clampHostSeekBackwardSeconds(
+  player: YouTubePlayer | null | undefined,
+  fallbackFb: number,
+  deltaSec: number,
+): Promise<number> {
+  const ct = await readYoutubeCurrentTime(player, fallbackFb);
+  let target = ct - deltaSec;
+  target = Math.max(0, target);
+  const edge = await readLiveEdgeTime(player, fallbackFb);
+  if (Number.isFinite(edge) && edge > LIVE_EDGE_CLAMP_PAD_S + 0.05) {
+    target = Math.min(target, edge - LIVE_EDGE_CLAMP_PAD_S);
+  }
+  return target;
 }
 
 async function readYoutubePlaybackRate(
@@ -1323,7 +1343,10 @@ function RoomContent() {
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
 
-  /** Host: hide YouTube fullscreen (fs:0) so the coach never loses the app control bar. Viewer: fs:1. */
+  /**
+   * Host: minimal native chrome + no iframe fullscreen (app controls drawing / layout).
+   * Viewer: keep defaults so playback unlock and scrubbing stay familiar.
+   */
   const youtubePlayerOpts = useMemo(
     () => ({
       width: YOUTUBE_PLAYER_OPTS_BASE.width,
@@ -1331,6 +1354,12 @@ function RoomContent() {
       playerVars: {
         ...YOUTUBE_PLAYER_OPTS_BASE.playerVars,
         fs: isHost ? 0 : 1,
+        ...(isHost
+          ? {
+              controls: 0,
+              disablekb: 1,
+            }
+          : {}),
       },
     }),
     [isHost],
@@ -1373,6 +1402,10 @@ function RoomContent() {
   useLayoutEffect(() => {
     coachViewModeRef.current = coachViewMode;
   }, [coachViewMode]);
+  /** When Multi View is on: side-by-side grid vs large + PiP (both players stay mounted). */
+  const [coachMultiLayout, setCoachMultiLayout] = useState<"grid" | "focus">(
+    "grid",
+  );
   /** Host: brief "Marked" feedback after one-tap Mark Play. */
   const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
   const markPlayTimerRef = useRef<number | null>(null);
@@ -1386,6 +1419,10 @@ function RoomContent() {
   } | null>(null);
   /** Host: 2-point manual sync (mark the same real-world moment on two angles). */
   const [isManualSyncMode, setIsManualSyncMode] = useState(false);
+  const isManualSyncModeRef = useRef(false);
+  useLayoutEffect(() => {
+    isManualSyncModeRef.current = isManualSyncMode;
+  }, [isManualSyncMode]);
   const [manualSyncPoint1, setManualSyncPoint1] = useState<{
     angleId: string;
     time: number;
@@ -2241,6 +2278,12 @@ function RoomContent() {
           /* YouTube API */
         }
 
+        try {
+          primary.unMute?.();
+        } catch {
+          /* YouTube API */
+        }
+
         const stSecondary = await readYoutubePlayerState(secondary);
         if (stSecondary === YT_BUFFERING || stSecondary === YT_UNSTARTED) {
           return;
@@ -2276,6 +2319,145 @@ function RoomContent() {
     [],
   );
 
+  /**
+   * Host Multi View: after a transport write, drive the secondary iframe immediately
+   * from shared game time (same conversion as periodic sync) — do not rely on drift-only sync.
+   */
+  const applyHostMultiViewSecondaryDirect = useCallback(
+    (opts: {
+      primaryAnchorTime: number;
+      playbackRate: number;
+      isPlaying: boolean;
+      reason: string;
+    }) => {
+      if (!isHostRef.current) return;
+      if (coachViewModeRef.current !== "multi") return;
+      const s = roomStateRef.current;
+      if (!s?.angles?.length || s.angles.length < 2) return;
+
+      const primary = getPlayer();
+      const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | undefined;
+      if (!primary || !secondary) return;
+
+      void (async () => {
+        const s2 = roomStateRef.current;
+        if (!s2?.angles?.length || s2.angles.length < 2) return;
+        const activeAngle = pickAngle(s2.angles, s2.currentAngleId);
+        const secondaryAngle =
+          s2.angles.find((a) => a.id !== activeAngle.id) ?? s2.angles[0]!;
+
+        const gameT = gameTimeFromAngleTime(
+          opts.primaryAnchorTime,
+          activeAngle,
+        );
+        const secondaryEffective = effectiveAngleTimeFromGameTime(
+          gameT,
+          secondaryAngle,
+        );
+
+        if (secondaryEffective < 0) {
+          const remaining = -secondaryEffective;
+          setMultiViewSecondaryHold((prev) => {
+            const next = {
+              angleId: secondaryAngle.id,
+              countdownSec: remaining,
+            };
+            if (
+              prev &&
+              prev.angleId === next.angleId &&
+              Math.abs(prev.countdownSec - next.countdownSec) < 0.35
+            ) {
+              return prev;
+            }
+            return next;
+          });
+        } else {
+          setMultiViewSecondaryHold(null);
+        }
+
+        let stPre: number | undefined;
+        try {
+          stPre = await readYoutubePlayerState(secondary);
+        } catch {
+          return;
+        }
+        if (stPre === YT_BUFFERING || stPre === YT_UNSTARTED) {
+          syncLog("multi view secondary direct skip (not ready)", {
+            reason: opts.reason,
+            state:
+              stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
+          });
+          return;
+        }
+
+        try {
+          await safeSetPlaybackRate(secondary, opts.playbackRate);
+        } catch {
+          /* YouTube API */
+        }
+
+        if (secondaryEffective < 0) {
+          try {
+            secondary.seekTo?.(0, true);
+            multiViewSecondaryLastSeekAtRef.current = Date.now();
+          } catch {
+            /* YouTube API */
+          }
+          try {
+            secondary.pauseVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        } else {
+          const expected = angleTimeFromGameTime(gameT, secondaryAngle);
+          try {
+            secondary.seekTo?.(expected, true);
+            multiViewSecondaryLastSeekAtRef.current = Date.now();
+          } catch {
+            /* YouTube API */
+          }
+          const stMid = await readYoutubePlayerState(secondary);
+          if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) return;
+          if (opts.isPlaying) {
+            if (!youtubeStateImpliesPlaying(stMid)) {
+              try {
+                secondary.playVideo?.();
+              } catch {
+                /* YouTube API */
+              }
+            }
+          } else if (stMid !== YT_PAUSED) {
+            try {
+              secondary.pauseVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          }
+        }
+
+        try {
+          secondary.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          primary.unMute?.();
+        } catch {
+          /* YouTube API */
+        }
+
+        syncLog("multi view secondary direct applied", {
+          reason: opts.reason,
+          primaryAnchorTime: opts.primaryAnchorTime,
+          isPlaying: opts.isPlaying,
+        });
+      })();
+    },
+    [],
+  );
+
   /** First time entering Multi View: align secondary once (host). */
   useEffect(() => {
     if (!isHost || coachViewMode !== "multi") return;
@@ -2285,18 +2467,123 @@ function RoomContent() {
     return () => window.clearTimeout(tid);
   }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
 
-  /** Rare drift correction while playing; paused review avoids periodic seeks here. */
+  /**
+   * Gentle Multi View drift correction while playing (host): infrequent, only if drift > 2s.
+   * Skipped during manual sync or while either player is buffering/unstarted.
+   */
   useEffect(() => {
-    if (!isHost || coachViewMode !== "multi") return;
+    if (!isHost || coachViewMode !== "multi" || !roomState?.isPlaying) return;
     const id = window.setInterval(() => {
-      syncSecondaryPlayersOnce("periodic", { mode: "periodic" });
-    }, MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS);
+      if (!isHostRef.current) return;
+      if (coachViewModeRef.current !== "multi") return;
+      if (isManualSyncModeRef.current) return;
+      if (!roomStateRef.current?.isPlaying) return;
+
+      void (async () => {
+        const s = roomStateRef.current;
+        if (!s?.angles?.length || s.angles.length < 2) return;
+        const primary = getPlayer();
+        const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+          | YouTubePlayer
+          | undefined;
+        if (!primary || !secondary) return;
+
+        const activeAngle = pickAngle(s.angles, s.currentAngleId);
+        const secondaryAngle =
+          s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+        const fb = s.currentTime ?? 0;
+        let t: number;
+        try {
+          t = await readYoutubeCurrentTime(primary, fb);
+        } catch {
+          return;
+        }
+        const gameT = gameTimeFromAngleTime(t, activeAngle);
+        const secondaryEffective = effectiveAngleTimeFromGameTime(
+          gameT,
+          secondaryAngle,
+        );
+        if (secondaryEffective < 0) return;
+
+        const expected = angleTimeFromGameTime(gameT, secondaryAngle);
+        let stP: number | undefined;
+        let stS: number | undefined;
+        try {
+          stP = await readYoutubePlayerState(primary);
+          stS = await readYoutubePlayerState(secondary);
+        } catch {
+          return;
+        }
+        if (
+          stP === YT_BUFFERING ||
+          stP === YT_UNSTARTED ||
+          stS === YT_BUFFERING ||
+          stS === YT_UNSTARTED
+        ) {
+          return;
+        }
+
+        let actual = expected;
+        try {
+          actual = await secondary.getCurrentTime();
+        } catch {
+          /* YouTube API */
+        }
+        const drift = Math.abs(actual - expected);
+        if (drift <= MULTI_VIEW_GENTLE_RESYNC_DRIFT_S) return;
+
+        const now = Date.now();
+        if (
+          now - multiViewSecondaryLastSeekAtRef.current <
+          MULTI_VIEW_SECONDARY_SEEK_COOLDOWN_MS
+        ) {
+          return;
+        }
+
+        syncLog("multi view gentle resync secondary", {
+          drift,
+          expectedSecondaryTime: expected,
+          actualSecondaryTime: actual,
+        });
+        try {
+          secondary.seekTo?.(expected, true);
+          multiViewSecondaryLastSeekAtRef.current = Date.now();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          await safeSetPlaybackRate(secondary, s.playbackRate);
+        } catch {
+          /* YouTube API */
+        }
+        const stAfter = await readYoutubePlayerState(secondary);
+        if (stAfter === YT_BUFFERING || stAfter === YT_UNSTARTED) return;
+        if (s.isPlaying && !youtubeStateImpliesPlaying(stAfter)) {
+          try {
+            secondary.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+        try {
+          secondary.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          primary.unMute?.();
+        } catch {
+          /* YouTube API */
+        }
+      })();
+    }, MULTI_VIEW_GENTLE_RESYNC_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
+  }, [isHost, coachViewMode, roomState?.isPlaying]);
 
   useEffect(() => {
     if (coachViewMode !== "multi") {
       setMultiViewSecondaryHold(null);
+      setCoachMultiLayout("grid");
     }
   }, [coachViewMode]);
 
@@ -2554,16 +2841,38 @@ function RoomContent() {
         roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
     }
     if (next === 0) {
-      writeHostTransport(
-        { playbackRate: playbackRateBeforeFfRef.current },
-        "rate",
-      );
+      const restored = playbackRateBeforeFfRef.current;
+      writeHostTransport({ playbackRate: restored }, "rate");
       setFfMode(0);
+      void (async () => {
+        const cur = roomStateRef.current;
+        if (!cur || coachViewModeRef.current !== "multi") return;
+        const p = getPlayer();
+        const t = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
+        applyHostMultiViewSecondaryDirect({
+          primaryAnchorTime: t,
+          isPlaying: cur.isPlaying,
+          playbackRate: restored,
+          reason: "ff-off",
+        });
+      })();
       return;
     }
     writeHostTransport({ playbackRate: FF_NATIVE_CAP }, "rate");
     setFfMode(next);
-  }, [isHost, writeHostTransport]);
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || coachViewModeRef.current !== "multi") return;
+      const p = getPlayer();
+      const t = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: t,
+        isPlaying: cur.isPlaying,
+        playbackRate: FF_NATIVE_CAP,
+        reason: "ff-tier",
+      });
+    })();
+  }, [isHost, writeHostTransport, applyHostMultiViewSecondaryDirect]);
 
   /** Simulated 4× / 8×: YouTube stays at 2×; extra advance is applied via periodic seeks + time sync. */
   useEffect(() => {
@@ -2609,10 +2918,22 @@ function RoomContent() {
           },
           "sync",
         );
+        applyHostMultiViewSecondaryDirect({
+          primaryAnchorTime: newT,
+          isPlaying: true,
+          playbackRate: FF_NATIVE_CAP,
+          reason: "ff-sim-tick",
+        });
       })();
     }, FF_SIM_MS);
     return () => window.clearInterval(id);
-  }, [isHost, ffMode, roomState?.isPlaying, writeHostTransport]);
+  }, [
+    isHost,
+    ffMode,
+    roomState?.isPlaying,
+    writeHostTransport,
+    applyHostMultiViewSecondaryDirect,
+  ]);
 
   const writeImmediatePlaybackCommand = useCallback(
     (
@@ -2750,7 +3071,12 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: pr,
         });
-        window.setTimeout(() => syncSecondaryPlayersOnce("chapter-jump"), 80);
+        applyHostMultiViewSecondaryDirect({
+          primaryAnchorTime: seekTime,
+          isPlaying: cur.isPlaying,
+          playbackRate: pr,
+          reason: "chapter-jump",
+        });
         return;
       }
 
@@ -2798,6 +3124,7 @@ function RoomContent() {
       writeImmediatePlaybackCommand,
       showHostNotice,
       syncSecondaryPlayersOnce,
+      applyHostMultiViewSecondaryDirect,
     ],
   );
 
@@ -3870,6 +4197,43 @@ function RoomContent() {
     })();
   }, [isHost, roomId, syncSecondaryPlayersOnce]);
 
+  /** Host Multi View: nudge the non-active angle’s offset vs game clock, then re-align secondary. */
+  const handleNudgeSecondaryOffset = useCallback(
+    (deltaSec: number) => {
+      if (!isHost || !roomId) return;
+      const rr = roomRefForWrite.current;
+      if (!rr) return;
+      const cur = roomStateRef.current;
+      if (!cur || cur.angles.length < 2) return;
+      if (coachViewModeRef.current !== "multi") return;
+      const active = pickAngle(cur.angles, cur.currentAngleId);
+      const sec = cur.angles.find((a) => a.id !== active.id);
+      if (!sec) return;
+      const nextAngles: VideoAngle[] = cur.angles.map((a) =>
+        a.id === sec.id
+          ? {
+              ...a,
+              offsetFromGameTime: (a.offsetFromGameTime ?? 0) + deltaSec,
+            }
+          : { ...a },
+      );
+      void update(rr, {
+        angles: nextAngles,
+        updatedAt: serverTimestamp(),
+      })
+        .then(() => {
+          window.setTimeout(
+            () => syncSecondaryPlayersOnce("nudge-secondary-offset"),
+            120,
+          );
+        })
+        .catch(() => {
+          /* RTDB */
+        });
+    },
+    [isHost, roomId, syncSecondaryPlayersOnce],
+  );
+
   /**
    * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
    */
@@ -3946,7 +4310,12 @@ function RoomContent() {
         currentTime: t,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("play"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: t,
+        isPlaying: true,
+        playbackRate: pr,
+        reason: "play",
+      });
     })();
   };
 
@@ -3962,7 +4331,12 @@ function RoomContent() {
         currentTime: t,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("pause"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: t,
+        isPlaying: false,
+        playbackRate: pr,
+        reason: "pause",
+      });
     })();
   };
 
@@ -3972,20 +4346,19 @@ function RoomContent() {
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
-      const ct = await readYoutubeCurrentTime(player, fb);
       const playing = roomStateRef.current?.isPlaying ?? false;
-      const edge = await readLiveEdgeTime(player, fb);
-      const target = isLiveStreamRef.current ? edge - 10 : ct - 10;
-      const clamped = Math.max(
-        0,
-        Math.min(target, edge - LIVE_EDGE_CLAMP_PAD_S),
-      );
+      const clamped = await clampHostSeekBackwardSeconds(player, fb, 10);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("seek-back-10"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: clamped,
+        isPlaying: playing,
+        playbackRate: pr,
+        reason: "seek-back-10",
+      });
     })();
   };
 
@@ -3995,20 +4368,19 @@ function RoomContent() {
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
-      const ct = await readYoutubeCurrentTime(player, fb);
       const playing = roomStateRef.current?.isPlaying ?? false;
-      const edge = await readLiveEdgeTime(player, fb);
-      const target = isLiveStreamRef.current ? edge - 30 : ct - 30;
-      const clamped = Math.max(
-        0,
-        Math.min(target, edge - LIVE_EDGE_CLAMP_PAD_S),
-      );
+      const clamped = await clampHostSeekBackwardSeconds(player, fb, 30);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("seek-back-30"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: clamped,
+        isPlaying: playing,
+        playbackRate: pr,
+        reason: "seek-back-30",
+      });
     })();
   };
 
@@ -4026,7 +4398,12 @@ function RoomContent() {
         currentTime: clamped,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("live-edge"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: clamped,
+        isPlaying: playing,
+        playbackRate: pr,
+        reason: "live-edge",
+      });
     })();
   };
 
@@ -4055,7 +4432,12 @@ function RoomContent() {
         isPlaying,
         playbackRate: pr,
       });
-      window.setTimeout(() => syncSecondaryPlayersOnce("host-resync"), 0);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: t,
+        isPlaying,
+        playbackRate: pr,
+        reason: "host-resync",
+      });
     })();
   };
 
@@ -4105,7 +4487,19 @@ function RoomContent() {
       setFfMode(0);
     }
     writeHostTransport({ playbackRate: rate }, "rate");
-    window.setTimeout(() => syncSecondaryPlayersOnce("speed"), 0);
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || coachViewModeRef.current !== "multi") return;
+      const player = getPlayer();
+      const fb = cur.currentTime ?? 0;
+      const t = await readYoutubeCurrentTime(player, fb);
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: t,
+        isPlaying: cur.isPlaying,
+        playbackRate: rate,
+        reason: "speed",
+      });
+    })();
   };
 
   const handlePlayerReady = useCallback(() => {
@@ -4346,6 +4740,23 @@ function RoomContent() {
   const telestratorWrapFs = fsActive
     ? "pointer-events-none fixed inset-0 z-[10000]"
     : undefined;
+
+  const hostMultiAngles =
+    isHost &&
+    coachViewMode === "multi" &&
+    roomState &&
+    roomState.angles.length > 1
+      ? (() => {
+          const activeAngle = pickAngle(
+            roomState.angles,
+            roomState.currentAngleId,
+          );
+          const secondaryAngle =
+            roomState.angles.find((a) => a.id !== activeAngle.id) ??
+            roomState.angles[0]!;
+          return { activeAngle, secondaryAngle };
+        })()
+      : null;
 
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -4680,6 +5091,55 @@ function RoomContent() {
                   >
                     Multi View
                   </button>
+                  {coachViewMode === "multi" && roomState.angles.length > 1 ? (
+                    <div className="flex flex-wrap items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.03] p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setCoachMultiLayout("grid")}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                          coachMultiLayout === "grid"
+                            ? "bg-blue-600/45 text-white"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Grid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCoachMultiLayout("focus")}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                          coachMultiLayout === "focus"
+                            ? "bg-blue-600/45 text-white"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Focus
+                      </button>
+                      <span
+                        className="mx-0.5 hidden h-3 w-px bg-white/15 sm:inline"
+                        aria-hidden
+                      />
+                      <span className="hidden text-[9px] font-medium uppercase tracking-wide text-zinc-500 sm:inline">
+                        2nd
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSecondaryOffset(-1)}
+                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                        title="Shift secondary angle −1s vs game clock"
+                      >
+                        −1s
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleNudgeSecondaryOffset(1)}
+                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                        title="Shift secondary angle +1s vs game clock"
+                      >
+                        +1s
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {roomState.angles.map((a) => {
@@ -4996,81 +5456,189 @@ function RoomContent() {
               handleToggleCleanMode(e);
             }}
           >
-            {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
-              <div
-                className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2 ${fsStageClass}`}
-              >
-                {(() => {
-                  const activeAngle = pickAngle(
-                    roomState.angles,
-                    roomState.currentAngleId,
-                  );
-                  const secondaryAngle =
-                    roomState.angles.find((a) => a.id !== activeAngle.id) ??
-                    roomState.angles[0]!;
-                  return (
-                    <>
-                      <div className="relative overflow-hidden">
-                        <YoutubePointerGate drawOn={drawGateOn}>
-                          <YouTube
-                            key={`mv-${activeAngle.id}`}
-                            ref={playerRef}
-                            videoId={safeDecodeVideoId(activeAngle.videoId)}
-                            onReady={handlePlayerReady}
-                            onStateChange={handleYoutubeStateChange}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
-                          />
-                        </YoutubePointerGate>
+            {hostMultiAngles ? (
+              coachMultiLayout === "focus" ? (
+                <div
+                  className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
+                >
+                  <div
+                    className="relative min-h-0 flex-1 overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <YoutubePointerGate drawOn={drawGateOn}>
+                      <YouTube
+                        key="mv-primary-slot"
+                        ref={playerRef}
+                        videoId={safeDecodeVideoId(
+                          hostMultiAngles.activeAngle.videoId,
+                        )}
+                        onReady={() => {
+                          handlePlayerReady();
+                          const p =
+                            playerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | undefined;
+                          try {
+                            p?.unMute?.();
+                          } catch {
+                            /* YouTube API */
+                          }
+                        }}
+                        onStateChange={handleYoutubeStateChange}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
+                  </div>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    title="Tap to swap active angle (audio follows main view)"
+                    className="absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                      }
+                    }}
+                  >
+                    <YoutubePointerGate drawOn={drawGateOn}>
+                      <YouTube
+                        key="mv-secondary-slot"
+                        ref={secondaryPlayerRef}
+                        videoId={safeDecodeVideoId(
+                          hostMultiAngles.secondaryAngle.videoId,
+                        )}
+                        onReady={() => {
+                          const p =
+                            secondaryPlayerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | undefined;
+                          try {
+                            p?.mute?.();
+                          } catch {
+                            /* YouTube API */
+                          }
+                        }}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
+                    <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
+                      {hostMultiAngles.secondaryAngle.name}
+                    </span>
+                    {multiViewSecondaryHold &&
+                    multiViewSecondaryHold.angleId ===
+                      hostMultiAngles.secondaryAngle.id ? (
+                      <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-2 text-center">
+                        <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-2 py-1.5 text-[10px] font-semibold text-white shadow-lg shadow-black/40">
+                          <p className="text-[9px] font-medium uppercase tracking-wide text-zinc-300">
+                            {hostMultiAngles.secondaryAngle.name}
+                          </p>
+                          <p className="mt-0.5 font-mono tabular-nums text-xs">
+                            {formatCountdownMmSs(
+                              multiViewSecondaryHold.countdownSec,
+                            )}
+                          </p>
+                        </div>
                       </div>
-                      <div className="relative overflow-hidden">
-                        <YoutubePointerGate drawOn={drawGateOn}>
-                          <YouTube
-                            key={`mv-${secondaryAngle.id}`}
-                            ref={secondaryPlayerRef}
-                            videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                            onReady={() => {
-                              const p =
-                                secondaryPlayerRef.current?.getInternalPlayer() as
-                                  | YouTubePlayer
-                                  | undefined;
-                              try {
-                                p?.mute?.();
-                              } catch {
-                                /* YouTube API */
-                              }
-                            }}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
-                          />
-                        </YoutubePointerGate>
-                        {isHost &&
-                        coachViewMode === "multi" &&
-                        multiViewSecondaryHold &&
-                        multiViewSecondaryHold.angleId === secondaryAngle.id ? (
-                          <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
-                            <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
-                              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
-                                {secondaryAngle.name}
-                              </p>
-                              <p className="mt-1 text-sm">
-                                Angle starts in{" "}
-                                <span className="font-mono tabular-nums">
-                                  {formatCountdownMmSs(
-                                    multiViewSecondaryHold.countdownSec,
-                                  )}
-                                </span>
-                              </p>
-                            </div>
-                          </div>
-                        ) : null}
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2 ${fsStageClass}`}
+                >
+                  <div
+                    className="relative min-h-0 overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <YoutubePointerGate drawOn={drawGateOn}>
+                      <YouTube
+                        key="mv-primary-slot"
+                        ref={playerRef}
+                        videoId={safeDecodeVideoId(
+                          hostMultiAngles.activeAngle.videoId,
+                        )}
+                        onReady={() => {
+                          handlePlayerReady();
+                          const p =
+                            playerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | undefined;
+                          try {
+                            p?.unMute?.();
+                          } catch {
+                            /* YouTube API */
+                          }
+                        }}
+                        onStateChange={handleYoutubeStateChange}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
+                  </div>
+                  <div
+                    className="relative min-h-0 cursor-pointer overflow-hidden"
+                    title="Tap to make this the active angle (audio here)"
+                    role="presentation"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                    }}
+                  >
+                    <YoutubePointerGate drawOn={drawGateOn}>
+                      <YouTube
+                        key="mv-secondary-slot"
+                        ref={secondaryPlayerRef}
+                        videoId={safeDecodeVideoId(
+                          hostMultiAngles.secondaryAngle.videoId,
+                        )}
+                        onReady={() => {
+                          const p =
+                            secondaryPlayerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | undefined;
+                          try {
+                            p?.mute?.();
+                          } catch {
+                            /* YouTube API */
+                          }
+                        }}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
+                    {multiViewSecondaryHold &&
+                    multiViewSecondaryHold.angleId ===
+                      hostMultiAngles.secondaryAngle.id ? (
+                      <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
+                        <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
+                            {hostMultiAngles.secondaryAngle.name}
+                          </p>
+                          <p className="mt-1 text-sm">
+                            Angle starts in{" "}
+                            <span className="font-mono tabular-nums">
+                              {formatCountdownMmSs(
+                                multiViewSecondaryHold.countdownSec,
+                              )}
+                            </span>
+                          </p>
+                        </div>
                       </div>
-                    </>
-                  );
-                })()}
-              </div>
+                    ) : null}
+                  </div>
+                </div>
+              )
             ) : (
               <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
                 <YoutubePointerGate drawOn={drawGateOn}>
@@ -5337,81 +5905,193 @@ function RoomContent() {
                   handleToggleCleanMode(e);
                 }}
               >
-                {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
-                  <div
-                    className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2 ${fsStageClass}`}
-                  >
-                    {(() => {
-                      const activeAngle = pickAngle(
-                        roomState.angles,
-                        roomState.currentAngleId,
-                      );
-                      const secondaryAngle =
-                        roomState.angles.find((a) => a.id !== activeAngle.id) ??
-                        roomState.angles[0]!;
-                      return (
-                        <>
-                          <div className="relative overflow-hidden">
-                            <YoutubePointerGate drawOn={drawGateOn}>
-                              <YouTube
-                                key={`mv-${activeAngle.id}`}
-                                ref={playerRef}
-                                videoId={safeDecodeVideoId(activeAngle.videoId)}
-                                onReady={handlePlayerReady}
-                                onStateChange={handleYoutubeStateChange}
-                                className="absolute left-0 top-0 h-full w-full"
-                                iframeClassName="absolute left-0 top-0 h-full w-full"
-                                opts={youtubePlayerOpts}
-                              />
-                            </YoutubePointerGate>
+                {hostMultiAngles ? (
+                  coachMultiLayout === "focus" ? (
+                    <div
+                      className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
+                    >
+                      <div
+                        className="relative min-h-0 flex-1 overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key="mv-primary-slot"
+                            ref={playerRef}
+                            videoId={safeDecodeVideoId(
+                              hostMultiAngles.activeAngle.videoId,
+                            )}
+                            onReady={() => {
+                              handlePlayerReady();
+                              const p =
+                                playerRef.current?.getInternalPlayer() as
+                                  | YouTubePlayer
+                                  | undefined;
+                              try {
+                                p?.unMute?.();
+                              } catch {
+                                /* YouTube API */
+                              }
+                            }}
+                            onStateChange={handleYoutubeStateChange}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
+                      </div>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        title="Tap to swap active angle (audio follows main view)"
+                        className="absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void handleSelectAngle(
+                              hostMultiAngles.secondaryAngle.id,
+                            );
+                          }
+                        }}
+                      >
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key="mv-secondary-slot"
+                            ref={secondaryPlayerRef}
+                            videoId={safeDecodeVideoId(
+                              hostMultiAngles.secondaryAngle.videoId,
+                            )}
+                            onReady={() => {
+                              const p =
+                                secondaryPlayerRef.current?.getInternalPlayer() as
+                                  | YouTubePlayer
+                                  | undefined;
+                              try {
+                                p?.mute?.();
+                              } catch {
+                                /* YouTube API */
+                              }
+                            }}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
+                        <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
+                          {hostMultiAngles.secondaryAngle.name}
+                        </span>
+                        {multiViewSecondaryHold &&
+                        multiViewSecondaryHold.angleId ===
+                          hostMultiAngles.secondaryAngle.id ? (
+                          <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-2 text-center">
+                            <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-2 py-1.5 text-[10px] font-semibold text-white shadow-lg shadow-black/40">
+                              <p className="text-[9px] font-medium uppercase tracking-wide text-zinc-300">
+                                {hostMultiAngles.secondaryAngle.name}
+                              </p>
+                              <p className="mt-0.5 font-mono tabular-nums text-xs">
+                                {formatCountdownMmSs(
+                                  multiViewSecondaryHold.countdownSec,
+                                )}
+                              </p>
+                            </div>
                           </div>
-                          <div className="relative overflow-hidden">
-                            <YoutubePointerGate drawOn={drawGateOn}>
-                              <YouTube
-                                key={`mv-${secondaryAngle.id}`}
-                                ref={secondaryPlayerRef}
-                                videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                                onReady={() => {
-                                  const p =
-                                    secondaryPlayerRef.current?.getInternalPlayer() as
-                                      | YouTubePlayer
-                                      | undefined;
-                                  try {
-                                    p?.mute?.();
-                                  } catch {
-                                    /* YouTube API */
-                                  }
-                                }}
-                                className="absolute left-0 top-0 h-full w-full"
-                                iframeClassName="absolute left-0 top-0 h-full w-full"
-                                opts={youtubePlayerOpts}
-                              />
-                            </YoutubePointerGate>
-                            {isHost &&
-                            coachViewMode === "multi" &&
-                            multiViewSecondaryHold &&
-                            multiViewSecondaryHold.angleId === secondaryAngle.id ? (
-                              <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
-                                <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
-                                  <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
-                                    {secondaryAngle.name}
-                                  </p>
-                                  <p className="mt-1 text-sm">
-                                    Angle starts in{" "}
-                                    <span className="font-mono tabular-nums">
-                                      {formatCountdownMmSs(
-                                        multiViewSecondaryHold.countdownSec,
-                                      )}
-                                    </span>
-                                  </p>
-                                </div>
-                              </div>
-                            ) : null}
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2 ${fsStageClass}`}
+                    >
+                      <div
+                        className="relative min-h-0 overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key="mv-primary-slot"
+                            ref={playerRef}
+                            videoId={safeDecodeVideoId(
+                              hostMultiAngles.activeAngle.videoId,
+                            )}
+                            onReady={() => {
+                              handlePlayerReady();
+                              const p =
+                                playerRef.current?.getInternalPlayer() as
+                                  | YouTubePlayer
+                                  | undefined;
+                              try {
+                                p?.unMute?.();
+                              } catch {
+                                /* YouTube API */
+                              }
+                            }}
+                            onStateChange={handleYoutubeStateChange}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
+                      </div>
+                      <div
+                        className="relative min-h-0 cursor-pointer overflow-hidden"
+                        title="Tap to make this the active angle (audio here)"
+                        role="presentation"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleSelectAngle(
+                            hostMultiAngles.secondaryAngle.id,
+                          );
+                        }}
+                      >
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key="mv-secondary-slot"
+                            ref={secondaryPlayerRef}
+                            videoId={safeDecodeVideoId(
+                              hostMultiAngles.secondaryAngle.videoId,
+                            )}
+                            onReady={() => {
+                              const p =
+                                secondaryPlayerRef.current?.getInternalPlayer() as
+                                  | YouTubePlayer
+                                  | undefined;
+                              try {
+                                p?.mute?.();
+                              } catch {
+                                /* YouTube API */
+                              }
+                            }}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
+                        {multiViewSecondaryHold &&
+                        multiViewSecondaryHold.angleId ===
+                          hostMultiAngles.secondaryAngle.id ? (
+                          <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
+                            <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
+                                {hostMultiAngles.secondaryAngle.name}
+                              </p>
+                              <p className="mt-1 text-sm">
+                                Angle starts in{" "}
+                                <span className="font-mono tabular-nums">
+                                  {formatCountdownMmSs(
+                                    multiViewSecondaryHold.countdownSec,
+                                  )}
+                                </span>
+                              </p>
+                            </div>
                           </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
                     <YoutubePointerGate drawOn={drawGateOn}>
