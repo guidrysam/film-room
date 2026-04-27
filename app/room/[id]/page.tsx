@@ -2011,6 +2011,16 @@ function RoomContent() {
           /* YouTube API */
         }
         if (Math.abs(actual - expected) > 1.0) {
+          syncLog("multi view secondary drift", {
+            activeAngleId: activeAngle.id,
+            activeOffset: activeAngle.offsetFromGameTime ?? 0,
+            secondaryAngleId: secondaryAngle.id,
+            secondaryOffset: secondaryAngle.offsetFromGameTime ?? 0,
+            activeTime: t,
+            gameTime: gameT,
+            expectedSecondaryTime: expected,
+            actualSecondaryTime: actual,
+          });
           try {
             secondary.seekTo?.(expected, true);
           } catch {
