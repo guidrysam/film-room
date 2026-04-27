@@ -200,6 +200,10 @@ type RoomState = {
   /** Camera angles (same game clock); synthesized as a single default angle when absent from RTDB. */
   angles: VideoAngle[];
   currentAngleId: string;
+  /** When true, background YouTube metadata auto-sync must not run or overwrite offsets. */
+  manualSyncLocked?: boolean;
+  /** Epoch ms when manual sync lock was set (optional UX / debugging). */
+  manualSyncAt?: number;
 };
 
 type YouTubeVideoMeta = {
@@ -561,6 +565,13 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
       ? videoIdRaw
       : pickAngle(angles, currentAngleId).videoId;
 
+  const manualSyncLocked = val.manualSyncLocked === true;
+  const manualSyncAtRaw = val.manualSyncAt;
+  const manualSyncAt =
+    typeof manualSyncAtRaw === "number" && Number.isFinite(manualSyncAtRaw)
+      ? manualSyncAtRaw
+      : undefined;
+
   return {
     videoId: activeVideoId,
     clips,
@@ -575,6 +586,8 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     chapters: parseChapters(val.chapters),
     angles,
     currentAngleId,
+    ...(manualSyncLocked ? { manualSyncLocked: true } : {}),
+    ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
   };
 }
 
@@ -2698,21 +2711,27 @@ function RoomContent() {
         return;
       }
 
-      const nextAngles: VideoAngle[] = cur.angles.map((a) =>
-        a.id === B.angleId
-          ? {
-              ...a,
-              offsetFromGameTime: offsetB,
-              autoOffsetSource: "manual",
-            }
-          : { ...a },
-      );
+      const nextAngles: VideoAngle[] = cur.angles.map((a) => {
+        if (a.id === B.angleId) {
+          return {
+            ...a,
+            offsetFromGameTime: offsetB,
+            autoOffsetSource: "manual" as const,
+          };
+        }
+        if (a.id === A.angleId) {
+          return { ...a, autoOffsetSource: "manual" as const };
+        }
+        return { ...a };
+      });
 
       setManualSyncPoint2(B);
       manualSyncPoint2Ref.current = B;
       try {
         await update(rr, {
           angles: nextAngles,
+          manualSyncLocked: true,
+          manualSyncAt: Date.now(),
           updatedAt: serverTimestamp(),
         });
       } catch {
@@ -3944,6 +3963,9 @@ function RoomContent() {
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur || cur.angles.length < 2) return;
+      if (cur.manualSyncLocked === true) {
+        return;
+      }
 
       // Avoid spamming YouTube metadata calls.
       const attemptKey = cur.angles.map((a) => a.videoId).join("|");
@@ -4039,7 +4061,13 @@ function RoomContent() {
           const secondaryAngle =
             merged.find((a) => a.id !== activeAngle.id) ?? null;
           const rs = roomStateRef.current;
-          if (secondaryAngle && rs && rs.videoId === activeAngle.videoId) {
+          if (
+            secondaryAngle &&
+            rs &&
+            rs.videoId === activeAngle.videoId &&
+            rs.manualSyncLocked !== true &&
+            secondaryAngle.autoOffsetSource !== "manual"
+          ) {
             const waitUntil = Date.now() + AUTO_SYNC_REFINE_MAX_WAIT_MS;
             for (;;) {
               const stP = await readYoutubePlayerState(primary);
@@ -4549,6 +4577,52 @@ function RoomContent() {
     applyHostMultiViewSecondaryDirect,
   ]);
 
+  /** Multi View fullscreen: layout only (no RTDB angle switch / loadVideoById). */
+  const applyHostMultiFullscreenTarget = useCallback(
+    (angleId: string) => {
+      if (!isHost) return;
+      setFullscreenAngleId(angleId);
+      const cur = roomStateRef.current;
+      if (!cur || cur.angles.length < 2) return;
+      if (coachViewModeRef.current !== "multi") return;
+      if (coachMultiLayout !== "focus") return;
+      const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const secondaryAngle =
+        cur.angles.find((a) => a.id !== activeAngle.id) ?? null;
+      if (!secondaryAngle) return;
+      if (angleId === activeAngle.id) {
+        setHostFocusAngleId(null);
+      } else if (angleId === secondaryAngle.id) {
+        setHostFocusAngleId(secondaryAngle.id);
+      }
+    },
+    [isHost, coachMultiLayout],
+  );
+
+  const handleResetManualSyncLock = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const rr = roomRefForWrite.current;
+    const cur = roomStateRef.current;
+    if (!rr || !cur) return;
+    const nextAngles: VideoAngle[] = cur.angles.map((a) =>
+      a.autoOffsetSource === "manual"
+        ? { ...a, autoOffsetSource: "unknown" as const }
+        : a,
+    );
+    void update(rr, {
+      angles: nextAngles,
+      manualSyncLocked: null,
+      manualSyncAt: null,
+      updatedAt: serverTimestamp(),
+    })
+      .then(() => {
+        autoSyncLastAttemptKeyRef.current = "";
+      })
+      .catch(() => {
+        /* RTDB */
+      });
+  }, [isHost, roomId]);
+
   const handleHostScrubCommit = useCallback(
     (targetSec: number) => {
       if (!isHost || !roomId) return;
@@ -4935,6 +5009,19 @@ function RoomContent() {
     ? "pointer-events-none fixed inset-0 z-[10000]"
     : undefined;
 
+  const manualSyncManualCount =
+    roomState?.angles.filter((a) => a.autoOffsetSource === "manual").length ?? 0;
+  const manualSyncBadgeVisible = Boolean(
+    isHost &&
+      roomState &&
+      (roomState.manualSyncLocked === true || manualSyncManualCount >= 2),
+  );
+  const showResetSyncBtn = Boolean(
+    isHost &&
+      roomState &&
+      (roomState.manualSyncLocked === true || manualSyncManualCount >= 1),
+  );
+
   const hostMultiAngles =
     isHost &&
     coachViewMode === "multi" &&
@@ -4951,6 +5038,28 @@ function RoomContent() {
           return { activeAngle, secondaryAngle };
         })()
       : null;
+
+  const fsMA = hostMultiAngles;
+  const fsGridLayoutMode = Boolean(
+    fsActive &&
+      coachMultiLayout === "grid" &&
+      fsMA &&
+      fullscreenAngleId !== null,
+  );
+  const fsGridPrimaryBig = Boolean(
+    fsGridLayoutMode &&
+      fsMA &&
+      fullscreenAngleId === fsMA.activeAngle.id,
+  );
+  const fsGridSecondaryBig = Boolean(
+    fsGridLayoutMode &&
+      fsMA &&
+      fullscreenAngleId === fsMA.secondaryAngle.id,
+  );
+  const fsGridBigCls =
+    "absolute inset-0 z-[20] min-h-0 overflow-hidden";
+  const fsGridPipCls =
+    "absolute bottom-3 right-3 z-[30] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50";
 
   useEffect(() => {
     if (!isHost) return;
@@ -5314,6 +5423,28 @@ function RoomContent() {
                       </button>
                     </div>
                   ) : null}
+                  {manualSyncBadgeVisible ? (
+                    <span
+                      className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-100"
+                      title={
+                        roomState?.manualSyncAt
+                          ? `Manual sync (${new Date(roomState.manualSyncAt).toLocaleString()})`
+                          : "Manual angle sync"
+                      }
+                    >
+                      Manual Sync ✓
+                    </span>
+                  ) : null}
+                  {showResetSyncBtn ? (
+                    <button
+                      type="button"
+                      onClick={() => handleResetManualSyncLock()}
+                      className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                      title="Clear manual sync lock and allow auto sync again"
+                    >
+                      Reset Sync
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {roomState.angles.map((a) => {
@@ -5325,8 +5456,9 @@ function RoomContent() {
                       disabled={!isHost}
                       onClick={() => {
                         if (!isHost) return;
-                        if (fullscreenAngleId !== null) {
-                          setFullscreenAngleId(a.id);
+                        if (fullscreenAngleId !== null && hostMultiAngles) {
+                          applyHostMultiFullscreenTarget(a.id);
+                          return;
                         }
                         void handleSelectAngle(a.id);
                       }}
@@ -5343,6 +5475,10 @@ function RoomContent() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (hostMultiAngles) {
+                            applyHostMultiFullscreenTarget(a.id);
+                            return;
+                          }
                           setFullscreenAngleId(a.id);
                           if (roomState.currentAngleId !== a.id) {
                             void handleSelectAngle(a.id);
@@ -5707,11 +5843,24 @@ function RoomContent() {
                 </div>
               ) : (
                 <div
-                  className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2 ${fsStageClass}`}
+                  className={`absolute inset-0 gap-1 bg-black ${fsGridLayoutMode ? "relative" : "grid grid-cols-1 md:grid-cols-2"} ${fsStageClass}`}
                 >
                   <div
-                    className="relative min-h-0 overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
+                    className={
+                      fsGridPrimaryBig
+                        ? fsGridBigCls
+                        : fsGridLayoutMode
+                          ? fsGridPipCls
+                          : "relative min-h-0 overflow-hidden"
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (fsGridLayoutMode) {
+                        applyHostMultiFullscreenTarget(
+                          hostMultiAngles.activeAngle.id,
+                        );
+                      }
+                    }}
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
@@ -5740,12 +5889,28 @@ function RoomContent() {
                     </YoutubePointerGate>
                   </div>
                   <div
-                    className="relative min-h-0 cursor-pointer overflow-hidden"
-                    title="Tap to make this the active angle (audio here)"
+                    className={
+                      fsGridSecondaryBig
+                        ? fsGridBigCls
+                        : fsGridLayoutMode
+                          ? fsGridPipCls
+                          : "relative min-h-0 cursor-pointer overflow-hidden"
+                    }
+                    title={
+                      fsGridLayoutMode
+                        ? "Tap to enlarge this angle (no reload)"
+                        : "Tap to make this the active angle (audio here)"
+                    }
                     role="presentation"
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                      if (fsGridLayoutMode) {
+                        applyHostMultiFullscreenTarget(
+                          hostMultiAngles.secondaryAngle.id,
+                        );
+                      } else {
+                        void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                      }
                     }}
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
@@ -6356,11 +6521,24 @@ function RoomContent() {
                     </div>
                   ) : (
                     <div
-                      className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2 ${fsStageClass}`}
+                      className={`absolute inset-0 gap-1 bg-black ${fsGridLayoutMode ? "relative" : "grid grid-cols-1 sm:grid-cols-2"} ${fsStageClass}`}
                     >
                       <div
-                        className="relative min-h-0 overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
+                        className={
+                          fsGridPrimaryBig
+                            ? fsGridBigCls
+                            : fsGridLayoutMode
+                              ? fsGridPipCls
+                              : "relative min-h-0 overflow-hidden"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (fsGridLayoutMode) {
+                            applyHostMultiFullscreenTarget(
+                              hostMultiAngles.activeAngle.id,
+                            );
+                          }
+                        }}
                       >
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
@@ -6389,14 +6567,30 @@ function RoomContent() {
                         </YoutubePointerGate>
                       </div>
                       <div
-                        className="relative min-h-0 cursor-pointer overflow-hidden"
-                        title="Tap to make this the active angle (audio here)"
+                        className={
+                          fsGridSecondaryBig
+                            ? fsGridBigCls
+                            : fsGridLayoutMode
+                              ? fsGridPipCls
+                              : "relative min-h-0 cursor-pointer overflow-hidden"
+                        }
+                        title={
+                          fsGridLayoutMode
+                            ? "Tap to enlarge this angle (no reload)"
+                            : "Tap to make this the active angle (audio here)"
+                        }
                         role="presentation"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleSelectAngle(
-                            hostMultiAngles.secondaryAngle.id,
-                          );
+                          if (fsGridLayoutMode) {
+                            applyHostMultiFullscreenTarget(
+                              hostMultiAngles.secondaryAngle.id,
+                            );
+                          } else {
+                            void handleSelectAngle(
+                              hostMultiAngles.secondaryAngle.id,
+                            );
+                          }
                         }}
                       >
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
