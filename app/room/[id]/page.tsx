@@ -1421,6 +1421,12 @@ function RoomContent() {
   const [coachMultiLayout, setCoachMultiLayout] = useState<"grid" | "focus">(
     "grid",
   );
+  /** Host-only (Focus layout): which angle is currently "active" for controls + audio without reloading iframes. */
+  const [hostFocusAngleId, setHostFocusAngleId] = useState<string | null>(null);
+  const hostFocusAngleIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    hostFocusAngleIdRef.current = hostFocusAngleId;
+  }, [hostFocusAngleId]);
   /** Host: brief "Marked" feedback after one-tap Mark Play. */
   const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
   const markPlayTimerRef = useRef<number | null>(null);
@@ -2614,6 +2620,7 @@ function RoomContent() {
     if (coachViewMode !== "multi") {
       setMultiViewSecondaryHold(null);
       setCoachMultiLayout("grid");
+      setHostFocusAngleId(null);
     }
   }, [coachViewMode]);
 
@@ -4501,6 +4508,137 @@ function RoomContent() {
     showHostNotice,
   ]);
 
+  const handleFocusPipSwap = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const s = roomStateRef.current;
+    if (!s || s.angles.length < 2) return;
+    if (coachViewModeRef.current !== "multi") return;
+    if (coachMultiLayout !== "focus") return;
+
+    const activeAngle = pickAngle(s.angles, s.currentAngleId);
+    const pipAngle =
+      s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+
+    const primary = getPlayer();
+    const pip = secondaryPlayerRef.current?.getInternalPlayer() as
+      | YouTubePlayer
+      | undefined;
+    if (!primary || !pip) return;
+
+    void (async () => {
+      const fb = s.currentTime ?? 0;
+      const tActive = await readYoutubeCurrentTime(primary, fb);
+      const gameT = gameTimeFromAngleTime(tActive, activeAngle);
+      const swapped = hostFocusAngleIdRef.current === pipAngle.id;
+      const nextActiveAngle = swapped ? activeAngle : pipAngle;
+      const nextPipAngle = swapped ? pipAngle : activeAngle;
+
+      const nextActiveEff = effectiveAngleTimeFromGameTime(gameT, nextActiveAngle);
+      const nextPipEff = effectiveAngleTimeFromGameTime(gameT, nextPipAngle);
+
+      const wasPlaying = s.isPlaying;
+      const pr = clearFfIfActive();
+
+      // If the would-be active angle hasn't started, do not swap or disturb the valid stream.
+      if (nextActiveEff < 0) {
+        const startAt = realClockStartOffsetSecFromAngleOffset(nextActiveAngle);
+        showHostNotice(
+          `${nextActiveAngle.name} has not started yet. Starts at ${formatCountdownMmSs(startAt)} on the master clock.`,
+        );
+        // Keep the existing active stream audible.
+        try {
+          pip.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          primary.unMute?.();
+        } catch {
+          /* YouTube API */
+        }
+        return;
+      }
+
+      const nextActiveT = angleTimeFromGameTime(gameT, nextActiveAngle);
+      const nextPipT = nextPipEff < 0 ? 0 : angleTimeFromGameTime(gameT, nextPipAngle);
+
+      const activePlayer = swapped ? primary : pip;
+      const pipPlayer = swapped ? pip : primary;
+
+      // Seek both players to the same shared game time; keep play/pause stable.
+      try {
+        activePlayer.seekTo?.(nextActiveT, true);
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        pipPlayer.seekTo?.(nextPipT, true);
+      } catch {
+        /* YouTube API */
+      }
+
+      try {
+        await safeSetPlaybackRate(primary, pr);
+        await safeSetPlaybackRate(pip, pr);
+      } catch {
+        /* YouTube API */
+      }
+
+      if (wasPlaying) {
+        try {
+          activePlayer.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          pipPlayer.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      } else {
+        try {
+          activePlayer.pauseVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          pipPlayer.pauseVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
+
+      try {
+        activePlayer.unMute?.();
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        pipPlayer.mute?.();
+      } catch {
+        /* YouTube API */
+      }
+
+      // Layout-only swap: keep roomState currentAngleId/videoId unchanged to avoid iframe reload.
+      setHostFocusAngleId(swapped ? null : pipAngle.id);
+
+      // Ensure secondary stays aligned to the session's active angle (still roomState.currentAngleId).
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: tActive,
+        isPlaying: wasPlaying,
+        playbackRate: pr,
+        reason: "focus-pip-swap",
+      });
+    })();
+  }, [
+    isHost,
+    roomId,
+    coachMultiLayout,
+    clearFfIfActive,
+    showHostNotice,
+    applyHostMultiViewSecondaryDirect,
+  ]);
+
   const handleHostScrubCommit = useCallback(
     (targetSec: number) => {
       if (!isHost || !roomId) return;
@@ -4903,6 +5041,13 @@ function RoomContent() {
           return { activeAngle, secondaryAngle };
         })()
       : null;
+
+  useEffect(() => {
+    if (!isHost) return;
+    if (coachViewMode !== "multi" || coachMultiLayout !== "focus") {
+      if (hostFocusAngleIdRef.current !== null) setHostFocusAngleId(null);
+    }
+  }, [isHost, coachViewMode, coachMultiLayout]);
 
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -5608,8 +5753,51 @@ function RoomContent() {
                   className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                 >
                   <div
-                    className="relative min-h-0 flex-1 overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}
+                    className={`${
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? "relative min-h-0 flex-1 overflow-hidden"
+                        : "absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                    }`}
+                    role={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? undefined
+                        : "button"
+                    }
+                    tabIndex={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? undefined
+                        : 0
+                    }
+                    title={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? undefined
+                        : "Tap to swap focus/PiP (no reload)"
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (
+                        hostFocusAngleId &&
+                        hostFocusAngleId !== hostMultiAngles.activeAngle.id
+                      ) {
+                        handleFocusPipSwap();
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        !hostFocusAngleId ||
+                        hostFocusAngleId === hostMultiAngles.activeAngle.id
+                      ) {
+                        return;
+                      }
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleFocusPipSwap();
+                      }
+                    }}
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
@@ -5638,18 +5826,49 @@ function RoomContent() {
                     </YoutubePointerGate>
                   </div>
                   <div
-                    role="button"
-                    tabIndex={0}
-                    title="Tap to swap active angle (audio follows main view)"
-                    className="absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                    className={`${
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? "absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                        : "relative min-h-0 flex-1 overflow-hidden"
+                    }`}
+                    role={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? "button"
+                        : undefined
+                    }
+                    tabIndex={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? 0
+                        : undefined
+                    }
+                    title={
+                      !hostFocusAngleId ||
+                      hostFocusAngleId === hostMultiAngles.activeAngle.id
+                        ? "Tap to swap focus/PiP (no reload)"
+                        : undefined
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
-                      void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                      if (
+                        !hostFocusAngleId ||
+                        hostFocusAngleId === hostMultiAngles.activeAngle.id
+                      ) {
+                        handleFocusPipSwap();
+                      }
                     }}
                     onKeyDown={(e) => {
+                      if (
+                        hostFocusAngleId &&
+                        hostFocusAngleId !== hostMultiAngles.activeAngle.id
+                      ) {
+                        return;
+                      }
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                        handleFocusPipSwap();
                       }
                     }}
                   >
@@ -5676,7 +5895,7 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
-                    <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
+                        <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
                       {hostMultiAngles.secondaryAngle.name}
                     </span>
                     {multiViewSecondaryHold &&
@@ -6163,8 +6382,51 @@ function RoomContent() {
                       className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                     >
                       <div
-                        className="relative min-h-0 flex-1 overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
+                        className={`${
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? "relative min-h-0 flex-1 overflow-hidden"
+                            : "absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                        }`}
+                        role={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? undefined
+                            : "button"
+                        }
+                        tabIndex={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? undefined
+                            : 0
+                        }
+                        title={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? undefined
+                            : "Tap to swap focus/PiP (no reload)"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (
+                            hostFocusAngleId &&
+                            hostFocusAngleId !== hostMultiAngles.activeAngle.id
+                          ) {
+                            handleFocusPipSwap();
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (
+                            !hostFocusAngleId ||
+                            hostFocusAngleId === hostMultiAngles.activeAngle.id
+                          ) {
+                            return;
+                          }
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleFocusPipSwap();
+                          }
+                        }}
                       >
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
@@ -6193,20 +6455,49 @@ function RoomContent() {
                         </YoutubePointerGate>
                       </div>
                       <div
-                        role="button"
-                        tabIndex={0}
-                        title="Tap to swap active angle (audio follows main view)"
-                        className="absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                        className={`${
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? "absolute bottom-3 right-3 z-[24] aspect-video w-[min(38vw,15rem)] max-w-[42%] cursor-pointer overflow-hidden rounded-lg border-2 border-white/35 bg-black shadow-xl ring-1 ring-black/50"
+                            : "relative min-h-0 flex-1 overflow-hidden"
+                        }`}
+                        role={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? "button"
+                            : undefined
+                        }
+                        tabIndex={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? 0
+                            : undefined
+                        }
+                        title={
+                          !hostFocusAngleId ||
+                          hostFocusAngleId === hostMultiAngles.activeAngle.id
+                            ? "Tap to swap focus/PiP (no reload)"
+                            : undefined
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                          if (
+                            !hostFocusAngleId ||
+                            hostFocusAngleId === hostMultiAngles.activeAngle.id
+                          ) {
+                            handleFocusPipSwap();
+                          }
                         }}
                         onKeyDown={(e) => {
+                          if (
+                            hostFocusAngleId &&
+                            hostFocusAngleId !== hostMultiAngles.activeAngle.id
+                          ) {
+                            return;
+                          }
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            void handleSelectAngle(
-                              hostMultiAngles.secondaryAngle.id,
-                            );
+                            handleFocusPipSwap();
                           }
                         }}
                       >
