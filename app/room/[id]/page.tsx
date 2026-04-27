@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -65,6 +66,31 @@ function syncLog(...args: unknown[]) {
   ) {
     console.log("[FilmRoom sync]", ...args);
   }
+}
+
+/** Blocks touch from reaching YouTube when drawing is on (host). */
+function YoutubePointerGate({
+  drawOn,
+  children,
+}: {
+  drawOn: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`relative block h-full w-full min-h-0 min-w-0 overflow-hidden ${
+        drawOn ? "[&_iframe]:pointer-events-none" : ""
+      }`}
+    >
+      {children}
+      <div
+        className={`pointer-overlay absolute inset-0 z-[16] ${
+          drawOn ? "pointer-events-auto" : "pointer-events-none"
+        }`}
+        aria-hidden
+      />
+    </div>
+  );
 }
 
 /** Immediate play/pause/seek/resync envelope (Firebase `playbackCommand`). */
@@ -1276,6 +1302,8 @@ function RoomContent() {
   const [copied, setCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
+  /** Host: app-controlled fullscreen for one angle (not browser / iframe fullscreen). */
+  const [fullscreenAngleId, setFullscreenAngleId] = useState<string | null>(null);
   /** Host-only: minimal mobile layout with video dominant. */
   const [isCleanMode, setIsCleanMode] = useState(false);
   const hostControlsRef = useRef<HTMLDivElement | null>(null);
@@ -2271,6 +2299,15 @@ function RoomContent() {
       setMultiViewSecondaryHold(null);
     }
   }, [coachViewMode]);
+
+  useEffect(() => {
+    if (fullscreenAngleId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreenAngleId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreenAngleId]);
 
   const handleManualSyncEnter = useCallback(() => {
     if (!isHost) return;
@@ -4303,6 +4340,13 @@ function RoomContent() {
   const effectiveVideoId = roomState?.videoId ?? videoIdFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
 
+  const drawGateOn = Boolean(isHost && telDrawOn);
+  const fsActive = Boolean(isHost && fullscreenAngleId !== null);
+  const fsStageClass = fsActive ? "fixed inset-0 z-[9999] bg-black" : "";
+  const telestratorWrapFs = fsActive
+    ? "pointer-events-none fixed inset-0 z-[10000]"
+    : undefined;
+
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
@@ -4641,21 +4685,41 @@ function RoomContent() {
               {roomState.angles.map((a) => {
                 const active = a.id === roomState.currentAngleId;
                 return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    disabled={!isHost}
-                    onClick={() => {
-                      if (isHost) void handleSelectAngle(a.id);
-                    }}
-                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] ${
-                      active
-                        ? "border-blue-500/55 bg-blue-600/25 text-white ring-1 ring-blue-400/35"
-                        : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
-                    } ${!isHost ? "cursor-default opacity-90" : ""}`}
-                  >
-                    {a.name}
-                  </button>
+                  <div key={a.id} className="flex flex-col items-stretch gap-1">
+                    <button
+                      type="button"
+                      disabled={!isHost}
+                      onClick={() => {
+                        if (!isHost) return;
+                        if (fullscreenAngleId !== null) {
+                          setFullscreenAngleId(a.id);
+                        }
+                        void handleSelectAngle(a.id);
+                      }}
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] ${
+                        active
+                          ? "border-blue-500/55 bg-blue-600/25 text-white ring-1 ring-blue-400/35"
+                          : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
+                      } ${!isHost ? "cursor-default opacity-90" : ""}`}
+                    >
+                      {a.name}
+                    </button>
+                    {isHost ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFullscreenAngleId(a.id);
+                          if (roomState.currentAngleId !== a.id) {
+                            void handleSelectAngle(a.id);
+                          }
+                        }}
+                        className="rounded-md border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                      >
+                        Fullscreen
+                      </button>
+                    ) : null}
+                  </div>
                 );
               })}
               {isHost && roomState.clips.length === 1 ? (
@@ -4924,11 +4988,18 @@ function RoomContent() {
             player (black screen) after unlock on some mobile watch layouts.
           */}
           <div
-            className="relative aspect-video w-full shrink-0 overflow-hidden md:aspect-auto md:min-h-0 md:flex-1"
-            onClick={handleToggleCleanMode}
+            className={`relative aspect-video w-full shrink-0 overflow-hidden md:aspect-auto md:min-h-0 md:flex-1 ${
+              fsActive ? "min-h-[100dvh] md:min-h-0" : ""
+            }`}
+            onClick={(e) => {
+              if (fullscreenAngleId !== null) return;
+              handleToggleCleanMode(e);
+            }}
           >
             {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
-              <div className="absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2">
+              <div
+                className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2 ${fsStageClass}`}
+              >
                 {(() => {
                   const activeAngle = pickAngle(
                     roomState.angles,
@@ -4940,37 +5011,41 @@ function RoomContent() {
                   return (
                     <>
                       <div className="relative overflow-hidden">
-                        <YouTube
-                          key={`mv-${activeAngle.id}`}
-                          ref={playerRef}
-                          videoId={safeDecodeVideoId(activeAngle.videoId)}
-                          onReady={handlePlayerReady}
-                          onStateChange={handleYoutubeStateChange}
-                          className="absolute left-0 top-0 h-full w-full"
-                          iframeClassName="absolute left-0 top-0 h-full w-full"
-                          opts={youtubePlayerOpts}
-                        />
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key={`mv-${activeAngle.id}`}
+                            ref={playerRef}
+                            videoId={safeDecodeVideoId(activeAngle.videoId)}
+                            onReady={handlePlayerReady}
+                            onStateChange={handleYoutubeStateChange}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
                       </div>
                       <div className="relative overflow-hidden">
-                        <YouTube
-                          key={`mv-${secondaryAngle.id}`}
-                          ref={secondaryPlayerRef}
-                          videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                          onReady={() => {
-                            const p =
-                              secondaryPlayerRef.current?.getInternalPlayer() as
-                                | YouTubePlayer
-                                | undefined;
-                            try {
-                              p?.mute?.();
-                            } catch {
-                              /* YouTube API */
-                            }
-                          }}
-                          className="absolute left-0 top-0 h-full w-full"
-                          iframeClassName="absolute left-0 top-0 h-full w-full"
-                          opts={youtubePlayerOpts}
-                        />
+                        <YoutubePointerGate drawOn={drawGateOn}>
+                          <YouTube
+                            key={`mv-${secondaryAngle.id}`}
+                            ref={secondaryPlayerRef}
+                            videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                            onReady={() => {
+                              const p =
+                                secondaryPlayerRef.current?.getInternalPlayer() as
+                                  | YouTubePlayer
+                                  | undefined;
+                              try {
+                                p?.mute?.();
+                              } catch {
+                                /* YouTube API */
+                              }
+                            }}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
                         {isHost &&
                         coachViewMode === "multi" &&
                         multiViewSecondaryHold &&
@@ -4997,24 +5072,36 @@ function RoomContent() {
                 })()}
               </div>
             ) : (
-              <div className="absolute inset-0 overflow-hidden">
-                <YouTube
-                  key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
-                  ref={playerRef}
-                  videoId={safeDecodeVideoId(effectiveVideoId)}
-                  onReady={handlePlayerReady}
-                  onStateChange={handleYoutubeStateChange}
-                  className="absolute left-0 top-0 h-full w-full"
-                  iframeClassName="absolute left-0 top-0 h-full w-full"
-                  opts={youtubePlayerOpts}
-                />
+              <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
+                <YoutubePointerGate drawOn={drawGateOn}>
+                  <YouTube
+                    key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                    ref={playerRef}
+                    videoId={safeDecodeVideoId(effectiveVideoId)}
+                    onReady={handlePlayerReady}
+                    onStateChange={handleYoutubeStateChange}
+                    className="absolute left-0 top-0 h-full w-full"
+                    iframeClassName="absolute left-0 top-0 h-full w-full"
+                    opts={youtubePlayerOpts}
+                  />
+                </YoutubePointerGate>
               </div>
             )}
             <TelestratorOverlay
               roomId={roomId}
               isHost={isHost}
               drawEnabled={telDrawOn}
+              wrapClassName={telestratorWrapFs}
             />
+            {fsActive ? (
+              <button
+                type="button"
+                onClick={() => setFullscreenAngleId(null)}
+                className="fixed right-3 top-3 z-[10020] rounded-lg border border-white/20 bg-black/85 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+              >
+                Exit Fullscreen
+              </button>
+            ) : null}
             {!isHost && !viewerPlaybackUnlocked ? (
               <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
                 <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-950/90 p-8 text-center shadow-2xl shadow-black/60 ring-1 ring-white/[0.05]">
@@ -5242,11 +5329,18 @@ function RoomContent() {
                 player (black screen) after unlock on some mobile watch layouts.
               */}
               <div
-                className="relative aspect-video w-full min-h-[12rem] overflow-hidden"
-                onClick={handleToggleCleanMode}
+                className={`relative aspect-video w-full min-h-[12rem] overflow-hidden ${
+                  fsActive ? "min-h-[100dvh] sm:min-h-[12rem]" : ""
+                }`}
+                onClick={(e) => {
+                  if (fullscreenAngleId !== null) return;
+                  handleToggleCleanMode(e);
+                }}
               >
                 {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
-                  <div className="absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2">
+                  <div
+                    className={`absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2 ${fsStageClass}`}
+                  >
                     {(() => {
                       const activeAngle = pickAngle(
                         roomState.angles,
@@ -5258,37 +5352,41 @@ function RoomContent() {
                       return (
                         <>
                           <div className="relative overflow-hidden">
-                            <YouTube
-                              key={`mv-${activeAngle.id}`}
-                              ref={playerRef}
-                              videoId={safeDecodeVideoId(activeAngle.videoId)}
-                              onReady={handlePlayerReady}
-                              onStateChange={handleYoutubeStateChange}
-                              className="absolute left-0 top-0 h-full w-full"
-                              iframeClassName="absolute left-0 top-0 h-full w-full"
-                              opts={youtubePlayerOpts}
-                            />
+                            <YoutubePointerGate drawOn={drawGateOn}>
+                              <YouTube
+                                key={`mv-${activeAngle.id}`}
+                                ref={playerRef}
+                                videoId={safeDecodeVideoId(activeAngle.videoId)}
+                                onReady={handlePlayerReady}
+                                onStateChange={handleYoutubeStateChange}
+                                className="absolute left-0 top-0 h-full w-full"
+                                iframeClassName="absolute left-0 top-0 h-full w-full"
+                                opts={youtubePlayerOpts}
+                              />
+                            </YoutubePointerGate>
                           </div>
                           <div className="relative overflow-hidden">
-                            <YouTube
-                              key={`mv-${secondaryAngle.id}`}
-                              ref={secondaryPlayerRef}
-                              videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                              onReady={() => {
-                                const p =
-                                  secondaryPlayerRef.current?.getInternalPlayer() as
-                                    | YouTubePlayer
-                                    | undefined;
-                                try {
-                                  p?.mute?.();
-                                } catch {
-                                  /* YouTube API */
-                                }
-                              }}
-                              className="absolute left-0 top-0 h-full w-full"
-                              iframeClassName="absolute left-0 top-0 h-full w-full"
-                              opts={youtubePlayerOpts}
-                            />
+                            <YoutubePointerGate drawOn={drawGateOn}>
+                              <YouTube
+                                key={`mv-${secondaryAngle.id}`}
+                                ref={secondaryPlayerRef}
+                                videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                                onReady={() => {
+                                  const p =
+                                    secondaryPlayerRef.current?.getInternalPlayer() as
+                                      | YouTubePlayer
+                                      | undefined;
+                                  try {
+                                    p?.mute?.();
+                                  } catch {
+                                    /* YouTube API */
+                                  }
+                                }}
+                                className="absolute left-0 top-0 h-full w-full"
+                                iframeClassName="absolute left-0 top-0 h-full w-full"
+                                opts={youtubePlayerOpts}
+                              />
+                            </YoutubePointerGate>
                             {isHost &&
                             coachViewMode === "multi" &&
                             multiViewSecondaryHold &&
@@ -5315,24 +5413,36 @@ function RoomContent() {
                     })()}
                   </div>
                 ) : (
-                  <div className="absolute inset-0 overflow-hidden">
-                    <YouTube
-                      key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
-                      ref={playerRef}
-                      videoId={safeDecodeVideoId(effectiveVideoId)}
-                      onReady={handlePlayerReady}
-                      onStateChange={handleYoutubeStateChange}
-                      className="absolute left-0 top-0 h-full w-full"
-                      iframeClassName="absolute left-0 top-0 h-full w-full"
-                      opts={youtubePlayerOpts}
-                    />
+                  <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
+                    <YoutubePointerGate drawOn={drawGateOn}>
+                      <YouTube
+                        key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                        ref={playerRef}
+                        videoId={safeDecodeVideoId(effectiveVideoId)}
+                        onReady={handlePlayerReady}
+                        onStateChange={handleYoutubeStateChange}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
                   </div>
                 )}
                 <TelestratorOverlay
                   roomId={roomId}
                   isHost={isHost}
                   drawEnabled={telDrawOn}
+                  wrapClassName={telestratorWrapFs}
                 />
+                {fsActive ? (
+                  <button
+                    type="button"
+                    onClick={() => setFullscreenAngleId(null)}
+                    className="fixed right-3 top-3 z-[10020] rounded-lg border border-white/20 bg-black/85 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+                  >
+                    Exit Fullscreen
+                  </button>
+                ) : null}
                 {!isHost && !viewerPlaybackUnlocked ? (
                   <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/65 px-4 backdrop-blur-md">
                     <div className="w-full max-w-sm rounded-2xl border border-white/[0.08] bg-zinc-950/90 p-8 text-center shadow-2xl shadow-black/60 ring-1 ring-white/[0.05]">

@@ -18,6 +18,8 @@ type Props = {
   roomId: string;
   isHost: boolean;
   drawEnabled: boolean;
+  /** Merged onto the stage wrapper (e.g. fixed fullscreen so drawing tracks the video). */
+  wrapClassName?: string;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -47,7 +49,12 @@ function parseStrokes(val: unknown): RemoteStroke[] {
   return list;
 }
 
-export function TelestratorOverlay({ roomId, isHost, drawEnabled }: Props) {
+export function TelestratorOverlay({
+  roomId,
+  isHost,
+  drawEnabled,
+  wrapClassName,
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [remoteStrokes, setRemoteStrokes] = useState<RemoteStroke[]>([]);
@@ -228,7 +235,9 @@ export function TelestratorOverlay({ roomId, isHost, drawEnabled }: Props) {
   return (
     <div
       ref={wrapRef}
-      className="pointer-events-none absolute inset-0 z-20"
+      className={
+        wrapClassName ?? "pointer-events-none absolute inset-0 z-20"
+      }
       aria-hidden
     >
       <canvas
