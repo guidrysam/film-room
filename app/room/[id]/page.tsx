@@ -162,6 +162,14 @@ type RoomState = {
   currentAngleId: string;
 };
 
+type YouTubeVideoMeta = {
+  videoId: string;
+  title?: string;
+  actualStartTime?: string;
+  scheduledStartTime?: string;
+  embeddable?: boolean;
+};
+
 /** Shared moment for chapter ordering / navigation (legacy: `time` on reference angle). */
 function chapterGameMoment(ch: ChapterEntry): number {
   return ch.gameTime ?? ch.time;
@@ -180,6 +188,46 @@ function nextMarkPlayLabel(chapters: ChapterEntry[]): string {
   }
   if (maxNum === 0) return "Play";
   return `Play ${maxNum + 1}`;
+}
+
+function parseActualStartMs(v: string | undefined): number | null {
+  if (!v) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Compute offsets from YouTube `actualStartTime`.
+ *
+ * Sign is intentional:
+ * - We define \(angleTime = gameTime + offsetFromGameTime\)
+ * - If angle B started later than master by +18s, then at the same real moment,
+ *   B's YouTube time is ~18s smaller ⇒ offset = masterStart - angleStart = -18.
+ */
+function computeOffsetsFromActualStartTimes(
+  angles: VideoAngle[],
+): VideoAngle[] | null {
+  if (angles.length < 2) return null;
+  const masterStartMs = parseActualStartMs(angles[0]?.actualStartTime);
+  if (masterStartMs === null) return null;
+  const next: VideoAngle[] = [];
+  let computedCount = 0;
+  for (const a of angles) {
+    const startMs = parseActualStartMs(a.actualStartTime);
+    if (startMs === null) {
+      next.push({ ...a });
+      continue;
+    }
+    const offset = (masterStartMs - startMs) / 1000;
+    computedCount += 1;
+    next.push({
+      ...a,
+      offsetFromGameTime: offset,
+      autoOffsetSource: "youtube_start_time",
+    });
+  }
+  if (computedCount < 2) return null;
+  return next;
 }
 
 function parseTransportAction(raw: unknown): TransportAction {
@@ -1250,6 +1298,7 @@ function RoomContent() {
     null,
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
+  const [coachViewMode, setCoachViewMode] = useState<"single" | "multi">("single");
   /** Host: brief "Marked" feedback after one-tap Mark Play. */
   const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
   const markPlayTimerRef = useRef<number | null>(null);
@@ -1910,6 +1959,76 @@ function RoomContent() {
 
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+  const secondaryPlayerRef = useRef<InstanceType<typeof YouTube>>(null);
+
+  useEffect(() => {
+    if (!isHost || !roomState || roomState.angles.length < 2) {
+      if (coachViewMode !== "single") setCoachViewMode("single");
+    }
+  }, [isHost, roomState, coachViewMode]);
+
+  useEffect(() => {
+    if (!isHost || coachViewMode !== "multi") return;
+    const cur = roomStateRef.current;
+    if (!cur || cur.angles.length < 2) return;
+    const tick = () => {
+      const s = roomStateRef.current;
+      if (!s || s.angles.length < 2) return;
+      const activeAngle = pickAngle(s.angles, s.currentAngleId);
+      const secondaryAngle =
+        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+      const primary = getPlayer();
+      const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | undefined;
+      if (!primary || !secondary) return;
+      const fb = s.currentTime ?? 0;
+      void (async () => {
+        const t = await readYoutubeCurrentTime(primary, fb);
+        const gameT = gameTimeFromAngleTime(t, activeAngle);
+        const expected = angleTimeFromGameTime(gameT, secondaryAngle);
+        let actual = expected;
+        try {
+          actual = await secondary.getCurrentTime();
+        } catch {
+          /* YouTube API */
+        }
+        if (Math.abs(actual - expected) > 1.0) {
+          try {
+            secondary.seekTo?.(expected, true);
+          } catch {
+            /* YouTube API */
+          }
+        }
+        try {
+          secondary.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+        const stSecondary = await readYoutubePlayerState(secondary);
+        if (s.isPlaying) {
+          if (!youtubeStateImpliesPlaying(stSecondary)) {
+            try {
+              secondary.playVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          }
+        } else {
+          if (stSecondary !== YT_PAUSED) {
+            try {
+              secondary.pauseVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          }
+        }
+      })();
+    };
+    tick();
+    const id = window.setInterval(tick, 1800);
+    return () => window.clearInterval(id);
+  }, [isHost, coachViewMode]);
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
   useEffect(() => {
@@ -2945,6 +3064,84 @@ function RoomContent() {
     })();
   }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
 
+  const [autoSyncAnglesStatus, setAutoSyncAnglesStatus] = useState<
+    { kind: "idle" } | { kind: "success"; message: string } | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  const handleAutoSyncAngles = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const rr = roomRefForWrite.current;
+    if (!rr) return;
+    void (async () => {
+      const cur = roomStateRef.current;
+      if (!cur || cur.angles.length < 2) return;
+      setAutoSyncAnglesStatus({ kind: "idle" });
+
+      const metas: Array<YouTubeVideoMeta | null> = await Promise.all(
+        cur.angles.map(async (a) => {
+          try {
+            const res = await fetch(
+              `/api/youtube-video-meta?videoId=${encodeURIComponent(a.videoId)}`,
+              { cache: "no-store" },
+            );
+            const json = (await res.json()) as
+              | { ok: true; meta: YouTubeVideoMeta }
+              | { ok: false; error: string };
+            if (!res.ok || !json || (json as { ok?: unknown }).ok !== true) {
+              return null;
+            }
+            return (json as { ok: true; meta: YouTubeVideoMeta }).meta;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      const withTimes: VideoAngle[] = cur.angles.map((a, i) => {
+        const m = metas[i];
+        if (!m || m.videoId !== a.videoId) return { ...a, autoOffsetSource: a.autoOffsetSource ?? "unknown" };
+        return {
+          ...a,
+          ...(typeof m.actualStartTime === "string" ? { actualStartTime: m.actualStartTime } : {}),
+          autoOffsetSource: a.autoOffsetSource ?? "unknown",
+        };
+      });
+
+      const computed = computeOffsetsFromActualStartTimes(withTimes);
+      if (!computed) {
+        setAutoSyncAnglesStatus({
+          kind: "error",
+          message:
+            "Could not auto-sync from YouTube start times. Use manual sync.",
+        });
+        return;
+      }
+
+      syncLog("auto sync angles (youtube start time)", {
+        master: computed[0]?.videoId,
+        offsets: computed.map((a) => ({
+          id: a.id,
+          videoId: a.videoId,
+          offsetFromGameTime: a.offsetFromGameTime ?? 0,
+          actualStartTime: a.actualStartTime,
+        })),
+      });
+
+      void update(rr, {
+        angles: computed,
+        currentAngleId: cur.currentAngleId,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+
+      setAutoSyncAnglesStatus({
+        kind: "success",
+        message: "Auto-synced offsets from YouTube stream start times.",
+      });
+    })();
+  }, [isHost, roomId]);
+
   /**
    * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
    */
@@ -3644,6 +3841,41 @@ function RoomContent() {
           <div className={frPanel}>
             <p className={frPanelTitle}>Camera angle</p>
             <div className="flex flex-wrap items-center gap-2">
+              {isHost ? (
+                <button
+                  type="button"
+                  onClick={() => void handleAutoSyncAngles()}
+                  className={secondaryHostBtn}
+                >
+                  Auto Sync Angles
+                </button>
+              ) : null}
+              {isHost ? (
+                <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
+                  <button
+                    type="button"
+                    onClick={() => setCoachViewMode("single")}
+                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                      coachViewMode === "single"
+                        ? "bg-blue-600/40 text-white"
+                        : "text-zinc-300 hover:text-white"
+                    }`}
+                  >
+                    Single View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCoachViewMode("multi")}
+                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                      coachViewMode === "multi"
+                        ? "bg-blue-600/40 text-white"
+                        : "text-zinc-300 hover:text-white"
+                    }`}
+                  >
+                    Multi View
+                  </button>
+                </div>
+              ) : null}
               {roomState.angles.map((a) => {
                 const active = a.id === roomState.currentAngleId;
                 return (
@@ -3674,6 +3906,15 @@ function RoomContent() {
                 </button>
               ) : null}
             </div>
+            {autoSyncAnglesStatus.kind === "success" ? (
+              <p className="mt-2 text-xs text-emerald-300">
+                {autoSyncAnglesStatus.message}
+              </p>
+            ) : autoSyncAnglesStatus.kind === "error" ? (
+              <p className="mt-2 text-xs text-amber-300">
+                {autoSyncAnglesStatus.message}
+              </p>
+            ) : null}
           </div>
         ) : isHost && roomState && roomState.clips.length === 1 && !cleanMode ? (
           <div className={frPanel}>
@@ -3816,18 +4057,69 @@ function RoomContent() {
             className="relative aspect-video w-full shrink-0 overflow-hidden md:aspect-auto md:min-h-0 md:flex-1"
             onClick={handleToggleCleanMode}
           >
-            <div className="absolute inset-0 overflow-hidden">
-              <YouTube
-                key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
-                ref={playerRef}
-                videoId={safeDecodeVideoId(effectiveVideoId)}
-                onReady={handlePlayerReady}
-                onStateChange={handleYoutubeStateChange}
-                className="absolute left-0 top-0 h-full w-full"
-                iframeClassName="absolute left-0 top-0 h-full w-full"
-                opts={youtubePlayerOpts}
-              />
-            </div>
+            {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
+              <div className="absolute inset-0 grid grid-cols-1 gap-1 bg-black md:grid-cols-2">
+                {(() => {
+                  const activeAngle = pickAngle(
+                    roomState.angles,
+                    roomState.currentAngleId,
+                  );
+                  const secondaryAngle =
+                    roomState.angles.find((a) => a.id !== activeAngle.id) ??
+                    roomState.angles[0]!;
+                  return (
+                    <>
+                      <div className="relative overflow-hidden">
+                        <YouTube
+                          key={`mv-${activeAngle.id}`}
+                          ref={playerRef}
+                          videoId={safeDecodeVideoId(activeAngle.videoId)}
+                          onReady={handlePlayerReady}
+                          onStateChange={handleYoutubeStateChange}
+                          className="absolute left-0 top-0 h-full w-full"
+                          iframeClassName="absolute left-0 top-0 h-full w-full"
+                          opts={youtubePlayerOpts}
+                        />
+                      </div>
+                      <div className="relative overflow-hidden">
+                        <YouTube
+                          key={`mv-${secondaryAngle.id}`}
+                          ref={secondaryPlayerRef}
+                          videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                          onReady={() => {
+                            const p =
+                              secondaryPlayerRef.current?.getInternalPlayer() as
+                                | YouTubePlayer
+                                | undefined;
+                            try {
+                              p?.mute?.();
+                            } catch {
+                              /* YouTube API */
+                            }
+                          }}
+                          className="absolute left-0 top-0 h-full w-full"
+                          iframeClassName="absolute left-0 top-0 h-full w-full"
+                          opts={youtubePlayerOpts}
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className="absolute inset-0 overflow-hidden">
+                <YouTube
+                  key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                  ref={playerRef}
+                  videoId={safeDecodeVideoId(effectiveVideoId)}
+                  onReady={handlePlayerReady}
+                  onStateChange={handleYoutubeStateChange}
+                  className="absolute left-0 top-0 h-full w-full"
+                  iframeClassName="absolute left-0 top-0 h-full w-full"
+                  opts={youtubePlayerOpts}
+                />
+              </div>
+            )}
             <TelestratorOverlay
               roomId={roomId}
               isHost={isHost}
@@ -4063,18 +4355,69 @@ function RoomContent() {
                 className="relative aspect-video w-full min-h-[12rem] overflow-hidden"
                 onClick={handleToggleCleanMode}
               >
-                <div className="absolute inset-0 overflow-hidden">
-                  <YouTube
-                    key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
-                    ref={playerRef}
-                    videoId={safeDecodeVideoId(effectiveVideoId)}
-                    onReady={handlePlayerReady}
-                    onStateChange={handleYoutubeStateChange}
-                    className="absolute left-0 top-0 h-full w-full"
-                    iframeClassName="absolute left-0 top-0 h-full w-full"
-                    opts={youtubePlayerOpts}
-                  />
-                </div>
+                {isHost && coachViewMode === "multi" && roomState?.angles.length ? (
+                  <div className="absolute inset-0 grid grid-cols-1 gap-1 bg-black sm:grid-cols-2">
+                    {(() => {
+                      const activeAngle = pickAngle(
+                        roomState.angles,
+                        roomState.currentAngleId,
+                      );
+                      const secondaryAngle =
+                        roomState.angles.find((a) => a.id !== activeAngle.id) ??
+                        roomState.angles[0]!;
+                      return (
+                        <>
+                          <div className="relative overflow-hidden">
+                            <YouTube
+                              key={`mv-${activeAngle.id}`}
+                              ref={playerRef}
+                              videoId={safeDecodeVideoId(activeAngle.videoId)}
+                              onReady={handlePlayerReady}
+                              onStateChange={handleYoutubeStateChange}
+                              className="absolute left-0 top-0 h-full w-full"
+                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              opts={youtubePlayerOpts}
+                            />
+                          </div>
+                          <div className="relative overflow-hidden">
+                            <YouTube
+                              key={`mv-${secondaryAngle.id}`}
+                              ref={secondaryPlayerRef}
+                              videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                              onReady={() => {
+                                const p =
+                                  secondaryPlayerRef.current?.getInternalPlayer() as
+                                    | YouTubePlayer
+                                    | undefined;
+                                try {
+                                  p?.mute?.();
+                                } catch {
+                                  /* YouTube API */
+                                }
+                              }}
+                              className="absolute left-0 top-0 h-full w-full"
+                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              opts={youtubePlayerOpts}
+                            />
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div className="absolute inset-0 overflow-hidden">
+                    <YouTube
+                      key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                      ref={playerRef}
+                      videoId={safeDecodeVideoId(effectiveVideoId)}
+                      onReady={handlePlayerReady}
+                      onStateChange={handleYoutubeStateChange}
+                      className="absolute left-0 top-0 h-full w-full"
+                      iframeClassName="absolute left-0 top-0 h-full w-full"
+                      opts={youtubePlayerOpts}
+                    />
+                  </div>
+                )}
                 <TelestratorOverlay
                   roomId={roomId}
                   isHost={isHost}

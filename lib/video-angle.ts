@@ -4,6 +4,12 @@ export type VideoAngle = {
   name: string;
   videoId: string;
   offsetFromGameTime?: number;
+  /**
+   * YouTube live stream metadata. If available for all angles, offsets can be derived automatically.
+   * ISO timestamp, e.g. "2026-04-26T01:23:45Z".
+   */
+  actualStartTime?: string;
+  autoOffsetSource?: "youtube_start_time" | "manual" | "unknown";
 };
 
 export function angleTimeFromGameTime(
@@ -11,6 +17,9 @@ export function angleTimeFromGameTime(
   angle: VideoAngle,
 ): number {
   const offset = angle.offsetFromGameTime ?? 0;
+  // Sign: `angleTime = gameTime + offsetFromGameTime`.
+  // If an angle started *later* in real time than the master stream, its offset must be negative
+  // so that, at the same real-world moment, its YouTube time is smaller (it has been live for less time).
   return Math.max(0, gameTime + offset);
 }
 
@@ -29,12 +38,26 @@ function isValidAngleRow(o: Record<string, unknown>): o is {
   name: string;
   videoId: string;
   offsetFromGameTime?: number;
+  actualStartTime?: string;
+  autoOffsetSource?: "youtube_start_time" | "manual" | "unknown";
 } {
   if (typeof o.id !== "string" || o.id.trim() === "") return false;
   if (typeof o.name !== "string" || o.name.trim() === "") return false;
   if (typeof o.videoId !== "string" || !YT_ID.test(o.videoId)) return false;
   if (o.offsetFromGameTime !== undefined) {
     if (typeof o.offsetFromGameTime !== "number" || !Number.isFinite(o.offsetFromGameTime)) {
+      return false;
+    }
+  }
+  if (o.actualStartTime !== undefined && typeof o.actualStartTime !== "string") {
+    return false;
+  }
+  if (o.autoOffsetSource !== undefined) {
+    if (
+      o.autoOffsetSource !== "youtube_start_time" &&
+      o.autoOffsetSource !== "manual" &&
+      o.autoOffsetSource !== "unknown"
+    ) {
       return false;
     }
   }
@@ -76,6 +99,14 @@ export function parseVideoAngles(
       ...(typeof o.offsetFromGameTime === "number" &&
       Number.isFinite(o.offsetFromGameTime)
         ? { offsetFromGameTime: o.offsetFromGameTime }
+        : {}),
+      ...(typeof o.actualStartTime === "string" && o.actualStartTime.trim() !== ""
+        ? { actualStartTime: o.actualStartTime.trim() }
+        : {}),
+      ...(o.autoOffsetSource === "youtube_start_time" ||
+      o.autoOffsetSource === "manual" ||
+      o.autoOffsetSource === "unknown"
+        ? { autoOffsetSource: o.autoOffsetSource }
         : {}),
     });
   }
