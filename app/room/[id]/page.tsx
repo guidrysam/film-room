@@ -1667,6 +1667,14 @@ function RoomContent() {
     }, ms);
   }, []);
 
+  const commonSyncStartGameTime = useCallback((angles: VideoAngle[]): number => {
+    let maxStart = 0;
+    for (const a of angles) {
+      maxStart = Math.max(maxStart, realClockStartOffsetSecFromAngleOffset(a));
+    }
+    return maxStart;
+  }, []);
+
   useEffect(() => {
     if (isHost && roomState && typeof roomState.actionId === "number") {
       hostActionSeqRef.current = Math.max(
@@ -2701,6 +2709,10 @@ function RoomContent() {
       if (angleB !== undefined && effB < 0) {
         notice += ` This angle starts later (${(-effB).toFixed(1)}s).`;
       }
+      const syncStartGameT = commonSyncStartGameTime(nextAngles);
+      if (gameT < syncStartGameT - 0.25) {
+        notice += ` Both angles start together at ${formatCountdownMmSs(syncStartGameT)}. Use Jump to Sync Start.`;
+      }
       showHostNotice(notice);
 
       manualSyncPoint1Ref.current = null;
@@ -2709,7 +2721,13 @@ function RoomContent() {
       setManualSyncPoint2(null);
       setIsManualSyncMode(false);
     })();
-  }, [isHost, isManualSyncMode, showHostNotice, syncSecondaryPlayersOnce]);
+  }, [
+    isHost,
+    isManualSyncMode,
+    showHostNotice,
+    syncSecondaryPlayersOnce,
+    commonSyncStartGameTime,
+  ]);
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
   useEffect(() => {
@@ -4407,6 +4425,60 @@ function RoomContent() {
     })();
   };
 
+  const handleJumpToSyncStart = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const cur = roomStateRef.current;
+    if (!cur || cur.angles.length < 2) return;
+    const pr = clearFfIfActive();
+    const startGameT = commonSyncStartGameTime(cur.angles);
+    const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
+    const secondaryAngle =
+      cur.angles.find((a) => a.id !== activeAngle.id) ?? cur.angles[0]!;
+    const activeTarget = angleTimeFromGameTime(startGameT, activeAngle);
+    const secondaryTarget = angleTimeFromGameTime(startGameT, secondaryAngle);
+
+    // Write to room (paused) using the same playbackCommand path viewers understand.
+    writeImmediatePlaybackCommand("seek", {
+      currentTime: activeTarget,
+      isPlaying: false,
+      playbackRate: pr,
+    });
+
+    // Apply locally to mounted players (no native YouTube UI dependencies).
+    const primary = getPlayer();
+    const secondary =
+      secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+    try {
+      primary?.seekTo?.(activeTarget, true);
+      primary?.pauseVideo?.();
+    } catch {
+      /* YouTube API */
+    }
+    if (coachViewModeRef.current === "multi" && secondary) {
+      try {
+        secondary.seekTo?.(secondaryTarget, true);
+        secondary.pauseVideo?.();
+        secondary.mute?.();
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        primary?.unMute?.();
+      } catch {
+        /* YouTube API */
+      }
+    }
+
+    showHostNotice("Jumped to first shared sync point.");
+  }, [
+    isHost,
+    roomId,
+    clearFfIfActive,
+    commonSyncStartGameTime,
+    writeImmediatePlaybackCommand,
+    showHostNotice,
+  ]);
+
   /** Authoritative snap: live time, rate, play state — bypasses drift/nudge on viewers. */
   const handleHostResync = () => {
     if (!isHost) return;
@@ -5758,6 +5830,16 @@ function RoomContent() {
                   >
                     Sync
                   </button>
+                  {roomState?.angles?.length && roomState.angles.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={handleJumpToSyncStart}
+                      className={hostChipClean}
+                      title="Seek to the earliest shared moment where all angles exist"
+                    >
+                      Jump to Sync Start
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
@@ -5835,6 +5917,16 @@ function RoomContent() {
                       >
                         Sync
                       </button>
+                      {roomState?.angles?.length && roomState.angles.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={handleJumpToSyncStart}
+                          className={hostChip}
+                          title="Seek to the earliest shared moment where all angles exist"
+                        >
+                          Jump to Sync Start
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={cycleFf}
