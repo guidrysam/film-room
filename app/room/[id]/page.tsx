@@ -68,25 +68,37 @@ function syncLog(...args: unknown[]) {
   }
 }
 
-/** Blocks touch from reaching YouTube when drawing is on (host). */
+/** Blocks touch from reaching YouTube (host) so native controls never steal taps. */
 function YoutubePointerGate({
   drawOn,
+  blockOn,
   children,
 }: {
   drawOn: boolean;
+  blockOn: boolean;
   children: ReactNode;
 }) {
   return (
     <div
       className={`relative block h-full w-full min-h-0 min-w-0 overflow-hidden ${
-        drawOn ? "[&_iframe]:pointer-events-none" : ""
+        blockOn ? "[&_iframe]:pointer-events-none" : ""
       }`}
     >
       {children}
       <div
         className={`pointer-overlay absolute inset-0 z-[16] ${
-          drawOn ? "pointer-events-auto" : "pointer-events-none"
+          blockOn ? "pointer-events-auto" : "pointer-events-none"
         }`}
+        onPointerDown={(e) => {
+          if (!blockOn) return;
+          e.stopPropagation();
+          if (drawOn) e.preventDefault();
+        }}
+        onTouchStart={(e) => {
+          if (!blockOn) return;
+          e.stopPropagation();
+          if (drawOn) e.preventDefault();
+        }}
         aria-hidden
       />
     </div>
@@ -1329,6 +1341,9 @@ function RoomContent() {
   const hostControlsRef = useRef<HTMLDivElement | null>(null);
   /** Live-ish playhead for chapter highlight (player when available, else room time). */
   const [uiPlaybackTime, setUiPlaybackTime] = useState<number | null>(null);
+  const [uiDuration, setUiDuration] = useState<number | null>(null);
+  const [hostScrubDraft, setHostScrubDraft] = useState<number | null>(null);
+  const hostScrubActiveRef = useRef(false);
   /** Brief flash on Prev / Next chapter for pressed feedback. */
   const [chapterNavFlash, setChapterNavFlash] = useState<"prev" | "next" | null>(
     null,
@@ -1571,15 +1586,22 @@ function RoomContent() {
       const cur = roomStateRef.current;
       if (!cur) {
         setUiPlaybackTime(null);
+        setUiDuration(null);
         return;
       }
       const p = playerRef.current?.getInternalPlayer() as
         | YouTubePlayer
         | undefined;
       if (isHostRef.current || viewerPlaybackUnlockedRef.current) {
-        void readYoutubeCurrentTime(p, cur.currentTime ?? 0).then(
-          setUiPlaybackTime,
-        );
+        void readYoutubeCurrentTime(p, cur.currentTime ?? 0).then((t) => {
+          setUiPlaybackTime(t);
+          // Keep a best-effort duration/live-edge estimate for the scrub bar.
+          void readLiveEdgeTime(p, t).then((edge) => {
+            if (typeof edge === "number" && Number.isFinite(edge) && edge > 0.25) {
+              setUiDuration(edge);
+            }
+          });
+        });
       } else {
         setUiPlaybackTime(cur.currentTime ?? 0);
       }
@@ -4479,6 +4501,58 @@ function RoomContent() {
     showHostNotice,
   ]);
 
+  const handleHostScrubCommit = useCallback(
+    (targetSec: number) => {
+      if (!isHost || !roomId) return;
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const pr = clearFfIfActive();
+      const wasPlaying = cur.isPlaying;
+      const clamped = Math.max(0, targetSec);
+
+      writeImmediatePlaybackCommand("seek", {
+        currentTime: clamped,
+        isPlaying: wasPlaying,
+        playbackRate: pr,
+      });
+
+      // Apply locally to keep the UI feeling immediate.
+      const p = getPlayer();
+      try {
+        p?.seekTo?.(clamped, true);
+      } catch {
+        /* YouTube API */
+      }
+      if (wasPlaying) {
+        try {
+          p?.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      } else {
+        try {
+          p?.pauseVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
+
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: clamped,
+        isPlaying: wasPlaying,
+        playbackRate: pr,
+        reason: "scrub",
+      });
+    },
+    [
+      isHost,
+      roomId,
+      clearFfIfActive,
+      writeImmediatePlaybackCommand,
+      applyHostMultiViewSecondaryDirect,
+    ],
+  );
+
   /** Authoritative snap: live time, rate, play state — bypasses drift/nudge on viewers. */
   const handleHostResync = () => {
     if (!isHost) return;
@@ -5537,7 +5611,7 @@ function RoomContent() {
                     className="relative min-h-0 flex-1 overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-primary-slot"
                         ref={playerRef}
@@ -5579,7 +5653,7 @@ function RoomContent() {
                       }
                     }}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-secondary-slot"
                         ref={secondaryPlayerRef}
@@ -5631,7 +5705,7 @@ function RoomContent() {
                     className="relative min-h-0 overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-primary-slot"
                         ref={playerRef}
@@ -5666,7 +5740,7 @@ function RoomContent() {
                       void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
                     }}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="mv-secondary-slot"
                         ref={secondaryPlayerRef}
@@ -5713,7 +5787,7 @@ function RoomContent() {
               )
             ) : (
               <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
-                <YoutubePointerGate drawOn={drawGateOn}>
+                <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                   <YouTube
                     key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
                     ref={playerRef}
@@ -5841,6 +5915,49 @@ function RoomContent() {
                     </button>
                   ) : null}
                 </div>
+                {isHost && (uiDuration ?? 0) > 0.25 ? (
+                  <div className="mt-1 w-full max-w-none px-1">
+                    <div className="flex items-center justify-between text-[10px] font-medium text-zinc-300">
+                      <span className="font-mono tabular-nums">
+                        {formatCountdownMmSs(
+                          hostScrubDraft ?? uiPlaybackTime ?? 0,
+                        )}
+                      </span>
+                      <span className="font-mono tabular-nums text-zinc-400">
+                        {formatCountdownMmSs(uiDuration ?? 0)}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={uiDuration ?? 0}
+                      step={0.05}
+                      value={hostScrubDraft ?? uiPlaybackTime ?? 0}
+                      onPointerDown={() => {
+                        hostScrubActiveRef.current = true;
+                      }}
+                      onPointerUp={() => {
+                        hostScrubActiveRef.current = false;
+                        if (hostScrubDraft !== null) {
+                          handleHostScrubCommit(hostScrubDraft);
+                          setHostScrubDraft(null);
+                        }
+                      }}
+                      onTouchEnd={() => {
+                        hostScrubActiveRef.current = false;
+                        if (hostScrubDraft !== null) {
+                          handleHostScrubCommit(hostScrubDraft);
+                          setHostScrubDraft(null);
+                        }
+                      }}
+                      onChange={(e) => {
+                        const v = Number.parseFloat(e.target.value);
+                        if (Number.isFinite(v)) setHostScrubDraft(v);
+                      }}
+                      className="mt-1 w-full accent-blue-500"
+                    />
+                  </div>
+                ) : null}
               </div>
               <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
             </div>
@@ -5980,6 +6097,49 @@ function RoomContent() {
                         Clear
                       </button>
                     </div>
+                    {isHost && (uiDuration ?? 0) > 0.25 ? (
+                      <div className="mt-2 w-full">
+                        <div className="flex items-center justify-between px-1 text-[10px] font-medium text-zinc-300">
+                          <span className="font-mono tabular-nums">
+                            {formatCountdownMmSs(
+                              hostScrubDraft ?? uiPlaybackTime ?? 0,
+                            )}
+                          </span>
+                          <span className="font-mono tabular-nums text-zinc-400">
+                            {formatCountdownMmSs(uiDuration ?? 0)}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={uiDuration ?? 0}
+                          step={0.05}
+                          value={hostScrubDraft ?? uiPlaybackTime ?? 0}
+                          onPointerDown={() => {
+                            hostScrubActiveRef.current = true;
+                          }}
+                          onPointerUp={() => {
+                            hostScrubActiveRef.current = false;
+                            if (hostScrubDraft !== null) {
+                              handleHostScrubCommit(hostScrubDraft);
+                              setHostScrubDraft(null);
+                            }
+                          }}
+                          onTouchEnd={() => {
+                            hostScrubActiveRef.current = false;
+                            if (hostScrubDraft !== null) {
+                              handleHostScrubCommit(hostScrubDraft);
+                              setHostScrubDraft(null);
+                            }
+                          }}
+                          onChange={(e) => {
+                            const v = Number.parseFloat(e.target.value);
+                            if (Number.isFinite(v)) setHostScrubDraft(v);
+                          }}
+                          className="mt-1 w-full accent-blue-500"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -6006,7 +6166,7 @@ function RoomContent() {
                         className="relative min-h-0 flex-1 overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-primary-slot"
                             ref={playerRef}
@@ -6050,7 +6210,7 @@ function RoomContent() {
                           }
                         }}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-secondary-slot"
                             ref={secondaryPlayerRef}
@@ -6102,7 +6262,7 @@ function RoomContent() {
                         className="relative min-h-0 overflow-hidden"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-primary-slot"
                             ref={playerRef}
@@ -6139,7 +6299,7 @@ function RoomContent() {
                           );
                         }}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
                             key="mv-secondary-slot"
                             ref={secondaryPlayerRef}
@@ -6186,7 +6346,7 @@ function RoomContent() {
                   )
                 ) : (
                   <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
-                    <YoutubePointerGate drawOn={drawGateOn}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
                         ref={playerRef}
