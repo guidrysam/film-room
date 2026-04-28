@@ -1362,6 +1362,14 @@ function RoomContent() {
   useLayoutEffect(() => {
     isManualSyncModeRef.current = isManualSyncMode;
   }, [isManualSyncMode]);
+  const [syncSetupUi, setSyncSetupUi] = useState<{
+    primaryTime: number;
+    primaryDur: number;
+    secondaryTime: number;
+    secondaryDur: number;
+    primaryPlaying: boolean;
+    secondaryPlaying: boolean;
+  } | null>(null);
   /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
   const lastAppliedCommandIdRef = useRef(0);
   const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
@@ -2050,6 +2058,7 @@ function RoomContent() {
   }, [isHost, roomState, coachViewMode]);
 
   const syncSecondaryPlayersOnce = useCallback((reason: string) => {
+    if (isManualSyncModeRef.current) return;
     if (!isHostRef.current) return;
     if (coachViewModeRef.current !== "multi") return;
     const s0 = roomStateRef.current;
@@ -2169,7 +2178,9 @@ function RoomContent() {
       playbackRate: number;
       isPlaying: boolean;
       reason: string;
+      allowWhileManualSync?: boolean;
     }) => {
+      if (!opts.allowWhileManualSync && isManualSyncModeRef.current) return;
       if (!isHostRef.current) return;
       if (coachViewModeRef.current !== "multi") return;
       const s = roomStateRef.current;
@@ -2291,12 +2302,12 @@ function RoomContent() {
 
   /** First time entering Multi View: align secondary once (host). */
   useEffect(() => {
-    if (!isHost || coachViewMode !== "multi") return;
+    if (!isHost || coachViewMode !== "multi" || isManualSyncMode) return;
     const tid = window.setTimeout(() => {
       syncSecondaryPlayersOnce("enter-multi-view");
     }, 220);
     return () => window.clearTimeout(tid);
-  }, [isHost, coachViewMode, syncSecondaryPlayersOnce]);
+  }, [isHost, coachViewMode, isManualSyncMode, syncSecondaryPlayersOnce]);
 
   useEffect(() => {
     if (coachViewMode !== "multi") {
@@ -2377,24 +2388,127 @@ function RoomContent() {
         return;
       }
 
-      syncSecondaryPlayersOnce("manual-sync");
+      showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
+      setIsManualSyncMode(false);
+
+      // Apply once now that offsets are saved.
       applyHostMultiViewSecondaryDirect({
         primaryAnchorTime: activeAngleTime,
         isPlaying: cur.isPlaying,
         playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
         reason: "manual-sync",
+        allowWhileManualSync: true,
       });
-
-      showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
-      setIsManualSyncMode(false);
     })();
   }, [
     isHost,
     isManualSyncMode,
     showHostNotice,
-    syncSecondaryPlayersOnce,
     applyHostMultiViewSecondaryDirect,
   ]);
+
+  // Manual sync setup: expose independent per-angle controls + keep local times fresh.
+  useEffect(() => {
+    if (!isHost || coachViewMode !== "multi" || !isManualSyncMode) {
+      setSyncSetupUi(null);
+      return;
+    }
+    const tick = () => {
+      const primary = getPlayer();
+      const secondary =
+        secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+      if (!primary || !secondary) return;
+      const fb = roomStateRef.current?.currentTime ?? 0;
+      void (async () => {
+        const t0 = await readYoutubeCurrentTime(primary, fb);
+        const t1 = await readYoutubeCurrentTime(secondary, fb);
+        const d0 = await readYoutubeDuration(primary);
+        const d1 = await readYoutubeDuration(secondary);
+        const st0 = await readYoutubePlayerState(primary);
+        const st1 = await readYoutubePlayerState(secondary);
+        const p0 = youtubeStateImpliesPlaying(st0);
+        const p1 = youtubeStateImpliesPlaying(st1);
+        if (!Number.isFinite(t0) || !Number.isFinite(t1)) return;
+        setSyncSetupUi({
+          primaryTime: t0,
+          primaryDur: Number.isFinite(d0) ? d0 : 0,
+          secondaryTime: t1,
+          secondaryDur: Number.isFinite(d1) ? d1 : 0,
+          primaryPlaying: p0,
+          secondaryPlaying: p1,
+        });
+      })();
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [isHost, coachViewMode, isManualSyncMode]);
+
+  const renderSyncSetupControls = useCallback(
+    (opts: {
+      label: string;
+      which: "primary" | "secondary";
+      get: () => YouTubePlayer | null | undefined;
+    }) => {
+      if (!isHost || !isManualSyncMode || coachViewMode !== "multi") return null;
+      const ui = syncSetupUi;
+      if (!ui) return null;
+      const t = opts.which === "primary" ? ui.primaryTime : ui.secondaryTime;
+      const d = opts.which === "primary" ? ui.primaryDur : ui.secondaryDur;
+      const playing = opts.which === "primary" ? ui.primaryPlaying : ui.secondaryPlaying;
+      const safeD = Number.isFinite(d) && d > 0 ? d : Math.max(0, t + 1);
+      return (
+        <div className="w-full border-t border-white/10 bg-black/65 px-2 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-zinc-200">
+                {opts.label}
+              </div>
+              <div className="mt-0.5 font-mono tabular-nums text-[11px] text-zinc-200">
+                {formatChapterTime(t)} / {formatChapterTime(safeD)}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              onClick={() => {
+                const p = opts.get();
+                if (!p) return;
+                try {
+                  if (playing) p.pauseVideo?.();
+                  else p.playVideo?.();
+                } catch {
+                  /* YouTube API */
+                }
+              }}
+            >
+              {playing ? "Pause" : "Play"}
+            </button>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={safeD}
+            step={0.05}
+            value={Math.max(0, Math.min(safeD, t))}
+            onChange={(e) => {
+              const v = Number.parseFloat(e.target.value);
+              if (!Number.isFinite(v)) return;
+              const p = opts.get();
+              if (!p) return;
+              try {
+                p.seekTo?.(Math.max(0, v), true);
+              } catch {
+                /* YouTube API */
+              }
+            }}
+            className="mt-1 w-full accent-blue-500"
+          />
+        </div>
+      );
+    },
+    [coachViewMode, isHost, isManualSyncMode, syncSetupUi],
+  );
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
   useEffect(() => {
@@ -2731,6 +2845,7 @@ function RoomContent() {
   const jumpToChapter = useCallback(
     (chapter: ChapterEntry) => {
       if (!isHost) return;
+      if (isManualSyncModeRef.current) return;
       const rr = roomRefForWrite.current;
       if (!rr || !roomId) return;
       const cur = roomStateRef.current;
@@ -3232,6 +3347,7 @@ function RoomContent() {
   const handleSelectAngle = useCallback(
     (angleId: string) => {
       if (!isHost || !roomId) return;
+      if (isManualSyncModeRef.current) return;
       const cur = roomStateRef.current;
       if (!cur || angleId === cur.currentAngleId) return;
       const nextAngle = cur.angles.find((a) => a.id === angleId);
@@ -3593,6 +3709,7 @@ function RoomContent() {
 
   const handlePlay = () => {
     if (!isHost) return;
+    if (isManualSyncModeRef.current) return;
     hostLastPlayGestureAtRef.current = Date.now();
     syncLog("host pressed Play");
     const pr = clearFfIfActive();
@@ -3620,6 +3737,7 @@ function RoomContent() {
 
   const handlePause = () => {
     if (!isHost) return;
+    if (isManualSyncModeRef.current) return;
     const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
@@ -3641,6 +3759,7 @@ function RoomContent() {
 
   const handleSeekBack = () => {
     if (!isHost) return;
+    if (isManualSyncModeRef.current) return;
     const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
@@ -3663,6 +3782,7 @@ function RoomContent() {
 
   const handleSeekLiveBack30 = () => {
     if (!isHost) return;
+    if (isManualSyncModeRef.current) return;
     const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
@@ -3685,6 +3805,7 @@ function RoomContent() {
 
   const handleJumpLiveEdge = () => {
     if (!isHost || !isLiveStream) return;
+    if (isManualSyncModeRef.current) return;
     const pr = clearFfIfActive();
     void (async () => {
       const player = getPlayer();
@@ -3708,6 +3829,7 @@ function RoomContent() {
 
   const handleJumpToSyncStart = useCallback(() => {
     if (!isHost || !roomId) return;
+    if (isManualSyncModeRef.current) return;
     const cur = roomStateRef.current;
     if (!cur || cur.angles.length < 2) return;
     const pr = clearFfIfActive();
@@ -3769,6 +3891,7 @@ function RoomContent() {
 
   const handleFocusPipSwap = useCallback(() => {
     if (!isHost || !roomId) return;
+    if (isManualSyncModeRef.current) return;
     const s = roomStateRef.current;
     if (!s || s.angles.length < 2) return;
     if (coachViewModeRef.current !== "multi") return;
@@ -3959,6 +4082,7 @@ function RoomContent() {
   const handleHostScrubCommit = useCallback(
     (targetSec: number) => {
       if (!isHost || !roomId) return;
+      if (isManualSyncModeRef.current) return;
       const cur = roomStateRef.current;
       if (!cur) return;
       const pr = clearFfIfActive();
@@ -5057,6 +5181,11 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
+                    {renderSyncSetupControls({
+                      label: hostMultiAngles.activeAngle.name,
+                      which: "primary",
+                      get: getPlayer,
+                    })}
                   </div>
                   <div
                     className={`${
@@ -5157,6 +5286,15 @@ function RoomContent() {
                         </div>
                       </div>
                     ) : null}
+                    {renderSyncSetupControls({
+                      label: hostMultiAngles.secondaryAngle.name,
+                      which: "secondary",
+                      get: () =>
+                        (secondaryPlayerRef.current?.getInternalPlayer() as
+                          | YouTubePlayer
+                          | null
+                          | undefined),
+                    })}
                   </div>
                 </div>
               ) : (
@@ -5205,6 +5343,11 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
+                    {renderSyncSetupControls({
+                      label: hostMultiAngles.activeAngle.name,
+                      which: "primary",
+                      get: getPlayer,
+                    })}
                   </div>
                   <div
                     className={
@@ -5273,6 +5416,15 @@ function RoomContent() {
                         </div>
                       </div>
                     ) : null}
+                    {renderSyncSetupControls({
+                      label: hostMultiAngles.secondaryAngle.name,
+                      which: "secondary",
+                      get: () =>
+                        (secondaryPlayerRef.current?.getInternalPlayer() as
+                          | YouTubePlayer
+                          | null
+                          | undefined),
+                    })}
                   </div>
                 </div>
               )
@@ -5735,6 +5887,11 @@ function RoomContent() {
                             opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
+                        {renderSyncSetupControls({
+                          label: hostMultiAngles.activeAngle.name,
+                          which: "primary",
+                          get: getPlayer,
+                        })}
                       </div>
                       <div
                         className={`${
@@ -5835,6 +5992,15 @@ function RoomContent() {
                             </div>
                           </div>
                         ) : null}
+                        {renderSyncSetupControls({
+                          label: hostMultiAngles.secondaryAngle.name,
+                          which: "secondary",
+                          get: () =>
+                            (secondaryPlayerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | null
+                              | undefined),
+                        })}
                       </div>
                     </div>
                   ) : (
@@ -5883,6 +6049,11 @@ function RoomContent() {
                             opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
+                        {renderSyncSetupControls({
+                          label: hostMultiAngles.activeAngle.name,
+                          which: "primary",
+                          get: getPlayer,
+                        })}
                       </div>
                       <div
                         className={
@@ -5953,6 +6124,15 @@ function RoomContent() {
                             </div>
                           </div>
                         ) : null}
+                        {renderSyncSetupControls({
+                          label: hostMultiAngles.secondaryAngle.name,
+                          which: "secondary",
+                          get: () =>
+                            (secondaryPlayerRef.current?.getInternalPlayer() as
+                              | YouTubePlayer
+                              | null
+                              | undefined),
+                        })}
                       </div>
                     </div>
                   )
