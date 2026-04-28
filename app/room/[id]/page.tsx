@@ -1356,28 +1356,12 @@ function RoomContent() {
     angleId: string;
     countdownSec: number;
   } | null>(null);
-  /** Host: 2-point manual sync (mark the same real-world moment on two angles). */
+  /** Host: manual sync (user aligns both players, then taps Sync). */
   const [isManualSyncMode, setIsManualSyncMode] = useState(false);
   const isManualSyncModeRef = useRef(false);
   useLayoutEffect(() => {
     isManualSyncModeRef.current = isManualSyncMode;
   }, [isManualSyncMode]);
-  const [manualSyncPoint1, setManualSyncPoint1] = useState<{
-    angleId: string;
-    time: number;
-  } | null>(null);
-  const [manualSyncPoint2, setManualSyncPoint2] = useState<{
-    angleId: string;
-    time: number;
-  } | null>(null);
-  const manualSyncPoint1Ref = useRef<{
-    angleId: string;
-    time: number;
-  } | null>(null);
-  const manualSyncPoint2Ref = useRef<{
-    angleId: string;
-    time: number;
-  } | null>(null);
   /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
   const lastAppliedCommandIdRef = useRef(0);
   const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
@@ -2333,84 +2317,54 @@ function RoomContent() {
 
   const handleManualSyncEnter = useCallback(() => {
     if (!isHost) return;
-    manualSyncPoint1Ref.current = null;
-    manualSyncPoint2Ref.current = null;
-    setManualSyncPoint1(null);
-    setManualSyncPoint2(null);
     setIsManualSyncMode(true);
   }, [isHost]);
 
   const handleManualSyncCancel = useCallback(() => {
-    manualSyncPoint1Ref.current = null;
-    manualSyncPoint2Ref.current = null;
-    setManualSyncPoint1(null);
-    setManualSyncPoint2(null);
     setIsManualSyncMode(false);
   }, []);
 
-  const handleManualSyncSetPoint1 = useCallback(() => {
-    if (!isHost || !isManualSyncMode) return;
-    void (async () => {
-      const cur = roomStateRef.current;
-      if (!cur || cur.angles.length < 2) return;
-      const player = getPlayer();
-      const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
-      if (!Number.isFinite(t)) return;
-      const p = { angleId: cur.currentAngleId, time: t };
-      manualSyncPoint1Ref.current = p;
-      manualSyncPoint2Ref.current = null;
-      setManualSyncPoint1(p);
-      setManualSyncPoint2(null);
-    })();
-  }, [isHost, isManualSyncMode]);
-
-  const handleManualSyncSetPoint2 = useCallback(() => {
+  const handleManualSyncTheseAngles = useCallback(() => {
     if (!isHost || !isManualSyncMode) return;
     void (async () => {
       const rr = roomRefForWrite.current;
       const cur = roomStateRef.current;
       if (!rr || !cur || cur.angles.length < 2) return;
-      const A = manualSyncPoint1Ref.current;
-      if (!A) {
-        showHostNotice("Set Point 1 first (same angle twice is not allowed).");
+      if (coachViewModeRef.current !== "multi") {
+        showHostNotice("Switch to Multi View to sync angles.");
         return;
       }
-      if (cur.currentAngleId === A.angleId) {
-        showHostNotice(
-          "Switch to the other angle, scrub to the same moment, then Set Point 2.",
-        );
-        return;
-      }
-      const player = getPlayer();
-      const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
-      if (!Number.isFinite(t)) return;
-      const B = { angleId: cur.currentAngleId, time: t };
 
-      const offsetB = B.time - A.time;
-      if (!Number.isFinite(offsetB)) return;
+      const primary = getPlayer();
+      const secondary =
+        secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+      if (!primary || !secondary) return;
 
-      const hit = cur.angles.find((a) => a.id === B.angleId);
-      if (!hit) {
-        showHostNotice("Could not find that angle to update.");
-        return;
-      }
+      const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const secondaryAngle =
+        cur.angles.find((a) => a.id !== activeAngle.id) ?? null;
+      if (!secondaryAngle) return;
+      if (secondaryAngle.id === activeAngle.id) return;
+
+      const fb = cur.currentTime ?? 0;
+      const activeAngleTime = await readYoutubeCurrentTime(primary, fb);
+      const secondaryAngleTime = await readYoutubeCurrentTime(secondary, fb);
+      if (!Number.isFinite(activeAngleTime) || !Number.isFinite(secondaryAngleTime)) return;
+
+      const offsetFromGameTime = secondaryAngleTime - activeAngleTime;
+      if (!Number.isFinite(offsetFromGameTime)) return;
 
       const nextAngles: VideoAngle[] = cur.angles.map((a) => {
-        if (a.id === B.angleId) {
+        if (a.id === secondaryAngle.id) {
           return {
             ...a,
-            offsetFromGameTime: offsetB,
+            offsetFromGameTime,
             autoOffsetSource: "manual" as const,
           };
-        }
-        if (a.id === A.angleId) {
-          return { ...a, autoOffsetSource: "manual" as const };
         }
         return { ...a };
       });
 
-      setManualSyncPoint2(B);
-      manualSyncPoint2Ref.current = B;
       try {
         await update(rr, {
           angles: nextAngles,
@@ -2420,40 +2374,18 @@ function RoomContent() {
         });
       } catch {
         showHostNotice("Manual sync failed to save. Try again.");
-        setManualSyncPoint2(null);
-        manualSyncPoint2Ref.current = null;
         return;
       }
 
       syncSecondaryPlayersOnce("manual-sync");
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: activeAngleTime,
+        isPlaying: cur.isPlaying,
+        playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+        reason: "manual-sync",
+      });
 
-      const angleB = nextAngles.find((a) => a.id === B.angleId);
-      const fb = cur.currentTime ?? 0;
-      const playerT = await readYoutubeCurrentTime(player, fb);
-      const rawB =
-        angleB !== undefined
-          ? playbackTimeForAngleFromActiveAnchor(playerT, angleB)
-          : 0;
-
-      let notice = `Angles synced (offset ${offsetB.toFixed(1)}s).`;
-      if (angleB !== undefined && rawB < 0) {
-        notice += ` This angle starts later (${(-rawB).toFixed(1)}s).`;
-      }
-      const act = pickAngle(nextAngles, cur.currentAngleId);
-      const sec = nextAngles.find((a) => a.id !== act.id);
-      const floor =
-        sec !== undefined
-          ? sharedMultiAngleArchivePlaybackFloor(act, sec)
-          : 0;
-      if (floor > 0.25 && playerT < floor - 0.25) {
-        notice += ` Both angles align from ${formatCountdownMmSs(floor)} on the active feed. Use Jump to Sync Start.`;
-      }
-      showHostNotice(notice);
-
-      manualSyncPoint1Ref.current = null;
-      manualSyncPoint2Ref.current = null;
-      setManualSyncPoint1(null);
-      setManualSyncPoint2(null);
+      showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
       setIsManualSyncMode(false);
     })();
   }, [
@@ -2461,6 +2393,7 @@ function RoomContent() {
     isManualSyncMode,
     showHostNotice,
     syncSecondaryPlayersOnce,
+    applyHostMultiViewSecondaryDirect,
   ]);
 
   /** Detect YouTube live / DVR window: duration increases while the player is playing. */
@@ -4714,28 +4647,15 @@ function RoomContent() {
                 ) : (
                   <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto">
                     <p className="max-w-md text-[11px] leading-snug text-zinc-400">
-                      {!manualSyncPoint1
-                        ? "Step 1: Pause first angle and click Set Point 1"
-                        : "Step 2: Switch angle, scrub to same moment, click Set Point 2"}
+                      Scrub both angles to the same moment, then sync.
                     </p>
-                    <span className="hidden" aria-hidden>
-                      {`${manualSyncPoint1?.angleId ?? ""}|${manualSyncPoint1?.time ?? ""}|${manualSyncPoint2?.angleId ?? ""}|${manualSyncPoint2?.time ?? ""}`}
-                    </span>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={handleManualSyncSetPoint1}
+                        onClick={() => void handleManualSyncTheseAngles()}
                         className={secondaryHostBtn}
                       >
-                        Set Point 1
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!manualSyncPoint1}
-                        onClick={() => void handleManualSyncSetPoint2()}
-                        className={secondaryHostBtn}
-                      >
-                        Set Point 2
+                        Sync These Angles
                       </button>
                       <button
                         type="button"
