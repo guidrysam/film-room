@@ -1786,7 +1786,9 @@ function RoomContent() {
     const secondaryAngle =
       roomState.angles.find((a) => a.id !== activeAngle.id) ?? roomState.angles[0]!;
     const anchorTime = getSafeAnchorTime(roomState.currentTime, roomState);
-    const tPrimary = Math.max(0, anchorTime + (activeAngle.offsetFromGameTime ?? 0));
+    // `anchorTime` is defined as the active angle playback time (hard model),
+    // so the primary player should always seek to `anchorTime` (not + its offset).
+    const tPrimary = Math.max(0, anchorTime);
     const tSecondary = Math.max(
       0,
       anchorTime + (secondaryAngle.offsetFromGameTime ?? 0),
@@ -1939,10 +1941,8 @@ function RoomContent() {
               const secondaryAngle =
                 state.angles.find((a) => a.id !== activeAngle.id) ?? state.angles[0]!;
               const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, state);
-              const tPrimary = Math.max(
-                0,
-                anchorTime + (activeAngle.offsetFromGameTime ?? 0),
-              );
+              // Primary is the active angle; anchorTime is already in that angle's clock.
+              const tPrimary = Math.max(0, anchorTime);
               const tSecondary = Math.max(
                 0,
                 anchorTime + (secondaryAngle.offsetFromGameTime ?? 0),
@@ -2562,7 +2562,8 @@ function RoomContent() {
       }
 
       // Seek both players to the shared sync start and pause.
-      const primaryTarget = Math.max(0, commonStartTime + (activeAngle.offsetFromGameTime ?? 0));
+      // After sync: shared start is `commonStartTime` on the active angle.
+      const primaryTarget = Math.max(0, commonStartTime);
       const secondaryTarget = Math.max(0, commonStartTime + offsetFromGameTime);
       try {
         primary.seekTo?.(primaryTarget, true);
