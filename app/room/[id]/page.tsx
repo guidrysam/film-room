@@ -83,7 +83,7 @@ function YoutubePointerGate({
     >
       {children}
       <div
-        className={`pointer-overlay absolute inset-0 z-[16] ${
+        className={`pointer-overlay absolute inset-0 z-[16] bg-transparent ${
           blockOn ? "pointer-events-auto" : "pointer-events-none"
         }`}
         onPointerDown={(e) => {
@@ -4765,6 +4765,11 @@ function RoomContent() {
     const secondaryAngle =
       s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
     const viewerStackTopAngleId = resolveViewerStackTopAngleId(s);
+    const viewerStackTopResolvedId = s.angles.some((x) => x.id === viewerStackTopAngleId)
+      ? viewerStackTopAngleId
+      : s.angles[0]!.id;
+    const viewerTopAngleForLabel =
+      s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
 
     return (
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
@@ -5014,17 +5019,26 @@ function RoomContent() {
               ) : null}
             </div>
             <div className="relative aspect-video w-full overflow-hidden bg-black">
+              {roomId && !isHost && multi ? (
+                <TelestratorOverlay
+                  roomId={roomId}
+                  isHost={isHost}
+                  drawEnabled={telDrawOn}
+                  wrapClassName="pointer-events-none absolute inset-0 z-[5]"
+                />
+              ) : null}
               {!isHost && multi ? (
-                <div className="absolute inset-0">
+                <div className="absolute inset-0 z-[18]">
                   {s.angles.map((a) => {
-                    const top = a.id === viewerStackTopAngleId;
+                    const top = a.id === viewerStackTopResolvedId;
                     return (
                       <div
                         key={a.id}
-                        className={`absolute inset-0 transition-opacity duration-150 ${
-                          top ? "z-20 opacity-100" : "z-10 opacity-0"
+                        className={`absolute inset-0 transition-opacity duration-150 ease-out ${
+                          top
+                            ? "z-[30] opacity-100 visible pointer-events-auto"
+                            : "z-10 opacity-0 invisible pointer-events-none"
                         }`}
-                        style={{ pointerEvents: top ? "auto" : "none" }}
                       >
                         <YoutubePointerGate drawOn={false} blockOn={false}>
                           <YouTube
@@ -5033,7 +5047,7 @@ function RoomContent() {
                               viewerAnglePlayersRef.current[a.id] =
                                 e.target as YouTubePlayer;
                               try {
-                                if (a.id === viewerStackTopAngleId) {
+                                if (a.id === viewerStackTopResolvedId) {
                                   e.target.unMute?.();
                                 } else {
                                   e.target.mute?.();
@@ -5050,6 +5064,9 @@ function RoomContent() {
                       </div>
                     );
                   })}
+                  <div className="pointer-events-none absolute left-2 top-2 z-[40] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
+                    Viewer angle: {viewerTopAngleForLabel.name}
+                  </div>
                 </div>
               ) : (
                 <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
@@ -5065,7 +5082,7 @@ function RoomContent() {
                   />
                 </YoutubePointerGate>
               )}
-              {roomId ? (
+              {roomId && (isHost || !multi) ? (
                 <TelestratorOverlay
                   roomId={roomId}
                   isHost={isHost}
