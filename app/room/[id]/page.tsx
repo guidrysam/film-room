@@ -1169,6 +1169,10 @@ function RoomContent() {
     "grid",
   );
   const [roomViewMode, setRoomViewMode] = useState<"clip" | "sync">("clip");
+  const roomViewModeRef = useRef(roomViewMode);
+  useLayoutEffect(() => {
+    roomViewModeRef.current = roomViewMode;
+  }, [roomViewMode]);
   /** Host-only (Focus layout): which angle is currently "active" for controls + audio without reloading iframes. */
   const [hostFocusAngleId, setHostFocusAngleId] = useState<string | null>(null);
   const hostFocusAngleIdRef = useRef<string | null>(null);
@@ -1904,6 +1908,7 @@ function RoomContent() {
   }, [isHost, roomState, coachViewMode]);
 
   const syncSecondaryPlayersOnce = useCallback((reason: string) => {
+    if (roomViewModeRef.current !== "sync") return;
     if (isManualSyncModeRef.current) return;
     if (!isHostRef.current) return;
     if (coachViewModeRef.current !== "multi") return;
@@ -2027,6 +2032,7 @@ function RoomContent() {
       reason: string;
       allowWhileManualSync?: boolean;
     }) => {
+      if (roomViewModeRef.current !== "sync") return;
       if (!opts.allowWhileManualSync && isManualSyncModeRef.current) return;
       if (!isHostRef.current) return;
       if (coachViewModeRef.current !== "multi") return;
@@ -2710,7 +2716,9 @@ function RoomContent() {
       if (!rr || !isHostRef.current || !roomId) return;
       const s = roomStateRef.current;
       const safeAnchorTime =
-        s !== null ? getSafeAnchorTime(fields.currentTime, s) : fields.currentTime;
+        s !== null && roomViewModeRef.current === "sync"
+          ? getSafeAnchorTime(fields.currentTime, s)
+          : fields.currentTime;
       hostActionSeqRef.current += 1;
       const commandId = hostActionSeqRef.current;
       const activeVideoId =
@@ -4058,7 +4066,8 @@ function RoomContent() {
       if (!cur) return;
       const pr = clearFfIfActive();
       const wasPlaying = cur.isPlaying;
-      const syncAnchorTime = cur.syncAnchorTime ?? 0;
+      const syncAnchorTime =
+        roomViewModeRef.current === "sync" ? (cur.syncAnchorTime ?? 0) : 0;
       const clamped = Math.max(syncAnchorTime, targetSec);
 
       writeImmediatePlaybackCommand("seek", {
@@ -4088,12 +4097,14 @@ function RoomContent() {
         }
       }
 
-      applyHostMultiViewSecondaryDirect({
-        primaryAnchorTime: clamped,
-        isPlaying: wasPlaying,
-        playbackRate: pr,
-        reason: "scrub",
-      });
+      if (roomViewModeRef.current === "sync") {
+        applyHostMultiViewSecondaryDirect({
+          primaryAnchorTime: clamped,
+          isPlaying: wasPlaying,
+          playbackRate: pr,
+          reason: "scrub",
+        });
+      }
     },
     [
       isHost,
@@ -4498,6 +4509,7 @@ function RoomContent() {
 
   const hostMultiAngles =
     isHost &&
+    roomViewMode === "sync" &&
     coachViewMode === "multi" &&
     roomState &&
     roomState.angles.length > 1
@@ -4916,9 +4928,13 @@ function RoomContent() {
           ) : null}
         </div>
 
-        {synced && isHost ? (
+        {isHost ? (
           <div className="mt-4 w-full">
-            <div className={hostControlsBar}>
+            <div
+              className={`${hostControlsBar} ${
+                isManualSyncMode ? "pointer-events-none opacity-35" : ""
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => (roomState?.isPlaying ? handlePause() : handlePlay())}
@@ -4932,15 +4948,77 @@ function RoomContent() {
               <button type="button" onClick={handleSeekBack} className={hostChip}>
                 -10s
               </button>
-              <button type="button" onClick={() => void handleMarkPlay()} className={hostChip}>
-                Mark Play
+              <button
+                type="button"
+                onClick={() => void handleMarkPlay()}
+                className={`${hostChip} ${
+                  markPlayState === "marked"
+                    ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                    : ""
+                }`}
+              >
+                {markPlayState === "marked" ? "Marked" : "Mark Play"}
               </button>
               {isLiveStream ? (
-                <button type="button" onClick={handleJumpLiveEdge} className={hostChipSync}>
+                <button
+                  type="button"
+                  onClick={handleJumpLiveEdge}
+                  className={`${hostChipSync} border-red-500/35 font-semibold text-red-100`}
+                >
                   LIVE
                 </button>
               ) : null}
+              {showResetSyncBtn ? (
+                <button type="button" onClick={handleResetManualSyncLock} className={hostChip}>
+                  Reset Sync
+                </button>
+              ) : null}
             </div>
+            {isHost && (uiDuration ?? 0) > 0.25 ? (
+              <div
+                className={`mt-2 w-full ${
+                  isManualSyncMode ? "pointer-events-none opacity-35" : ""
+                }`}
+              >
+                <div className="flex items-center justify-between px-1 text-[10px] font-medium text-zinc-300">
+                  <span className="font-mono tabular-nums">
+                    {formatCountdownMmSs(hostScrubDraft ?? uiPlaybackTime ?? 0)}
+                  </span>
+                  <span className="font-mono tabular-nums text-zinc-400">
+                    {formatCountdownMmSs(uiDuration ?? 0)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={uiDuration ?? 0}
+                  step={0.05}
+                  value={hostScrubDraft ?? uiPlaybackTime ?? 0}
+                  onPointerDown={() => {
+                    hostScrubActiveRef.current = true;
+                  }}
+                  onPointerUp={() => {
+                    hostScrubActiveRef.current = false;
+                    if (hostScrubDraft !== null) {
+                      handleHostScrubCommit(hostScrubDraft);
+                      setHostScrubDraft(null);
+                    }
+                  }}
+                  onTouchEnd={() => {
+                    hostScrubActiveRef.current = false;
+                    if (hostScrubDraft !== null) {
+                      handleHostScrubCommit(hostScrubDraft);
+                      setHostScrubDraft(null);
+                    }
+                  }}
+                  onChange={(e) => {
+                    const v = Number.parseFloat(e.target.value);
+                    if (Number.isFinite(v)) setHostScrubDraft(v);
+                  }}
+                  className="mt-1 w-full accent-blue-500"
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -4991,7 +5069,16 @@ function RoomContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setRoomViewMode("sync")}
+                  onClick={() => {
+                    roomViewModeRef.current = "sync";
+                    setRoomViewMode("sync");
+                    const s = roomStateRef.current;
+                    const syncAnchor = s?.syncAnchorTime ?? 0;
+                    const synced = syncAnchor > 0 || s?.manualSyncLocked === true;
+                    if (synced && isHost && syncAnchor > 0) {
+                      window.setTimeout(() => handleHostScrubCommit(syncAnchor), 0);
+                    }
+                  }}
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                     roomViewMode === "sync"
                       ? "bg-blue-600/40 text-white"
