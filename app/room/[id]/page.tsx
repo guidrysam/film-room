@@ -2328,6 +2328,9 @@ function RoomContent() {
 
   const handleManualSyncEnter = useCallback(() => {
     if (!isHost) return;
+    // Sync setup requires both players mounted/visible.
+    setCoachViewMode("multi");
+    setCoachMultiLayout("grid");
     setIsManualSyncMode(true);
   }, [isHost]);
 
@@ -2468,22 +2471,56 @@ function RoomContent() {
                 {formatChapterTime(t)} / {formatChapterTime(safeD)}
               </div>
             </div>
-            <button
-              type="button"
-              className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-              onClick={() => {
-                const p = opts.get();
-                if (!p) return;
-                try {
-                  if (playing) p.pauseVideo?.();
-                  else p.playVideo?.();
-                } catch {
-                  /* YouTube API */
-                }
-              }}
-            >
-              {playing ? "Pause" : "Play"}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                onClick={() => {
+                  const p = opts.get();
+                  if (!p) return;
+                  try {
+                    if (playing) p.pauseVideo?.();
+                    else p.playVideo?.();
+                  } catch {
+                    /* YouTube API */
+                  }
+                }}
+              >
+                {playing ? "Pause" : "Play"}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                onClick={() => {
+                  const p = opts.get();
+                  if (!p) return;
+                  try {
+                    p.seekTo?.(Math.max(0, t - 10), true);
+                  } catch {
+                    /* YouTube API */
+                  }
+                }}
+                title="-10s (this angle only)"
+              >
+                -10
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                onClick={() => {
+                  const p = opts.get();
+                  if (!p) return;
+                  try {
+                    p.seekTo?.(Math.max(0, t + 10), true);
+                  } catch {
+                    /* YouTube API */
+                  }
+                }}
+                title="+10s (this angle only)"
+              >
+                +10
+              </button>
+            </div>
           </div>
           <input
             type="range"
@@ -4770,9 +4807,11 @@ function RoomContent() {
                   </button>
                 ) : (
                   <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto">
-                    <p className="max-w-md text-[11px] leading-snug text-zinc-400">
-                      Scrub both angles to the same moment, then sync.
-                    </p>
+                    <div className="max-w-md rounded-lg border border-amber-500/15 bg-amber-950/20 px-3 py-2 text-[11px] font-medium text-amber-100/90">
+                      <span className="font-semibold">Sync Setup Mode:</span>{" "}
+                      position both videos to the same moment, then click{" "}
+                      <span className="font-semibold">Sync These Angles</span>.
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -5488,7 +5527,16 @@ function RoomContent() {
                     {liveBehindSec < 2.5 ? "LIVE" : `-${Math.round(liveBehindSec)}s`}
                   </span>
                 ) : null}
-                <div ref={hostControlsRef} className={hostControlsBarClean}>
+                <div
+                  className={isManualSyncMode ? "w-full" : ""}
+                  aria-hidden={isManualSyncMode}
+                >
+                  <div
+                    ref={hostControlsRef}
+                    className={`${hostControlsBarClean} ${
+                      isManualSyncMode ? "pointer-events-none opacity-35" : ""
+                    }`}
+                  >
                   <button
                     type="button"
                     onClick={() =>
@@ -5557,50 +5605,60 @@ function RoomContent() {
                       Jump to Sync Start
                     </button>
                   ) : null}
-                </div>
-                {isHost && (uiDuration ?? 0) > 0.25 ? (
-                  <div className="mt-1 w-full max-w-none px-1">
-                    <div className="flex items-center justify-between text-[10px] font-medium text-zinc-300">
-                      <span className="font-mono tabular-nums">
-                        {formatCountdownMmSs(
-                          hostScrubDraft ?? uiPlaybackTime ?? 0,
-                        )}
-                      </span>
-                      <span className="font-mono tabular-nums text-zinc-400">
-                        {formatCountdownMmSs(uiDuration ?? 0)}
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={uiDuration ?? 0}
-                      step={0.05}
-                      value={hostScrubDraft ?? uiPlaybackTime ?? 0}
-                      onPointerDown={() => {
-                        hostScrubActiveRef.current = true;
-                      }}
-                      onPointerUp={() => {
-                        hostScrubActiveRef.current = false;
-                        if (hostScrubDraft !== null) {
-                          handleHostScrubCommit(hostScrubDraft);
-                          setHostScrubDraft(null);
-                        }
-                      }}
-                      onTouchEnd={() => {
-                        hostScrubActiveRef.current = false;
-                        if (hostScrubDraft !== null) {
-                          handleHostScrubCommit(hostScrubDraft);
-                          setHostScrubDraft(null);
-                        }
-                      }}
-                      onChange={(e) => {
-                        const v = Number.parseFloat(e.target.value);
-                        if (Number.isFinite(v)) setHostScrubDraft(v);
-                      }}
-                      className="mt-1 w-full accent-blue-500"
-                    />
                   </div>
-                ) : null}
+                  {isManualSyncMode ? (
+                    <div className="mt-1 w-full rounded-lg border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-[11px] font-medium text-amber-100/90">
+                      Sync Setup Mode is active — shared controls are temporarily disabled.
+                    </div>
+                  ) : null}
+                  {isHost && (uiDuration ?? 0) > 0.25 ? (
+                    <div
+                      className={`mt-1 w-full max-w-none px-1 ${
+                        isManualSyncMode ? "pointer-events-none opacity-35" : ""
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[10px] font-medium text-zinc-300">
+                        <span className="font-mono tabular-nums">
+                          {formatCountdownMmSs(
+                            hostScrubDraft ?? uiPlaybackTime ?? 0,
+                          )}
+                        </span>
+                        <span className="font-mono tabular-nums text-zinc-400">
+                          {formatCountdownMmSs(uiDuration ?? 0)}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={uiDuration ?? 0}
+                        step={0.05}
+                        value={hostScrubDraft ?? uiPlaybackTime ?? 0}
+                        onPointerDown={() => {
+                          hostScrubActiveRef.current = true;
+                        }}
+                        onPointerUp={() => {
+                          hostScrubActiveRef.current = false;
+                          if (hostScrubDraft !== null) {
+                            handleHostScrubCommit(hostScrubDraft);
+                            setHostScrubDraft(null);
+                          }
+                        }}
+                        onTouchEnd={() => {
+                          hostScrubActiveRef.current = false;
+                          if (hostScrubDraft !== null) {
+                            handleHostScrubCommit(hostScrubDraft);
+                            setHostScrubDraft(null);
+                          }
+                        }}
+                        onChange={(e) => {
+                          const v = Number.parseFloat(e.target.value);
+                          if (Number.isFinite(v)) setHostScrubDraft(v);
+                        }}
+                        className="mt-1 w-full accent-blue-500"
+                      />
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
             </div>
@@ -5618,7 +5676,16 @@ function RoomContent() {
                           : `-${Math.round(liveBehindSec)}s`}
                       </span>
                     ) : null}
-                    <div ref={hostControlsRef} className={hostControlsBar}>
+                    <div
+                      className={isManualSyncMode ? "w-full" : ""}
+                      aria-hidden={isManualSyncMode}
+                    >
+                      <div
+                        ref={hostControlsRef}
+                        className={`${hostControlsBar} ${
+                          isManualSyncMode ? "pointer-events-none opacity-35" : ""
+                        }`}
+                      >
                       <button
                         type="button"
                         onClick={() =>
@@ -5739,6 +5806,12 @@ function RoomContent() {
                       >
                         Clear
                       </button>
+                      </div>
+                      {isManualSyncMode ? (
+                        <div className="mt-1 w-full rounded-lg border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-[11px] font-medium text-amber-100/90">
+                          Sync Setup Mode is active — shared controls are temporarily disabled.
+                        </div>
+                      ) : null}
                     </div>
                     {isHost && (uiDuration ?? 0) > 0.25 ? (
                       <div className="mt-2 w-full">
