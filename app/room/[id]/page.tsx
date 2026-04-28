@@ -194,6 +194,8 @@ type RoomState = {
   actionId: number;
   /** Latest immediate transport for play/pause/seek (reconcile uses `action: sync` separately). */
   playbackCommand: PlaybackCommand | null;
+  /** Earliest shared time where all angles exist (seconds). Host clamps all transport to >= this. */
+  syncAnchorTime?: number;
   chapters: ChapterEntry[];
   /** Camera angles; synthesized as a single default angle when absent from RTDB. */
   angles: VideoAngle[];
@@ -500,6 +502,11 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     typeof manualSyncAtRaw === "number" && Number.isFinite(manualSyncAtRaw)
       ? manualSyncAtRaw
       : undefined;
+  const syncAnchorTimeRaw = val.syncAnchorTime;
+  const syncAnchorTime =
+    typeof syncAnchorTimeRaw === "number" && Number.isFinite(syncAnchorTimeRaw)
+      ? Math.max(0, syncAnchorTimeRaw)
+      : 0;
 
   return {
     videoId: activeVideoId,
@@ -512,6 +519,7 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     action: parseTransportAction(val.action),
     actionId: typeof val.actionId === "number" ? val.actionId : 0,
     playbackCommand: parsePlaybackCommand(val.playbackCommand),
+    ...(syncAnchorTime > 0 ? { syncAnchorTime } : {}),
     chapters: parseChapters(val.chapters),
     angles,
     currentAngleId,
@@ -2083,6 +2091,7 @@ function RoomContent() {
       } catch {
         return;
       }
+      anchor = Math.max(anchor, s.syncAnchorTime ?? 0);
       const rawSecondary = playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle);
 
       if (rawSecondary < 0) {
@@ -2199,7 +2208,7 @@ function RoomContent() {
         const secondaryAngle =
           s2.angles.find((a) => a.id !== activeAngle.id) ?? s2.angles[0]!;
 
-        const anchor = opts.primaryAnchorTime;
+        const anchor = Math.max(opts.primaryAnchorTime, s2.syncAnchorTime ?? 0);
         const rawSecondary = playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle);
 
         if (rawSecondary < 0) {
@@ -2379,11 +2388,38 @@ function RoomContent() {
         return { ...a };
       });
 
+      // Compute common sync start time from all offsets (latest stream becomes time zero).
+      let commonStartTime = 0;
+      for (const a of nextAngles) {
+        const off = a.offsetFromGameTime ?? 0;
+        const startOffset = Math.max(0, -off);
+        commonStartTime = Math.max(commonStartTime, startOffset);
+      }
+
+      // Write a paused seek to the new sync anchor so everyone snaps to the shared start.
+      hostActionSeqRef.current += 1;
+      const commandId = hostActionSeqRef.current;
+      const playbackCommand: PlaybackCommand = {
+        type: "seek",
+        roomId,
+        activeVideoId: cur.videoId,
+        issuedAt: Date.now(),
+        anchorVideoTime: commonStartTime,
+        playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+        commandId,
+      };
+
       try {
         await update(rr, {
           angles: nextAngles,
+          syncAnchorTime: commonStartTime,
+          currentTime: commonStartTime,
+          isPlaying: false,
           manualSyncLocked: true,
           manualSyncAt: Date.now(),
+          playbackCommand,
+          action: "seek",
+          actionId: commandId,
           updatedAt: serverTimestamp(),
         });
       } catch {
@@ -2391,23 +2427,30 @@ function RoomContent() {
         return;
       }
 
+      // Seek both players to the shared sync start and pause.
+      const primaryTarget = Math.max(0, commonStartTime + (activeAngle.offsetFromGameTime ?? 0));
+      const secondaryTarget = Math.max(0, commonStartTime + offsetFromGameTime);
+      try {
+        primary.seekTo?.(primaryTarget, true);
+        primary.pauseVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        secondary.seekTo?.(secondaryTarget, true);
+        secondary.pauseVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+
       showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
       setIsManualSyncMode(false);
-
-      // Apply once now that offsets are saved.
-      applyHostMultiViewSecondaryDirect({
-        primaryAnchorTime: activeAngleTime,
-        isPlaying: cur.isPlaying,
-        playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
-        reason: "manual-sync",
-        allowWhileManualSync: true,
-      });
     })();
   }, [
     isHost,
     isManualSyncMode,
     showHostNotice,
-    applyHostMultiViewSecondaryDirect,
+    roomId,
   ]);
 
   // Manual sync setup: expose independent per-angle controls + keep local times fresh.
@@ -2446,6 +2489,43 @@ function RoomContent() {
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
   }, [isHost, coachViewMode, isManualSyncMode]);
+
+  // Light drift correction: every ~10s while playing, nudge secondary if drift > 2s.
+  useEffect(() => {
+    if (!isHost || isManualSyncMode) return;
+    if (coachViewMode !== "multi") return;
+    if (!roomState?.isPlaying) return;
+    if (!roomState.angles?.length || roomState.angles.length < 2) return;
+    const id = window.setInterval(() => {
+      const s = roomStateRef.current;
+      if (!s?.isPlaying) return;
+      const primary = getPlayer();
+      const secondary =
+        secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+      if (!primary || !secondary) return;
+      const activeAngle = pickAngle(s.angles, s.currentAngleId);
+      const secondaryAngle =
+        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+      const fb = s.currentTime ?? 0;
+      void (async () => {
+        let anchor = await readYoutubeCurrentTime(primary, fb);
+        anchor = Math.max(anchor, s.syncAnchorTime ?? 0);
+        const expected = Math.max(
+          0,
+          playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle),
+        );
+        const actual = await readYoutubeCurrentTime(secondary, expected);
+        if (!Number.isFinite(actual)) return;
+        if (Math.abs(actual - expected) <= 2) return;
+        try {
+          secondary.seekTo?.(expected, true);
+        } catch {
+          /* YouTube API */
+        }
+      })();
+    }, 10_000);
+    return () => window.clearInterval(id);
+  }, [isHost, isManualSyncMode, coachViewMode, roomState]);
 
   const renderSyncSetupControls = useCallback(
     (opts: {
@@ -3398,12 +3478,10 @@ function RoomContent() {
         const player = getPlayer();
         const st = await readYoutubePlayerState(player);
         const wasPlaying = youtubeStateImpliesPlaying(st);
-        const t = await readYoutubeCurrentTime(
-          player,
-          cur.currentTime ?? 0,
-        );
         const pr = clearFfIfActive();
-        const rawNext = playbackTimeForAngleFromActiveAnchor(t, nextAngle);
+        const syncAnchorTime = cur.syncAnchorTime ?? 0;
+        const anchorTime = Math.max(cur.currentTime ?? 0, syncAnchorTime);
+        const rawNext = playbackTimeForAngleFromActiveAnchor(anchorTime, nextAngle);
         const lp = player as YouTubePlayer & {
           loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
           cueVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
@@ -3756,7 +3834,9 @@ function RoomContent() {
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
-      const t = await readYoutubeCurrentTime(player, fb);
+      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const tRaw = await readYoutubeCurrentTime(player, fb);
+      const t = Math.max(tRaw, syncAnchorTime);
       syncLog("host Play transport", {
         anchorTime: t,
         playbackRate: pr,
@@ -3782,7 +3862,9 @@ function RoomContent() {
     void (async () => {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
-      const t = await readYoutubeCurrentTime(player, fb);
+      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const tRaw = await readYoutubeCurrentTime(player, fb);
+      const t = Math.max(tRaw, syncAnchorTime);
       writeImmediatePlaybackCommand("pause", {
         isPlaying: false,
         currentTime: t,
@@ -3805,7 +3887,9 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const playing = roomStateRef.current?.isPlaying ?? false;
-      const clamped = await clampHostSeekBackwardSeconds(player, fb, 10);
+      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const back = await clampHostSeekBackwardSeconds(player, fb, 10);
+      const clamped = Math.max(syncAnchorTime, back);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -3828,7 +3912,9 @@ function RoomContent() {
       const player = getPlayer();
       const fb = roomStateRef.current?.currentTime ?? 0;
       const playing = roomStateRef.current?.isPlaying ?? false;
-      const clamped = await clampHostSeekBackwardSeconds(player, fb, 30);
+      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const back = await clampHostSeekBackwardSeconds(player, fb, 30);
+      const clamped = Math.max(syncAnchorTime, back);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -3852,7 +3938,8 @@ function RoomContent() {
       const fb = roomStateRef.current?.currentTime ?? 0;
       const playing = roomStateRef.current?.isPlaying ?? false;
       const edge = await readLiveEdgeTime(player, fb);
-      const clamped = Math.max(0, edge - LIVE_EDGE_CLAMP_PAD_S);
+      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const clamped = Math.max(syncAnchorTime, edge - LIVE_EDGE_CLAMP_PAD_S);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -3876,9 +3963,10 @@ function RoomContent() {
     const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
     const secondaryAngle =
       cur.angles.find((a) => a.id !== activeAngle.id) ?? cur.angles[0]!;
-    const activeTarget = sharedMultiAngleArchivePlaybackFloor(
-      activeAngle,
-      secondaryAngle,
+    const syncAnchorTime = cur.syncAnchorTime ?? 0;
+    const activeTarget = Math.max(
+      syncAnchorTime,
+      sharedMultiAngleArchivePlaybackFloor(activeAngle, secondaryAngle),
     );
     const secondaryTarget = Math.max(
       0,
@@ -3948,9 +4036,9 @@ function RoomContent() {
     if (!primary || !pip) return;
 
     void (async () => {
-      const SEEK_EPS = 0.75;
-      const fb = s.currentTime ?? 0;
-      const tActive = await readYoutubeCurrentTime(primary, fb);
+      const SEEK_EPS = 1.0;
+      const syncAnchorTime = s.syncAnchorTime ?? 0;
+      const tActive = Math.max(s.currentTime ?? 0, syncAnchorTime);
       const swapped = hostFocusAngleIdRef.current === pipAngle.id;
       const nextActiveAngle = swapped ? activeAngle : pipAngle;
       const nextPipAngle = swapped ? pipAngle : activeAngle;
@@ -3999,14 +4087,14 @@ function RoomContent() {
         /* player not ready */
       }
 
-      if (Math.abs(activeNow - nextActiveT) > SEEK_EPS) {
+      if (Math.abs(activeNow - nextActiveT) >= SEEK_EPS) {
         try {
           activePlayer.seekTo?.(nextActiveT, true);
         } catch {
           /* YouTube API */
         }
       }
-      if (Math.abs(pipNow - nextPipT) > SEEK_EPS) {
+      if (Math.abs(pipNow - nextPipT) >= SEEK_EPS) {
         try {
           pipPlayer.seekTo?.(nextPipT, true);
         } catch {
@@ -4060,7 +4148,7 @@ function RoomContent() {
       // Layout-only swap: keep roomState currentAngleId/videoId unchanged to avoid iframe reload.
       setHostFocusAngleId(swapped ? null : pipAngle.id);
 
-      // Ensure secondary stays aligned to the session's active angle (still roomState.currentAngleId).
+      // Ensure secondary stays aligned to the shared anchor clock (roomState.currentTime).
       applyHostMultiViewSecondaryDirect({
         primaryAnchorTime: tActive,
         isPlaying: wasPlaying,
@@ -4127,7 +4215,8 @@ function RoomContent() {
       if (!cur) return;
       const pr = clearFfIfActive();
       const wasPlaying = cur.isPlaying;
-      const clamped = Math.max(0, targetSec);
+      const syncAnchorTime = cur.syncAnchorTime ?? 0;
+      const clamped = Math.max(syncAnchorTime, targetSec);
 
       writeImmediatePlaybackCommand("seek", {
         currentTime: clamped,
@@ -4652,6 +4741,265 @@ function RoomContent() {
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
+  const syncModeActive = Boolean(isHost && isManualSyncMode && roomState && !cleanMode);
+
+  if (syncModeActive) {
+    const s = roomState!;
+    const activeAngle = pickAngle(s.angles, s.currentAngleId);
+    const secondaryAngle =
+      s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+
+    return (
+      <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={handleManualSyncCancel}
+            className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            ← Back to Room
+          </button>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-sm font-semibold text-zinc-100">
+              Film Room
+            </span>
+            <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
+              Host
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className={secondaryHostBtn}>
+              Invite
+            </button>
+            <button type="button" className={secondaryHostBtn}>
+              Settings
+            </button>
+            <button
+              type="button"
+              onClick={handleReturnHome}
+              className="rounded-lg border border-red-500/35 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-100 transition hover:border-red-400/45 hover:bg-red-950/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40"
+            >
+              Leave Room
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
+          <div className="md:col-span-2">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              View Mode
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
+              <button
+                type="button"
+                onClick={() => setCoachViewMode("single")}
+                className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                  coachViewMode === "single"
+                    ? "bg-blue-600/40 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Single View
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoachViewMode("multi")}
+                className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                  coachViewMode === "multi"
+                    ? "bg-blue-600/40 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Multi View
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              Sync Status
+            </div>
+            <div className="flex items-center gap-2">
+              {manualSyncBadgeVisible ? (
+                <span className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2 py-1 text-[11px] font-semibold text-emerald-100">
+                  Manual Sync ✓
+                </span>
+              ) : (
+                <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] font-semibold text-zinc-300">
+                  Unsynced
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              Reset
+            </div>
+            <button
+              type="button"
+              onClick={() => handleResetManualSyncLock()}
+              className="w-full rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+              Reset Sync
+            </button>
+          </div>
+
+          <div>
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+              Layout
+            </div>
+            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
+              <button
+                type="button"
+                onClick={() => setCoachMultiLayout("grid")}
+                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+                  coachMultiLayout === "grid"
+                    ? "bg-blue-600/45 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Grid
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoachMultiLayout("focus")}
+                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+                  coachMultiLayout === "focus"
+                    ? "bg-blue-600/45 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Focus
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoachMultiLayout("focus")}
+                className="rounded px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:text-white"
+              >
+                PiP
+              </button>
+            </div>
+          </div>
+
+          <div className="md:col-span-5">
+            <div className="flex items-center justify-end gap-2">
+              <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                Angles ({s.angles.length})
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleAddAngle()}
+                className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                + Add Angle
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-4 flex items-stretch justify-between gap-3 rounded-xl border border-blue-500/35 bg-blue-950/15 px-4 py-3 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]">
+          <div className="min-w-0">
+            <div className="text-[12px] font-extrabold uppercase tracking-wide text-blue-200">
+              SYNC SETUP MODE
+            </div>
+            <div className="mt-0.5 text-[12px] text-blue-100/80">
+              Position both videos to the same real-world moment, then click{" "}
+              <span className="font-semibold text-blue-100">
+                “Sync These Angles.”
+              </span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={handleManualSyncCancel}
+              className="rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleManualSyncTheseAngles()}
+              className="rounded-lg border border-blue-400/35 bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+            >
+              Sync These Angles
+            </button>
+          </div>
+        </div>
+
+        <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="truncate text-sm font-semibold text-zinc-100">
+                  Angle 1 (Active)
+                </span>
+                <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
+                  Main
+                </span>
+              </div>
+              <span className="rounded-md border border-emerald-500/30 bg-emerald-950/25 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
+                You are controlling this
+              </span>
+            </div>
+            <div className="relative aspect-video w-full overflow-hidden bg-black">
+              <YouTube
+                key="sync-primary"
+                ref={playerRef}
+                videoId={safeDecodeVideoId(activeAngle.videoId)}
+                onReady={handlePlayerReady}
+                onStateChange={handleYoutubeStateChange}
+                className="absolute left-0 top-0 h-full w-full"
+                iframeClassName="absolute left-0 top-0 h-full w-full"
+                opts={youtubePlayerOpts}
+              />
+            </div>
+            {renderSyncSetupControls({
+              label: "Angle 1",
+              which: "primary",
+              get: getPlayer,
+            })}
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="truncate text-sm font-semibold text-zinc-100">
+                  Angle 2
+                </span>
+                <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
+                  PiP / Secondary
+                </span>
+              </div>
+            </div>
+            <div className="relative aspect-video w-full overflow-hidden bg-black">
+              <YouTube
+                key="sync-secondary"
+                ref={secondaryPlayerRef}
+                videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                className="absolute left-0 top-0 h-full w-full"
+                iframeClassName="absolute left-0 top-0 h-full w-full"
+                opts={youtubePlayerOpts}
+              />
+            </div>
+            {renderSyncSetupControls({
+              label: "Angle 2",
+              which: "secondary",
+              get: () =>
+                (secondaryPlayerRef.current?.getInternalPlayer() as
+                  | YouTubePlayer
+                  | null
+                  | undefined),
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
     <div
@@ -4719,268 +5067,6 @@ function RoomContent() {
                 </button>
               </div>
             ) : null}
-          </div>
-        ) : null}
-
-        {isHost && isManualSyncMode && roomState && !cleanMode ? (
-          <div className="mb-4 w-full">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={handleManualSyncCancel}
-                className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-              >
-                ← Back to Room
-              </button>
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="text-sm font-semibold text-zinc-100">
-                  Film Room
-                </span>
-                <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
-                  Host
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button type="button" className={secondaryHostBtn}>
-                  Invite
-                </button>
-                <button type="button" className={secondaryHostBtn}>
-                  Settings
-                </button>
-                <button
-                  type="button"
-                  onClick={handleReturnHome}
-                  className="rounded-lg border border-red-500/35 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-100 transition hover:border-red-400/45 hover:bg-red-950/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40"
-                >
-                  Leave Room
-                </button>
-              </div>
-            </div>
-
-            <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
-              <div className="md:col-span-2">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  View Mode
-                </div>
-                <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
-                  <button
-                    type="button"
-                    onClick={() => setCoachViewMode("single")}
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                      coachViewMode === "single"
-                        ? "bg-blue-600/40 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Single View
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCoachViewMode("multi")}
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                      coachViewMode === "multi"
-                        ? "bg-blue-600/40 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Multi View
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  Sync Status
-                </div>
-                <div className="flex items-center gap-2">
-                  {manualSyncBadgeVisible ? (
-                    <span className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2 py-1 text-[11px] font-semibold text-emerald-100">
-                      Manual Sync ✓
-                    </span>
-                  ) : (
-                    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] font-semibold text-zinc-300">
-                      Unsynced
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  Reset
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleResetManualSyncLock()}
-                  className="w-full rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                >
-                  Reset Sync
-                </button>
-              </div>
-
-              <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                  Layout
-                </div>
-                <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
-                  <button
-                    type="button"
-                    onClick={() => setCoachMultiLayout("grid")}
-                    className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                      coachMultiLayout === "grid"
-                        ? "bg-blue-600/45 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Grid
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCoachMultiLayout("focus")}
-                    className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                      coachMultiLayout === "focus"
-                        ? "bg-blue-600/45 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Focus
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCoachMultiLayout("focus")}
-                    className="rounded px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:text-white"
-                  >
-                    PiP
-                  </button>
-                </div>
-              </div>
-
-              <div className="md:col-span-5">
-                <div className="flex items-center justify-end gap-2">
-                  <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                    Angles ({roomState.angles.length})
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleAddAngle()}
-                    className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                  >
-                    + Add Angle
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-4 flex items-stretch justify-between gap-3 rounded-xl border border-blue-500/35 bg-blue-950/15 px-4 py-3 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]">
-              <div className="min-w-0">
-                <div className="text-[12px] font-extrabold uppercase tracking-wide text-blue-200">
-                  SYNC SETUP MODE
-                </div>
-                <div className="mt-0.5 text-[12px] text-blue-100/80">
-                  Position both videos to the same real-world moment, then click{" "}
-                  <span className="font-semibold text-blue-100">
-                    “Sync These Angles.”
-                  </span>
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleManualSyncCancel}
-                  className="rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleManualSyncTheseAngles()}
-                  className="rounded-lg border border-blue-400/35 bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
-                >
-                  Sync These Angles
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {isHost && isManualSyncMode && roomState && !cleanMode ? (
-          <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
-            {(() => {
-              const activeAngle = pickAngle(roomState.angles, roomState.currentAngleId);
-              const secondaryAngle =
-                roomState.angles.find((a) => a.id !== activeAngle.id) ??
-                roomState.angles[0]!;
-              return (
-                <>
-                  <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-                    <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                        <span className="truncate text-sm font-semibold text-zinc-100">
-                          Angle 1 (Active)
-                        </span>
-                        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
-                          Main
-                        </span>
-                      </div>
-                      <span className="rounded-md border border-emerald-500/30 bg-emerald-950/25 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
-                        You are controlling this
-                      </span>
-                    </div>
-                    <div className="relative aspect-video w-full overflow-hidden bg-black">
-                      <YouTube
-                        key="sync-primary"
-                        ref={playerRef}
-                        videoId={safeDecodeVideoId(activeAngle.videoId)}
-                        onReady={handlePlayerReady}
-                        onStateChange={handleYoutubeStateChange}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
-                        opts={youtubePlayerOpts}
-                      />
-                    </div>
-                    {renderSyncSetupControls({
-                      label: "Angle 1",
-                      which: "primary",
-                      get: getPlayer,
-                    })}
-                  </div>
-
-                  <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-                    <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                        <span className="truncate text-sm font-semibold text-zinc-100">
-                          Angle 2
-                        </span>
-                        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
-                          PiP / Secondary
-                        </span>
-                      </div>
-                    </div>
-                    <div className="relative aspect-video w-full overflow-hidden bg-black">
-                      <YouTube
-                        key="sync-secondary"
-                        ref={secondaryPlayerRef}
-                        videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
-                        opts={youtubePlayerOpts}
-                      />
-                    </div>
-                    {renderSyncSetupControls({
-                      label: "Angle 2",
-                      which: "secondary",
-                      get: () =>
-                        (secondaryPlayerRef.current?.getInternalPlayer() as
-                          | YouTubePlayer
-                          | null
-                          | undefined),
-                    })}
-                  </div>
-                </>
-              );
-            })()}
           </div>
         ) : null}
 
