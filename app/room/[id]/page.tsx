@@ -562,6 +562,18 @@ function resolveViewerStackTopAngleId(state: RoomState): string {
   return state.angles[0]!.id;
 }
 
+/** Stable key for stacked-viewer mute layout only (ignores playhead / heartbeat fields). */
+function viewerStackSelectionMuteKey(state: RoomState | null): string {
+  if (!state || state.angles.length < 2) return "";
+  return [
+    resolveViewerStackTopAngleId(state),
+    state.currentAngleId,
+    state.playerViewAngleId ?? "",
+    state.selectedDisplayAngleId ?? "",
+    state.angles.map((a) => a.id).join(","),
+  ].join("\0");
+}
+
 function stableKey(s: RoomState): string {
   const pc = s.playbackCommand?.commandId ?? 0;
   return `${s.videoId}|${s.currentAngleId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}|pc:${pc}`;
@@ -1227,6 +1239,7 @@ function RoomContent() {
   useEffect(() => {
     setRoomHydrated(false);
     setRoomState(null);
+    lastAppliedViewerSelectionKeyRef.current = "";
   }, [roomId]);
 
   useEffect(() => {
@@ -1258,6 +1271,8 @@ function RoomContent() {
   } | null>(null);
   /** Viewer: last applied `playbackCommand.commandId` (immediate path). */
   const lastAppliedCommandIdRef = useRef(0);
+  /** Viewer stacked sync: last applied mute layout (selection-only; not transport). */
+  const lastAppliedViewerSelectionKeyRef = useRef("");
   const pendingPlaybackCommandRef = useRef<PlaybackCommand | null>(null);
   const viewerInitialAppliedRef = useRef(false);
   const playRetryTimerRef = useRef<number | null>(null);
@@ -1332,6 +1347,7 @@ function RoomContent() {
 
   useEffect(() => {
     lastAppliedCommandIdRef.current = 0;
+    lastAppliedViewerSelectionKeyRef.current = "";
     pendingPlaybackCommandRef.current = null;
     if (playRetryTimerRef.current) clearTimeout(playRetryTimerRef.current);
     if (pauseRetryTimerRef.current) clearTimeout(pauseRetryTimerRef.current);
@@ -1784,12 +1800,31 @@ function RoomContent() {
     }
   }, [roomState, applyRoomStateToPlayer, isHost]);
 
+  const stackedAngleIdsKey = roomState?.angles?.map((a) => a.id).join(",") ?? "";
+  /* Intentionally not depending on full roomState — avoids recompute on playhead/heartbeat. */
+  const viewerStackMuteLayoutKey = useMemo(
+    () => viewerStackSelectionMuteKey(roomState),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selection primitives only
+    [
+      roomState?.playerViewAngleId,
+      roomState?.selectedDisplayAngleId,
+      roomState?.currentAngleId,
+      roomState?.angles?.length,
+      stackedAngleIdsKey,
+    ],
+  );
+
   useEffect(() => {
     if (isHost) return;
-    if (!roomState || roomState.angles.length < 2) return;
     if (roomViewMode !== "sync") return;
-    const top = resolveViewerStackTopAngleId(roomState);
-    for (const a of roomState.angles) {
+    const layoutKey = viewerStackMuteLayoutKey;
+    if (!layoutKey) return;
+    const s = roomStateRef.current;
+    if (!s || s.angles.length < 2) return;
+    if (layoutKey === lastAppliedViewerSelectionKeyRef.current) return;
+    lastAppliedViewerSelectionKeyRef.current = layoutKey;
+    const top = resolveViewerStackTopAngleId(s);
+    for (const a of s.angles) {
       const p = viewerAnglePlayersRef.current[a.id];
       if (!p) continue;
       try {
@@ -1799,12 +1834,14 @@ function RoomContent() {
         /* YouTube API */
       }
     }
-  }, [isHost, roomState, roomViewMode]);
+  }, [isHost, roomViewMode, viewerStackMuteLayoutKey]);
 
   useEffect(() => {
     if (isHost) return;
+    if (isManualSyncModeRef.current) return;
+    const roomState = roomStateRef.current;
     if (!roomState) return;
-    if (isManualSyncMode) return;
+
     // Sync View stacked multi-angle viewer: apply command to ALL mounted angles.
     if (roomViewModeRef.current === "sync" && roomState.angles.length > 1) {
       const cmd = roomState.playbackCommand;
@@ -1822,7 +1859,6 @@ function RoomContent() {
       void (async () => {
         const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, roomState);
         const activeId = roomState.currentAngleId;
-        const displayId = resolveViewerStackTopAngleId(roomState);
 
         for (const a of roomState.angles) {
           const p = viewerAnglePlayersRef.current[a.id];
@@ -1846,7 +1882,10 @@ function RoomContent() {
           }
 
           try {
-            if (a.id === displayId) p.unMute?.();
+            const topNow = resolveViewerStackTopAngleId(
+              roomStateRef.current ?? roomState,
+            );
+            if (a.id === topNow) p.unMute?.();
             else p.mute?.();
           } catch {
             /* ignore */
@@ -1969,7 +2008,13 @@ function RoomContent() {
         viewerInitialAppliedRef.current = true;
       }
     })();
-  }, [isHost, roomState?.playbackCommand?.commandId, roomState, isManualSyncMode]);
+  }, [
+    isHost,
+    roomState?.playbackCommand?.commandId,
+    roomViewMode,
+    isManualSyncMode,
+    roomId,
+  ]);
 
   // No viewer drift correction: viewers apply playback only on host playbackCommand changes.
 
