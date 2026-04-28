@@ -1095,6 +1095,7 @@ function RoomContent() {
     return extractYouTubeVideoId(safeDecodeVideoId(raw));
   }, [videoFromUrl]);
   const loadSavedId = searchParams.get("loadSaved");
+  const viewParam = searchParams.get("view");
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
@@ -1157,10 +1158,16 @@ function RoomContent() {
   }, [isHost, router, user]);
 
   const [roomState, setRoomState] = useState<RoomState | null>(null);
-  const activeYouTubeVideoId = useMemo(
-    () => (roomState?.videoId ?? videoIdFromUrl ?? "").trim(),
-    [roomState?.videoId, videoIdFromUrl],
-  );
+  /** First RTDB snapshot received for this `roomRef` (distinguish loading vs missing room). */
+  const [roomHydrated, setRoomHydrated] = useState(false);
+  const activeYouTubeVideoId = useMemo(() => {
+    const fromState = roomState?.videoId?.trim();
+    if (fromState) return fromState;
+    const fromUrl = (videoIdFromUrl ?? "").trim();
+    if (fromUrl) return fromUrl;
+    const fromAngle = roomState?.angles?.find((a) => a.videoId?.trim())?.videoId;
+    return (fromAngle ?? "").trim();
+  }, [roomState, videoIdFromUrl]);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   const viewerAnglePlayersRef = useRef<Record<string, YouTubePlayer>>({});
   const lastAppliedKey = useRef<string>("");
@@ -1218,13 +1225,18 @@ function RoomContent() {
   }, [isManualSyncMode]);
 
   useEffect(() => {
+    setRoomHydrated(false);
+    setRoomState(null);
+  }, [roomId]);
+
+  useEffect(() => {
     if (!roomState) return;
     const synced =
       (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
-    if (synced) {
+    if (synced || viewParam === "sync") {
       setRoomViewMode("sync");
     }
-  }, [roomState]);
+  }, [roomState, viewParam]);
 
   useEffect(() => {
     if (!isHost) return;
@@ -1632,6 +1644,7 @@ function RoomContent() {
     const unsub = onValue(roomRef, (snap) => {
       const raw = snap.val() as Record<string, unknown> | null;
       const parsed = parseRoomFromDb(raw);
+      setRoomHydrated(true);
       setRoomState(parsed);
     });
     return () => unsub();
@@ -4491,7 +4504,6 @@ function RoomContent() {
         )
       : null;
 
-  const effectiveVideoId = roomState?.videoId ?? videoIdFromUrl;
   const displayRate = roomState?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
 
   const drawGateOn = Boolean(isHost && telDrawOn);
@@ -4564,7 +4576,7 @@ function RoomContent() {
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
-  if (!videoFromUrl?.trim()) {
+  if (!roomId.trim()) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <button
@@ -4575,12 +4587,50 @@ function RoomContent() {
           ← Home
         </button>
         <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <p className="mb-6 text-sm leading-relaxed text-zinc-300">
-            No video selected. Add a{" "}
-            <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-zinc-100">
-              ?video=
-            </code>{" "}
-            query with a YouTube video ID.
+          <p className="mb-6 text-sm text-zinc-300">Missing room id.</p>
+          <Link
+            href="/"
+            className="inline-flex rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+          >
+            Back to home
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (!roomHydrated) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
+        <button
+          type="button"
+          onClick={handleReturnHome}
+          className={returnHomeBtnClass}
+        >
+          ← Home
+        </button>
+        <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+          <p className="mb-2 text-sm font-medium text-zinc-200">Loading room…</p>
+          <p className="text-xs text-zinc-500">Fetching session from the server.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!roomState) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
+        <button
+          type="button"
+          onClick={handleReturnHome}
+          className={returnHomeBtnClass}
+        >
+          ← Home
+        </button>
+        <div className="max-w-md rounded-2xl border border-white/[0.07] bg-zinc-950/50 px-8 py-10 text-center shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+          <p className="mb-6 text-sm text-zinc-300">
+            This room could not be loaded. It may not exist or the link may be
+            invalid.
           </p>
           <Link
             href="/"
@@ -4593,11 +4643,24 @@ function RoomContent() {
     );
   }
 
+  let effectiveVideoId = (
+    roomState.videoId?.trim() ||
+    videoIdFromUrl ||
+    roomState.angles[0]?.videoId?.trim() ||
+    ""
+  ).trim();
+  if (!effectiveVideoId && viewParam === "sync") {
+    const sid = roomState.angles.find((a) => a.videoId?.trim())?.videoId?.trim();
+    if (sid) effectiveVideoId = sid;
+  }
+
   if (!effectiveVideoId) {
     const invalidMsg =
       videoFromUrl?.trim() && !videoIdFromUrl
         ? "Invalid YouTube link."
-        : "Missing video id.";
+        : !videoFromUrl?.trim()
+          ? "No video selected. Add a ?video= link with a YouTube id, or open a room that already has a session."
+          : "Missing video id.";
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <button
