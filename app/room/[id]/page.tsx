@@ -201,6 +201,8 @@ type RoomState = {
   currentAngleId: string;
   /** Which angle is shown on top in stacked (viewer follow-coach). */
   selectedDisplayAngleId?: string;
+  /** Stacked viewers: which angle is on top / unmuted; coach can stay in Multi View. */
+  playerViewAngleId?: string;
   /** UI flag after manual sync (no automatic background sync in archive mode). */
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
@@ -490,6 +492,14 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
       ? rawSelected.trim()
       : undefined;
 
+  const rawPlayerView = val.playerViewAngleId;
+  const playerViewAngleId =
+    typeof rawPlayerView === "string" &&
+    rawPlayerView.trim() !== "" &&
+    angles.some((a) => a.id === rawPlayerView.trim())
+      ? rawPlayerView.trim()
+      : undefined;
+
   const angleByVideo = angles.findIndex((a) => a.videoId === videoIdRaw);
   if (angleByVideo >= 0) {
     currentAngleId = angles[angleByVideo]!.id;
@@ -533,9 +543,23 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     angles,
     currentAngleId,
     ...(selectedDisplayAngleId ? { selectedDisplayAngleId } : {}),
+    ...(playerViewAngleId ? { playerViewAngleId } : {}),
     ...(manualSyncLocked ? { manualSyncLocked: true } : {}),
     ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
   };
+}
+
+/** Stacked Sync View: which angle viewers see on top (unmuted). */
+function resolveViewerStackTopAngleId(state: RoomState): string {
+  const ids = state.angles.map((a) => a.id);
+  if (
+    state.playerViewAngleId &&
+    ids.includes(state.playerViewAngleId)
+  ) {
+    return state.playerViewAngleId;
+  }
+  if (ids.includes(state.currentAngleId)) return state.currentAngleId;
+  return state.angles[0]!.id;
 }
 
 function stableKey(s: RoomState): string {
@@ -1749,6 +1773,23 @@ function RoomContent() {
 
   useEffect(() => {
     if (isHost) return;
+    if (!roomState || roomState.angles.length < 2) return;
+    if (roomViewMode !== "sync") return;
+    const top = resolveViewerStackTopAngleId(roomState);
+    for (const a of roomState.angles) {
+      const p = viewerAnglePlayersRef.current[a.id];
+      if (!p) continue;
+      try {
+        if (a.id === top) p.unMute?.();
+        else p.mute?.();
+      } catch {
+        /* YouTube API */
+      }
+    }
+  }, [isHost, roomState, roomViewMode]);
+
+  useEffect(() => {
+    if (isHost) return;
     if (!roomState) return;
     if (isManualSyncMode) return;
     // Sync View stacked multi-angle viewer: apply command to ALL mounted angles.
@@ -1768,8 +1809,7 @@ function RoomContent() {
       void (async () => {
         const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, roomState);
         const activeId = roomState.currentAngleId;
-        const displayId =
-          roomState.selectedDisplayAngleId ?? roomState.currentAngleId;
+        const displayId = resolveViewerStackTopAngleId(roomState);
 
         for (const a of roomState.angles) {
           const p = viewerAnglePlayersRef.current[a.id];
@@ -3297,6 +3337,23 @@ function RoomContent() {
     });
   }, [isHost]);
 
+  const handleSetPlayerViewAngleId = useCallback(
+    (angleId: string) => {
+      if (!isHost || !roomId) return;
+      const rr = roomRefForWrite.current;
+      const cur = roomStateRef.current;
+      if (!rr || !cur || cur.angles.length < 2) return;
+      if (!cur.angles.some((a) => a.id === angleId)) return;
+      void update(rr, {
+        playerViewAngleId: angleId,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {
+        /* RTDB */
+      });
+    },
+    [isHost, roomId],
+  );
+
   const handleSelectAngle = useCallback(
     (angleId: string) => {
       if (!isHost || !roomId) return;
@@ -4599,8 +4656,7 @@ function RoomContent() {
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const secondaryAngle =
       s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
-    const displayAngleId =
-      s.selectedDisplayAngleId ?? s.currentAngleId ?? s.angles[0]!.id;
+    const viewerStackTopAngleId = resolveViewerStackTopAngleId(s);
 
     return (
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
@@ -4806,8 +4862,16 @@ function RoomContent() {
             multi && coachViewMode === "multi" ? "md:grid-cols-2" : ""
           }`}
         >
-          <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+          <div
+            className={`overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
+              multi &&
+              s.playerViewAngleId &&
+              s.playerViewAngleId === activeAngle.id
+                ? "border border-violet-500/45 ring-2 ring-violet-500/40"
+                : "border border-white/[0.07] ring-1 ring-white/[0.04]"
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
                 <span className="truncate text-sm font-semibold text-zinc-100">
@@ -4819,12 +4883,33 @@ function RoomContent() {
                   </span>
                 ) : null}
               </div>
+              {multi ? (
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  {s.playerViewAngleId === activeAngle.id ? (
+                    <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
+                      Player View
+                    </span>
+                  ) : null}
+                  {isHost ? (
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
+                      <input
+                        type="radio"
+                        name="film-room-player-view"
+                        className="h-3.5 w-3.5 accent-violet-500"
+                        checked={s.playerViewAngleId === activeAngle.id}
+                        onChange={() => handleSetPlayerViewAngleId(activeAngle.id)}
+                      />
+                      Player View
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div className="relative aspect-video w-full overflow-hidden bg-black">
               {!isHost && multi ? (
                 <div className="absolute inset-0">
                   {s.angles.map((a) => {
-                    const top = a.id === displayAngleId;
+                    const top = a.id === viewerStackTopAngleId;
                     return (
                       <div
                         key={a.id}
@@ -4840,8 +4925,11 @@ function RoomContent() {
                               viewerAnglePlayersRef.current[a.id] =
                                 e.target as YouTubePlayer;
                               try {
-                                if (a.id === displayAngleId) e.target.unMute?.();
-                                else e.target.mute?.();
+                                if (a.id === viewerStackTopAngleId) {
+                                  e.target.unMute?.();
+                                } else {
+                                  e.target.mute?.();
+                                }
                               } catch {
                                 /* ignore */
                               }
@@ -4887,8 +4975,15 @@ function RoomContent() {
           </div>
 
           {isHost && multi && coachViewMode === "multi" ? (
-            <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-              <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+            <div
+              className={`overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
+                s.playerViewAngleId &&
+                s.playerViewAngleId === secondaryAngle.id
+                  ? "border border-violet-500/45 ring-2 ring-violet-500/40"
+                  : "border border-white/[0.07] ring-1 ring-white/[0.04]"
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   <span className="truncate text-sm font-semibold text-zinc-100">
@@ -4897,6 +4992,25 @@ function RoomContent() {
                   <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
                     PiP / Secondary
                   </span>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  {s.playerViewAngleId === secondaryAngle.id ? (
+                    <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
+                      Player View
+                    </span>
+                  ) : null}
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
+                    <input
+                      type="radio"
+                      name="film-room-player-view"
+                      className="h-3.5 w-3.5 accent-violet-500"
+                      checked={s.playerViewAngleId === secondaryAngle.id}
+                      onChange={() =>
+                        handleSetPlayerViewAngleId(secondaryAngle.id)
+                      }
+                    />
+                    Player View
+                  </label>
                 </div>
               </div>
               <div className="relative aspect-video w-full overflow-hidden bg-black">
