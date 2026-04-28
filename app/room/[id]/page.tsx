@@ -404,11 +404,7 @@ function findActiveChapterIndexForUi(
 ): number | null {
   let bestIdx: number | null = null;
   let bestTime = -Infinity;
-  const cursorRef = playbackTimeForAngleFromActiveAnchor(
-    tActive,
-    refAngle,
-    activeAngle,
-  );
+  const cursorRef = playbackTimeForAngleFromActiveAnchor(tActive, refAngle);
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i];
     if (ch.videoId !== activeClipCanonicalVideoId) continue;
@@ -552,8 +548,6 @@ const VIEWER_RATE_CORRECTION_EPS = 0.028;
 const SEEK_AFTER_TRANSPORT_JUMP_S = 0.2;
 const SEEK_INITIAL_SYNC_S = 0.3;
 
-/** Host time ping while playing (RTDB `action: sync`, not `playbackCommand`). */
-const HOST_PLAYBACK_HEARTBEAT_MS = 5_000;
 /**
  * Heartbeat / host echo: while playing, explicit time jumps (e.g. heartbeat) only seek
  * when drift exceeds this — avoids micro-seeks on each ping.
@@ -570,9 +564,6 @@ const VIEWER_HEARTBEAT_LARGE_SEEK_S = 4.5;
 const LIVE_DURATION_GROWTH_S = 0.75;
 const LIVE_DURATION_MIN_BASE_S = 5;
 const LIVE_EDGE_CLAMP_PAD_S = 0.15;
-
-/** User-driven / event sync while primary is playing: only seek secondary if drift exceeds this. */
-const MULTI_VIEW_DRIFT_PLAY_CORRECT_S = 3;
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -725,8 +716,7 @@ function youtubeStateLabel(data: number): string {
   }
 }
 
-/** After host taps Play, suppress heartbeat RTDB writes to avoid racing BUFFERING on mobile. */
-const HOST_PLAY_HEARTBEAT_SUPPRESS_MS = 2800;
+// (Archive hard-lock) No background playback heartbeats.
 
 async function readYoutubePlayerState(
   player: YouTubePlayer,
@@ -2100,11 +2090,7 @@ function RoomContent() {
       } catch {
         return;
       }
-      const rawSecondary = playbackTimeForAngleFromActiveAnchor(
-        anchor,
-        secondaryAngle,
-        activeAngle,
-      );
+      const rawSecondary = playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle);
 
       if (rawSecondary < 0) {
         setMultiViewSecondaryHold((prev) => {
@@ -2142,41 +2128,10 @@ function RoomContent() {
 
       const expected = Math.max(0, rawSecondary);
 
-      if (rawSecondary < 0) {
-        try {
-          secondary.seekTo?.(0, true);
-        } catch {
-          /* YouTube API */
-        }
-      } else {
-        let actual = expected;
-        try {
-          actual = await secondary.getCurrentTime();
-        } catch {
-          /* YouTube API */
-        }
-        const drift = Math.abs(actual - expected);
-        if (drift > MULTI_VIEW_DRIFT_PLAY_CORRECT_S) {
-          const stMid = await readYoutubePlayerState(secondary);
-          if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) {
-            syncLog("multi view secondary seek aborted (buffering)", {
-              reason,
-            });
-            return;
-          }
-          syncLog("multi view secondary seek", {
-            reason,
-            drift,
-            expectedSecondaryTime: expected,
-            actualSecondaryTime: actual,
-            playing: s.isPlaying,
-          });
-          try {
-            secondary.seekTo?.(expected, true);
-          } catch {
-            /* YouTube API */
-          }
-        }
+      try {
+        secondary.seekTo?.(expected, true);
+      } catch {
+        /* YouTube API */
       }
 
       try {
@@ -2197,22 +2152,21 @@ function RoomContent() {
       }
 
       if (rawSecondary < 0) {
-        if (stSecondary !== YT_PAUSED) {
-          try {
-            secondary.pauseVideo?.();
-          } catch {
-            /* YouTube API */
-          }
+        try {
+          secondary.pauseVideo?.();
+        } catch {
+          /* YouTube API */
         }
-      } else if (s.isPlaying) {
-        if (!youtubeStateImpliesPlaying(stSecondary)) {
-          try {
-            secondary.playVideo?.();
-          } catch {
-            /* YouTube API */
-          }
+        return;
+      }
+
+      if (s.isPlaying) {
+        try {
+          secondary.playVideo?.();
+        } catch {
+          /* YouTube API */
         }
-      } else if (stSecondary !== YT_PAUSED) {
+      } else {
         try {
           secondary.pauseVideo?.();
         } catch {
@@ -2251,11 +2205,7 @@ function RoomContent() {
           s2.angles.find((a) => a.id !== activeAngle.id) ?? s2.angles[0]!;
 
         const anchor = opts.primaryAnchorTime;
-        const rawSecondary = playbackTimeForAngleFromActiveAnchor(
-          anchor,
-          secondaryAngle,
-          activeAngle,
-        );
+        const rawSecondary = playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle);
 
         if (rawSecondary < 0) {
           setMultiViewSecondaryHold((prev) => {
@@ -2309,7 +2259,7 @@ function RoomContent() {
             /* YouTube API */
           }
         } else {
-          const expected = rawSecondary;
+        const expected = Math.max(0, rawSecondary);
           try {
             secondary.seekTo?.(expected, true);
           } catch {
@@ -2436,9 +2386,7 @@ function RoomContent() {
       if (!Number.isFinite(t)) return;
       const B = { angleId: cur.currentAngleId, time: t };
 
-      const angleARow = cur.angles.find((a) => a.id === A.angleId);
-      const oA = angleARow?.offsetFromGameTime ?? 0;
-      const offsetB = B.time - A.time + oA;
+      const offsetB = B.time - A.time;
       if (!Number.isFinite(offsetB)) return;
 
       const hit = cur.angles.find((a) => a.id === B.angleId);
@@ -2480,12 +2428,11 @@ function RoomContent() {
       syncSecondaryPlayersOnce("manual-sync");
 
       const angleB = nextAngles.find((a) => a.id === B.angleId);
-      const curAngle = pickAngle(nextAngles, cur.currentAngleId);
       const fb = cur.currentTime ?? 0;
       const playerT = await readYoutubeCurrentTime(player, fb);
       const rawB =
         angleB !== undefined
-          ? playbackTimeForAngleFromActiveAnchor(playerT, angleB, curAngle)
+          ? playbackTimeForAngleFromActiveAnchor(playerT, angleB)
           : 0;
 
       let notice = `Angles synced (offset ${offsetB.toFixed(1)}s).`;
@@ -2859,12 +2806,7 @@ function RoomContent() {
       if (clipIdx < 0) return;
 
       const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const refAngle = cur.angles[0] ?? curAngle;
-      const seekTime = playbackTimeForAngleFromActiveAnchor(
-        chapter.time,
-        curAngle,
-        refAngle,
-      );
+      const seekTime = chapter.time;
       if (seekTime < 0) {
         showHostNotice(
           `This angle had not started yet for this marker (${curAngle.name}).`,
@@ -2955,19 +2897,12 @@ function RoomContent() {
       );
       const n = cur.chapters.length + 1;
       const label = trimmed.length > 0 ? trimmed : `Chapter ${n}`;
-      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const refAngle = cur.angles[0] ?? curAngle;
-      const refPlaybackTime = playbackTimeForAngleFromActiveAnchor(
-        t,
-        refAngle,
-        curAngle,
-      );
       const canonicalClipId =
         cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
-          time: refPlaybackTime,
+          time: t,
           label,
           videoId: canonicalClipId,
         },
@@ -2995,19 +2930,12 @@ function RoomContent() {
         cur.currentTime ?? 0,
       );
       const label = nextMarkPlayLabel(cur.chapters);
-      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const refAngle = cur.angles[0] ?? curAngle;
-      const refPlaybackTime = playbackTimeForAngleFromActiveAnchor(
-        t,
-        refAngle,
-        curAngle,
-      );
       const canonicalClipId =
         cur.clips[cur.currentClipIndex]?.videoId ?? cur.videoId;
       const next: ChapterEntry[] = [
         ...cur.chapters,
         {
-          time: refPlaybackTime,
+          time: t,
           label,
           videoId: canonicalClipId,
         },
@@ -3385,13 +3313,8 @@ function RoomContent() {
           player,
           cur.currentTime ?? 0,
         );
-        const curAngle = pickAngle(cur.angles, cur.currentAngleId);
         const pr = clearFfIfActive();
-        const rawNext = playbackTimeForAngleFromActiveAnchor(
-          t,
-          nextAngle,
-          curAngle,
-        );
+        const rawNext = playbackTimeForAngleFromActiveAnchor(t, nextAngle);
         const lp = player as YouTubePlayer & {
           loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
           cueVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
@@ -3733,63 +3656,7 @@ function RoomContent() {
     [isHost, roomId, syncSecondaryPlayersOnce],
   );
 
-  /**
-   * Host only: periodic lightweight time ping while playing (`action: sync`, not `playbackCommand`).
-   */
-  useEffect(() => {
-    if (!isHost || !roomState?.isPlaying) {
-      lastHostHeartbeatSentRef.current = null;
-      return;
-    }
-
-    const tick = () => {
-      if (!isHostRef.current) return;
-      if (!roomStateRef.current?.isPlaying) return;
-      if (
-        Date.now() - hostLastPlayGestureAtRef.current <
-        HOST_PLAY_HEARTBEAT_SUPPRESS_MS
-      ) {
-        return;
-      }
-      const player = playerRef.current?.getInternalPlayer() as
-        | YouTubePlayer
-        | null
-        | undefined;
-      const fb = roomStateRef.current?.currentTime ?? 0;
-      const pr = roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE;
-      void readYoutubeCurrentTime(player, fb).then((t) => {
-        if (!isHostRef.current || !roomStateRef.current?.isPlaying) return;
-        if (
-          Date.now() - hostLastPlayGestureAtRef.current <
-          HOST_PLAY_HEARTBEAT_SUPPRESS_MS
-        ) {
-          return;
-        }
-        const last = lastHostHeartbeatSentRef.current;
-        if (
-          last !== null &&
-          Math.abs(t - last) < 0.08 &&
-          Math.abs(pr - (roomStateRef.current.playbackRate ?? DEFAULT_PLAYBACK_RATE)) <
-            1e-6
-        ) {
-          return;
-        }
-        lastHostHeartbeatSentRef.current = t;
-        syncLog("host heartbeat", { currentTime: t, playbackRate: pr });
-        writeHostTransport(
-          {
-            isPlaying: true,
-            currentTime: t,
-            playbackRate: pr,
-          },
-          "sync",
-        );
-      });
-    };
-
-    const id = window.setInterval(tick, HOST_PLAYBACK_HEARTBEAT_MS);
-    return () => window.clearInterval(id);
-  }, [isHost, roomId, roomState?.isPlaying, writeHostTransport]);
+  // No background / auto sync in archive: playback moves only on explicit user controls.
 
   const handlePlay = () => {
     if (!isHost) return;
@@ -3923,7 +3790,6 @@ function RoomContent() {
       playbackTimeForAngleFromActiveAnchor(
         activeTarget,
         secondaryAngle,
-        activeAngle,
       ),
     );
 
@@ -3993,16 +3859,8 @@ function RoomContent() {
       const nextActiveAngle = swapped ? activeAngle : pipAngle;
       const nextPipAngle = swapped ? pipAngle : activeAngle;
 
-      const nextActiveT = playbackTimeForAngleFromActiveAnchor(
-        tActive,
-        nextActiveAngle,
-        activeAngle,
-      );
-      const nextPipRaw = playbackTimeForAngleFromActiveAnchor(
-        tActive,
-        nextPipAngle,
-        activeAngle,
-      );
+      const nextActiveT = playbackTimeForAngleFromActiveAnchor(tActive, nextActiveAngle);
+      const nextPipRaw = playbackTimeForAngleFromActiveAnchor(tActive, nextPipAngle);
 
       const wasPlaying = s.isPlaying;
       const pr = clearFfIfActive();
@@ -4261,7 +4119,7 @@ function RoomContent() {
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
       const active = pickAngle(cur.angles, cur.currentAngleId);
       const ref = cur.angles[0] ?? active;
-      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref, active);
+      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref);
       const target = findPrevChapterInSession(
         cur.clips,
         cur.chapters,
@@ -4282,7 +4140,7 @@ function RoomContent() {
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
       const active = pickAngle(cur.angles, cur.currentAngleId);
       const ref = cur.angles[0] ?? active;
-      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref, active);
+      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref);
       const target = findNextChapterInSession(
         cur.clips,
         cur.chapters,
@@ -4506,21 +4364,7 @@ function RoomContent() {
   );
 
   const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
-  const chapterNavMoment =
-    roomState !== null
-      ? (() => {
-          const active = pickAngle(
-            roomState.angles,
-            roomState.currentAngleId,
-          );
-          const ref = roomState.angles[0] ?? active;
-          return playbackTimeForAngleFromActiveAnchor(
-            tForChapterHighlight,
-            ref,
-            active,
-          );
-        })()
-      : 0;
+  const chapterNavMoment = tForChapterHighlight;
   const activeClipCanonicalId =
     roomState?.clips[roomState.currentClipIndex]?.videoId ?? "";
   const activeChapterIndex =
@@ -4994,7 +4838,7 @@ function RoomContent() {
                       type="button"
                       onClick={() => handleResetManualSyncLock()}
                       className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                      title="Clear manual sync lock and allow auto sync again"
+                      title="Clear manual sync lock"
                     >
                       Reset Sync
                     </button>

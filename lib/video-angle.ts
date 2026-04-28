@@ -20,21 +20,20 @@ export type VideoAngle = {
 export function playbackTimeForAngleFromActiveAnchor(
   activePlaybackTime: number,
   targetAngle: VideoAngle,
-  activeAngle: VideoAngle,
 ): number {
-  const oa = activeAngle.offsetFromGameTime ?? 0;
-  const ot = targetAngle.offsetFromGameTime ?? 0;
-  return activePlaybackTime + (ot - oa);
+  const o = targetAngle.offsetFromGameTime ?? 0;
+  return activePlaybackTime + o;
 }
 
 /** Earliest active-angle playback time where the secondary stream is at >= 0 (two-angle room). */
 export function sharedMultiAngleArchivePlaybackFloor(
-  active: VideoAngle,
+  _active: VideoAngle,
   secondary: VideoAngle,
 ): number {
-  const d =
-    (secondary.offsetFromGameTime ?? 0) - (active.offsetFromGameTime ?? 0);
-  return d < 0 ? -d : 0;
+  // Secondary is seeked to `activeTime + secondaryOffset`. We need:
+  // activeTime + secondaryOffset >= 0  →  activeTime >= -secondaryOffset
+  const o = secondary.offsetFromGameTime ?? 0;
+  return o < 0 ? -o : 0;
 }
 
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
