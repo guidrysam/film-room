@@ -4068,7 +4068,31 @@ function RoomContent() {
     writeHostTransport({ playbackRate: rate }, "rate");
     void (async () => {
       const cur = roomStateRef.current;
-      if (!cur || coachViewModeRef.current !== "multi") return;
+      if (!cur) return;
+      if (roomViewModeRef.current === "sync") {
+        const primary = getPlayer();
+        if (primary) {
+          try {
+            await safeSetPlaybackRate(primary, rate);
+          } catch {
+            /* YouTube API */
+          }
+        }
+        if (cur.angles.length > 1 && coachViewModeRef.current === "multi") {
+          const secondary = secondaryPlayerRef.current?.getInternalPlayer() as
+            | YouTubePlayer
+            | undefined;
+          if (secondary) {
+            try {
+              await safeSetPlaybackRate(secondary, rate);
+            } catch {
+              /* YouTube API */
+            }
+          }
+        }
+        return;
+      }
+      if (coachViewModeRef.current !== "multi") return;
       const player = getPlayer();
       const fb = cur.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
@@ -4809,37 +4833,49 @@ function RoomContent() {
                         }`}
                         style={{ pointerEvents: top ? "auto" : "none" }}
                       >
-                        <YouTube
-                          videoId={safeDecodeVideoId(a.videoId)}
-                          onReady={(e) => {
-                            viewerAnglePlayersRef.current[a.id] = e.target as YouTubePlayer;
-                            try {
-                              if (a.id === displayAngleId) e.target.unMute?.();
-                              else e.target.mute?.();
-                            } catch {
-                              /* ignore */
-                            }
-                          }}
-                          className="absolute left-0 top-0 h-full w-full"
-                          iframeClassName="absolute left-0 top-0 h-full w-full"
-                          opts={youtubePlayerOpts}
-                        />
+                        <YoutubePointerGate drawOn={false} blockOn={false}>
+                          <YouTube
+                            videoId={safeDecodeVideoId(a.videoId)}
+                            onReady={(e) => {
+                              viewerAnglePlayersRef.current[a.id] =
+                                e.target as YouTubePlayer;
+                              try {
+                                if (a.id === displayAngleId) e.target.unMute?.();
+                                else e.target.mute?.();
+                              } catch {
+                                /* ignore */
+                              }
+                            }}
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <YouTube
-                  key="sync-primary"
-                  ref={playerRef}
-                  videoId={safeDecodeVideoId(activeAngle.videoId)}
-                  onReady={handlePlayerReady}
-                  onStateChange={handleYoutubeStateChange}
-                  className="absolute left-0 top-0 h-full w-full"
-                  iframeClassName="absolute left-0 top-0 h-full w-full"
-                  opts={youtubePlayerOpts}
-                />
+                <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                  <YouTube
+                    key="sync-primary"
+                    ref={playerRef}
+                    videoId={safeDecodeVideoId(activeAngle.videoId)}
+                    onReady={handlePlayerReady}
+                    onStateChange={handleYoutubeStateChange}
+                    className="absolute left-0 top-0 h-full w-full"
+                    iframeClassName="absolute left-0 top-0 h-full w-full"
+                    opts={youtubePlayerOpts}
+                  />
+                </YoutubePointerGate>
               )}
+              {roomId ? (
+                <TelestratorOverlay
+                  roomId={roomId}
+                  isHost={isHost}
+                  drawEnabled={telDrawOn}
+                />
+              ) : null}
             </div>
             {showIndependentControls
               ? renderSyncSetupControls({
@@ -4864,14 +4900,16 @@ function RoomContent() {
                 </div>
               </div>
               <div className="relative aspect-video w-full overflow-hidden bg-black">
-                <YouTube
-                  key="sync-secondary"
-                  ref={secondaryPlayerRef}
-                  videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                  className="absolute left-0 top-0 h-full w-full"
-                  iframeClassName="absolute left-0 top-0 h-full w-full"
-                  opts={youtubePlayerOpts}
-                />
+                <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                  <YouTube
+                    key="sync-secondary"
+                    ref={secondaryPlayerRef}
+                    videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                    className="absolute left-0 top-0 h-full w-full"
+                    iframeClassName="absolute left-0 top-0 h-full w-full"
+                    opts={youtubePlayerOpts}
+                  />
+                </YoutubePointerGate>
               </div>
               {showIndependentControls
                 ? renderSyncSetupControls({
@@ -4888,8 +4926,83 @@ function RoomContent() {
           ) : null}
         </div>
 
+        <div className="mt-2 w-full rounded-lg border border-white/[0.06] bg-zinc-950/40 px-2.5 py-2 ring-1 ring-white/[0.04]">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+            Chapters / Marks
+          </div>
+          <div className="max-h-[140px] overflow-y-auto overscroll-y-contain pr-1">
+            {chaptersDisplay.length === 0 ? (
+              <p className="text-[11px] leading-snug text-zinc-500">
+                No chapters yet. Add marks in Clip View.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
+                  const onActiveClip =
+                    ch.videoId === s.clips[s.currentClipIndex]?.videoId;
+                  const isCurrentChapter =
+                    activeChapterIndex !== null && activeChapterIndex === i;
+                  return (
+                    <li key={`sync-marks-${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
+                      <div className="flex min-w-0 items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={!isHost}
+                          title={
+                            isHost ? undefined : "Only the host can jump to marks"
+                          }
+                          onClick={() => void jumpToChapter(ch)}
+                          className={`min-w-0 flex-1 truncate rounded-md border px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-45 ${
+                            isCurrentChapter && onActiveClip
+                              ? "border-blue-500/80 bg-blue-600/40 text-white ring-1 ring-blue-400/40"
+                              : onActiveClip
+                                ? "border-white/10 bg-black/30 text-zinc-100 hover:border-white/18 hover:bg-black/45"
+                                : "border-white/6 bg-black/20 text-zinc-400 hover:border-white/12"
+                          }`}
+                        >
+                          <span className="font-medium text-zinc-100">
+                            {ch.label}
+                          </span>
+                          <span className="ml-1.5 font-mono text-[10px] text-zinc-400">
+                            {formatChapterTime(ch.time)}
+                          </span>
+                          {!onActiveClip ? (
+                            <span className="ml-1 text-[9px] text-amber-400/80">
+                              (other clip)
+                            </span>
+                          ) : null}
+                        </button>
+                        {isHost ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleRenameChapter(i)}
+                              className={miniHostBtn}
+                              title="Rename chapter"
+                            >
+                              Ren
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteChapter(i)}
+                              className="shrink-0 rounded-md border border-white/10 px-1.5 py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                              aria-label={`Delete chapter ${ch.label}`}
+                            >
+                              ×
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+
         {isHost ? (
-          <div className="mt-4 w-full">
+          <div className="mt-3 w-full">
             <div
               className={`${hostControlsBar} ${
                 isManualSyncMode ? "pointer-events-none opacity-35" : ""
@@ -4917,16 +5030,26 @@ function RoomContent() {
               <button
                 type="button"
                 onClick={() => void handlePrevChapter()}
-                className={hostChip}
+                className={`${hostChip} ${
+                  chapterNavFlash === "prev"
+                    ? "ring-2 ring-blue-400/50 border-blue-500/40"
+                    : ""
+                }`}
+                title="Previous mark or chapter"
               >
-                Prev
+                Prev mark
               </button>
               <button
                 type="button"
                 onClick={() => void handleNextChapter()}
-                className={hostChip}
+                className={`${hostChip} ${
+                  chapterNavFlash === "next"
+                    ? "ring-2 ring-blue-400/50 border-blue-500/40"
+                    : ""
+                }`}
+                title="Next mark or chapter"
               >
-                Next
+                Next mark
               </button>
               <button type="button" onClick={cycleFf} className={hostChip}>
                 {ffMode === 0
@@ -4937,6 +5060,20 @@ function RoomContent() {
                       ? "FF 4×"
                       : "FF 8×"}
               </button>
+              {HOST_SPEEDS.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleSpeed(r)}
+                  className={`${hostChip} ${
+                    Math.abs(displayRate - r) < 0.01
+                      ? "border-blue-500/55 bg-blue-950/45 text-blue-100"
+                      : ""
+                  }`}
+                >
+                  {r === 1 ? "1×" : `${r}×`}
+                </button>
+              ))}
               <button
                 type="button"
                 onClick={() => handleManualFineTuneSecondaryOffset(-1)}
@@ -4973,6 +5110,20 @@ function RoomContent() {
                   LIVE
                 </button>
               ) : null}
+              <button
+                type="button"
+                onClick={() => setTelDrawOn((v) => !v)}
+                className={hostChip}
+              >
+                {telDrawOn ? "Draw Off" : "Draw On"}
+              </button>
+              <button
+                type="button"
+                onClick={handleClearDrawings}
+                className={hostChip}
+              >
+                Clear Drawings
+              </button>
               {showResetSyncBtn ? (
                 <button
                   type="button"
