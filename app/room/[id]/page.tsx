@@ -1368,6 +1368,7 @@ function RoomContent() {
   const [coachMultiLayout, setCoachMultiLayout] = useState<"grid" | "focus">(
     "grid",
   );
+  const [roomViewMode, setRoomViewMode] = useState<"clip" | "sync">("clip");
   /** Host-only (Focus layout): which angle is currently "active" for controls + audio without reloading iframes. */
   const [hostFocusAngleId, setHostFocusAngleId] = useState<string | null>(null);
   const hostFocusAngleIdRef = useRef<string | null>(null);
@@ -1391,6 +1392,26 @@ function RoomContent() {
   useLayoutEffect(() => {
     isManualSyncModeRef.current = isManualSyncMode;
   }, [isManualSyncMode]);
+
+  useEffect(() => {
+    if (!roomState) return;
+    const synced =
+      (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
+    if (synced) {
+      setRoomViewMode("sync");
+    }
+  }, [roomState]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    if (roomViewMode !== "sync") return;
+    if (!roomState) return;
+    const synced =
+      (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
+    if (!synced && roomState.angles.length > 1) {
+      setIsManualSyncMode(true);
+    }
+  }, [isHost, roomState, roomViewMode]);
   const [syncSetupUi, setSyncSetupUi] = useState<{
     primaryTime: number;
     primaryDur: number;
@@ -2474,6 +2495,7 @@ function RoomContent() {
     // Sync setup requires both players mounted/visible.
     setCoachViewMode("multi");
     setCoachMultiLayout("grid");
+    setRoomViewMode("sync");
     setIsManualSyncMode(true);
   }, [isHost]);
 
@@ -4879,10 +4901,12 @@ function RoomContent() {
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
-  const syncModeActive = Boolean(isHost && isManualSyncMode && roomState && !cleanMode);
+  if (roomViewMode === "sync" && roomState && !cleanMode) {
+    const s = roomState;
+    const synced = (s.syncAnchorTime ?? 0) > 0 || s.manualSyncLocked === true;
+    const multi = s.angles.length > 1;
+    const showIndependentControls = isHost && multi && (!synced || isManualSyncMode);
 
-  if (syncModeActive) {
-    const s = roomState!;
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const secondaryAngle =
       s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
@@ -4892,17 +4916,31 @@ function RoomContent() {
         <div className="mb-4 flex items-center justify-between gap-3">
           <button
             type="button"
-            onClick={handleManualSyncCancel}
+            onClick={() => setRoomViewMode("clip")}
             className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
-            ← Back to Room
+            ← Clip View
           </button>
           <div className="flex min-w-0 items-center gap-2">
-            <span className="text-sm font-semibold text-zinc-100">
-              Film Room
-            </span>
+            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
+              <button
+                type="button"
+                onClick={() => setRoomViewMode("clip")}
+                className="rounded-md px-3 py-1 text-[12px] font-semibold text-zinc-300 transition hover:text-white"
+              >
+                Clip View
+              </button>
+              <button
+                type="button"
+                onClick={() => setRoomViewMode("sync")}
+                className="rounded-md bg-blue-600/40 px-3 py-1 text-[12px] font-semibold text-white transition"
+              >
+                Sync View
+              </button>
+            </div>
+            <span className="text-sm font-semibold text-zinc-100">Film Room</span>
             <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
-              Host
+              {isHost ? "Host" : "Viewer"}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -5025,62 +5063,69 @@ function RoomContent() {
               <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                 Angles ({s.angles.length})
               </div>
+              {isHost && s.clips.length === 1 ? (
+                <button
+                  type="button"
+                  onClick={() => void handleAddAngle()}
+                  className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                >
+                  + Add Angle
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        {showIndependentControls ? (
+          <div className="mb-4 flex items-stretch justify-between gap-3 rounded-xl border border-blue-500/35 bg-blue-950/15 px-4 py-3 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]">
+            <div className="min-w-0">
+              <div className="text-[12px] font-extrabold uppercase tracking-wide text-blue-200">
+                SYNC SETUP MODE
+              </div>
+              <div className="mt-0.5 text-[12px] text-blue-100/80">
+                Position both videos to the same real-world moment, then click{" "}
+                <span className="font-semibold text-blue-100">
+                  “Sync These Angles.”
+                </span>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
-                onClick={() => void handleAddAngle()}
-                className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                onClick={handleManualSyncCancel}
+                className="rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
               >
-                + Add Angle
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleManualSyncTheseAngles()}
+                className="rounded-lg border border-blue-400/35 bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+              >
+                Sync These Angles
               </button>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        <div className="mb-4 flex items-stretch justify-between gap-3 rounded-xl border border-blue-500/35 bg-blue-950/15 px-4 py-3 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]">
-          <div className="min-w-0">
-            <div className="text-[12px] font-extrabold uppercase tracking-wide text-blue-200">
-              SYNC SETUP MODE
-            </div>
-            <div className="mt-0.5 text-[12px] text-blue-100/80">
-              Position both videos to the same real-world moment, then click{" "}
-              <span className="font-semibold text-blue-100">
-                “Sync These Angles.”
-              </span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={handleManualSyncCancel}
-              className="rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleManualSyncTheseAngles()}
-              className="rounded-lg border border-blue-400/35 bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
-            >
-              Sync These Angles
-            </button>
-          </div>
-        </div>
-
-        <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
+        <div
+          className={`grid w-full grid-cols-1 gap-4 ${
+            multi && coachViewMode === "multi" ? "md:grid-cols-2" : ""
+          }`}
+        >
           <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
             <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
                 <span className="truncate text-sm font-semibold text-zinc-100">
-                  Angle 1 (Active)
+                  {multi ? "Angle 1 (Active)" : "Angle 1"}
                 </span>
-                <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
-                  Main
-                </span>
+                {multi ? (
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
+                    Main
+                  </span>
+                ) : null}
               </div>
-              <span className="rounded-md border border-emerald-500/30 bg-emerald-950/25 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
-                You are controlling this
-              </span>
             </div>
             <div className="relative aspect-video w-full overflow-hidden bg-black">
               <YouTube
@@ -5094,46 +5139,80 @@ function RoomContent() {
                 opts={youtubePlayerOpts}
               />
             </div>
-            {renderSyncSetupControls({
-              label: "Angle 1",
-              which: "primary",
-              get: getPlayer,
-            })}
+            {showIndependentControls
+              ? renderSyncSetupControls({
+                  label: "Angle 1",
+                  which: "primary",
+                  get: getPlayer,
+                })
+              : null}
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
-            <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                <span className="truncate text-sm font-semibold text-zinc-100">
-                  Angle 2
-                </span>
-                <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
-                  PiP / Secondary
-                </span>
+          {multi && coachViewMode === "multi" ? (
+            <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
+              <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <span className="truncate text-sm font-semibold text-zinc-100">
+                    Angle 2
+                  </span>
+                  <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
+                    PiP / Secondary
+                  </span>
+                </div>
               </div>
+              <div className="relative aspect-video w-full overflow-hidden bg-black">
+                <YouTube
+                  key="sync-secondary"
+                  ref={secondaryPlayerRef}
+                  videoId={safeDecodeVideoId(secondaryAngle.videoId)}
+                  className="absolute left-0 top-0 h-full w-full"
+                  iframeClassName="absolute left-0 top-0 h-full w-full"
+                  opts={youtubePlayerOpts}
+                />
+              </div>
+              {showIndependentControls
+                ? renderSyncSetupControls({
+                    label: "Angle 2",
+                    which: "secondary",
+                    get: () =>
+                      (secondaryPlayerRef.current?.getInternalPlayer() as
+                        | YouTubePlayer
+                        | null
+                        | undefined),
+                  })
+                : null}
             </div>
-            <div className="relative aspect-video w-full overflow-hidden bg-black">
-              <YouTube
-                key="sync-secondary"
-                ref={secondaryPlayerRef}
-                videoId={safeDecodeVideoId(secondaryAngle.videoId)}
-                className="absolute left-0 top-0 h-full w-full"
-                iframeClassName="absolute left-0 top-0 h-full w-full"
-                opts={youtubePlayerOpts}
-              />
-            </div>
-            {renderSyncSetupControls({
-              label: "Angle 2",
-              which: "secondary",
-              get: () =>
-                (secondaryPlayerRef.current?.getInternalPlayer() as
-                  | YouTubePlayer
-                  | null
-                  | undefined),
-            })}
-          </div>
+          ) : null}
         </div>
+
+        {synced && isHost ? (
+          <div className="mt-4 w-full">
+            <div className={hostControlsBar}>
+              <button
+                type="button"
+                onClick={() => (roomState?.isPlaying ? handlePause() : handlePlay())}
+                className={hostChip}
+              >
+                {roomState?.isPlaying ? "Pause" : "Play"}
+              </button>
+              <button type="button" onClick={handleSeekLiveBack30} className={hostChip}>
+                -30s
+              </button>
+              <button type="button" onClick={handleSeekBack} className={hostChip}>
+                -10s
+              </button>
+              <button type="button" onClick={() => void handleMarkPlay()} className={hostChip}>
+                Mark Play
+              </button>
+              {isLiveStream ? (
+                <button type="button" onClick={handleJumpLiveEdge} className={hostChipSync}>
+                  LIVE
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -5167,19 +5246,45 @@ function RoomContent() {
       >
         {!cleanMode ? (
           <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
-            <p className="min-w-0">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                Room
-              </span>{" "}
-              <span className="font-mono text-sm text-zinc-200">{roomId}</span>
-              <span className="text-zinc-500"> · </span>
-              <span className="text-zinc-200">{isHost ? "Host" : "Viewer"}</span>
-              <span className="text-zinc-500"> · </span>
-              <span className="text-zinc-500">Speed </span>
-              <span className="font-medium text-zinc-100">
-                {displayRate === 1 ? "1×" : `${displayRate}×`}
-              </span>
-            </p>
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
+                <button
+                  type="button"
+                  onClick={() => setRoomViewMode("clip")}
+                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                    roomViewMode === "clip"
+                      ? "bg-blue-600/40 text-white"
+                      : "text-zinc-300 hover:text-white"
+                  }`}
+                >
+                  Clip View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRoomViewMode("sync")}
+                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                    roomViewMode === "sync"
+                      ? "bg-blue-600/40 text-white"
+                      : "text-zinc-300 hover:text-white"
+                  }`}
+                >
+                  Sync View
+                </button>
+              </div>
+              <p className="min-w-0">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Room
+                </span>{" "}
+                <span className="font-mono text-sm text-zinc-200">{roomId}</span>
+                <span className="text-zinc-500"> · </span>
+                <span className="text-zinc-200">{isHost ? "Host" : "Viewer"}</span>
+                <span className="text-zinc-500"> · </span>
+                <span className="text-zinc-500">Speed </span>
+                <span className="font-medium text-zinc-100">
+                  {displayRate === 1 ? "1×" : `${displayRate}×`}
+                </span>
+              </p>
+            </div>
             {isHost ? (
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -5208,7 +5313,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!isManualSyncMode && isHost && roomState && !cleanMode ? (
+        {roomViewMode === "clip" && !isManualSyncMode && isHost && roomState && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Clip queue</p>
             <div className="mb-2 flex flex-wrap gap-2">
@@ -5285,7 +5390,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!isManualSyncMode && roomState && roomState.angles.length > 1 && !cleanMode ? (
+        {roomViewMode === "clip" && !isManualSyncMode && roomState && roomState.angles.length > 1 && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Camera angle</p>
             <div className="flex flex-wrap items-center gap-2">
@@ -5471,7 +5576,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!isManualSyncMode && roomState && isHost && !cleanMode ? (
+        {roomViewMode === "clip" && !isManualSyncMode && roomState && isHost && !cleanMode ? (
           <div className={frPanel}>
             <p className={frPanelTitle}>Chapters</p>
             <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -5616,13 +5721,14 @@ function RoomContent() {
           </div>
         ) : null}
 
-        <div
-          className={`relative w-full overflow-hidden bg-black ${
-            cleanMode
-              ? "flex min-h-0 w-full flex-1 flex-col rounded-none ring-0 shadow-none md:h-[100dvh] md:w-[100dvw] md:overflow-hidden"
-              : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
-          }`}
-        >
+        {roomViewMode === "clip" ? (
+          <div
+            className={`relative w-full overflow-hidden bg-black ${
+              cleanMode
+                ? "flex min-h-0 w-full flex-1 flex-col rounded-none ring-0 shadow-none md:h-[100dvh] md:w-[100dvw] md:overflow-hidden"
+                : "rounded-xl ring-1 ring-white/10 shadow-2xl shadow-black/50"
+            }`}
+          >
           {cleanMode ? (
             <div className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-y-contain md:min-h-0 md:flex-1 md:overflow-hidden">
           {/*
@@ -6769,7 +6875,8 @@ function RoomContent() {
               </div>
             </>
           )}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
     {saveSessionOpen ? (
