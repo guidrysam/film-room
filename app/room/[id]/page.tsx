@@ -1073,6 +1073,7 @@ function RoomContent() {
   const loadSavedId = searchParams.get("loadSaved");
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
+  const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
   /** Host: app-controlled fullscreen for one angle (not browser / iframe fullscreen). */
@@ -4280,6 +4281,15 @@ function RoomContent() {
     });
   };
 
+  const handleCopySyncViewerLink = useCallback(() => {
+    if (!roomId || typeof window === "undefined") return;
+    const url = `${window.location.origin}/room/${roomId}?view=sync`;
+    void navigator.clipboard.writeText(url).then(() => {
+      setSyncViewerLinkCopied(true);
+      window.setTimeout(() => setSyncViewerLinkCopied(false), 2000);
+    });
+  }, [roomId]);
+
   const saveSessionDefaultName = useCallback(
     () =>
       `Session ${new Date().toLocaleString(undefined, {
@@ -4601,11 +4611,13 @@ function RoomContent() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" className={secondaryHostBtn}>
-              Invite
-            </button>
-            <button type="button" className={secondaryHostBtn}>
-              Settings
+            <button
+              type="button"
+              onClick={handleCopySyncViewerLink}
+              disabled={!roomId}
+              className={secondaryHostBtn}
+            >
+              {syncViewerLinkCopied ? "Link copied" : "Copy Viewer Link"}
             </button>
             <button
               type="button"
