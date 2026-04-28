@@ -39,7 +39,6 @@ import {
   parseVideoAngles,
   pickAngle,
   playbackTimeForAngleFromActiveAnchor,
-  sharedMultiAngleArchivePlaybackFloor,
   type VideoAngle,
 } from "@/lib/video-angle";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
@@ -869,23 +868,7 @@ async function clampHostSeekBackwardSeconds(
   return target;
 }
 
-async function readYoutubePlaybackRate(
-  player: YouTubePlayer | null | undefined,
-  fallback: number,
-): Promise<number> {
-  if (!player) return fallback;
-  const p = player as YouTubePlayer & {
-    getPlaybackRate?: () => number | Promise<number>;
-  };
-  try {
-    const raw = p.getPlaybackRate?.();
-    const r = await Promise.resolve(raw);
-    if (typeof r === "number" && !Number.isNaN(r) && r > 0) return r;
-  } catch {
-    /* API not ready */
-  }
-  return fallback;
-}
+// `readYoutubePlaybackRate` removed: deterministic sync uses explicit room playbackRate only.
 
 /** True when the iframe reports playing intent (playing or buffering). */
 function youtubeStateImpliesPlaying(st: number | undefined): boolean {
@@ -1855,47 +1838,7 @@ function RoomContent() {
     })();
   }, [isHost, roomState?.playbackCommand?.commandId, roomState, isManualSyncMode]);
 
-  useEffect(() => {
-    if (isHost) return;
-    const id = window.setInterval(() => {
-      const s = roomStateRef.current;
-      if (!s) return;
-      if (!s.isPlaying) return;
-      if (isManualSyncModeRef.current) return;
-      if (coachViewModeRef.current !== "multi") return;
-      if (!s.angles?.length || s.angles.length < 2) return;
-
-      const primary = getPlayer();
-      const secondary =
-        secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
-      if (!primary || !secondary) return;
-
-      const activeAngle = pickAngle(s.angles, s.currentAngleId);
-      const secondaryAngle =
-        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
-      const oSecondary = secondaryAngle.offsetFromGameTime ?? 0;
-
-      void (async () => {
-        try {
-          const pT = await readYoutubeCurrentTime(primary, s.currentTime ?? 0);
-          const sT = await readYoutubeCurrentTime(secondary, s.currentTime ?? 0);
-          const expectedSecondary = Math.max(0, pT + oSecondary);
-          const drift = sT - expectedSecondary;
-          if (Math.abs(drift) > 2.0) {
-            syncLog("viewer drift correction (secondary only)", {
-              drift,
-              expectedSecondary,
-              secondary: sT,
-            });
-            await secondary.seekTo(expectedSecondary, true);
-          }
-        } catch {
-          /* ignore */
-        }
-      })();
-    }, 10_000);
-    return () => window.clearInterval(id);
-  }, [isHost]);
+  // No viewer drift correction: viewers apply playback only on host playbackCommand changes.
 
   const getPlayer = () =>
     playerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
@@ -2233,15 +2176,10 @@ function RoomContent() {
         return { ...a };
       });
 
-      // Compute common sync start time from all offsets (latest stream becomes time zero).
-      let commonStartTime = 0;
-      for (const a of nextAngles) {
-        const off = a.offsetFromGameTime ?? 0;
-        const startOffset = Math.max(0, -off);
-        commonStartTime = Math.max(commonStartTime, startOffset);
-      }
+      // Manual sync anchor is exactly where the user aligned the active angle.
+      const syncAnchorTime = Math.max(0, activeAngleTime);
 
-      // Write a paused seek to the new sync anchor so everyone snaps to the shared start.
+      // Write a paused seek at the chosen anchor (no computed start floor).
       hostActionSeqRef.current += 1;
       const commandId = hostActionSeqRef.current;
       const playbackCommand: PlaybackCommand = {
@@ -2249,7 +2187,7 @@ function RoomContent() {
         roomId,
         activeVideoId: cur.videoId,
         issuedAt: Date.now(),
-        anchorVideoTime: commonStartTime,
+        anchorVideoTime: syncAnchorTime,
         playbackRate: cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
         commandId,
       };
@@ -2257,8 +2195,8 @@ function RoomContent() {
       try {
         await update(rr, {
           angles: nextAngles,
-          syncAnchorTime: commonStartTime,
-          currentTime: commonStartTime,
+          syncAnchorTime,
+          currentTime: syncAnchorTime,
           isPlaying: false,
           manualSyncLocked: true,
           manualSyncAt: Date.now(),
@@ -2272,10 +2210,9 @@ function RoomContent() {
         return;
       }
 
-      // Seek both players to the shared sync start and pause.
-      // After sync: shared start is `commonStartTime` on the active angle.
-      const primaryTarget = Math.max(0, commonStartTime);
-      const secondaryTarget = Math.max(0, commonStartTime + offsetFromGameTime);
+      // Seek once to the aligned positions and pause (should be no-ops if user already positioned).
+      const primaryTarget = syncAnchorTime;
+      const secondaryTarget = Math.max(0, syncAnchorTime + offsetFromGameTime);
       try {
         primary.seekTo?.(primaryTarget, true);
         primary.pauseVideo?.();
@@ -2336,42 +2273,7 @@ function RoomContent() {
     return () => window.clearInterval(id);
   }, [isHost, coachViewMode, isManualSyncMode]);
 
-  // Light drift correction: every ~10s while playing, nudge secondary if drift > 2s.
-  useEffect(() => {
-    if (!isHost || isManualSyncMode) return;
-    if (coachViewMode !== "multi") return;
-    if (!roomState?.isPlaying) return;
-    if (!roomState.angles?.length || roomState.angles.length < 2) return;
-    const id = window.setInterval(() => {
-      const s = roomStateRef.current;
-      if (!s?.isPlaying) return;
-      const primary = getPlayer();
-      const secondary =
-        secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
-      if (!primary || !secondary) return;
-      const activeAngle = pickAngle(s.angles, s.currentAngleId);
-      const secondaryAngle =
-        s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
-      const fb = s.currentTime ?? 0;
-      void (async () => {
-        let anchor = await readYoutubeCurrentTime(primary, fb);
-        anchor = Math.max(anchor, s.syncAnchorTime ?? 0);
-        const expected = Math.max(
-          0,
-          playbackTimeForAngleFromActiveAnchor(anchor, secondaryAngle),
-        );
-        const actual = await readYoutubeCurrentTime(secondary, expected);
-        if (!Number.isFinite(actual)) return;
-        if (Math.abs(actual - expected) <= 2) return;
-        try {
-          secondary.seekTo?.(expected, true);
-        } catch {
-          /* YouTube API */
-        }
-      })();
-    }, 10_000);
-    return () => window.clearInterval(id);
-  }, [isHost, isManualSyncMode, coachViewMode, roomState]);
+  // No host drift correction: playback moves only on explicit user controls.
 
   const renderSyncSetupControls = useCallback(
     (opts: {
@@ -3637,42 +3539,7 @@ function RoomContent() {
     })();
   }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
 
-  /** Host Multi View: nudge the non-active angle’s offset vs active playback, then re-align secondary. */
-  const handleNudgeSecondaryOffset = useCallback(
-    (deltaSec: number) => {
-      if (!isHost || !roomId) return;
-      const rr = roomRefForWrite.current;
-      if (!rr) return;
-      const cur = roomStateRef.current;
-      if (!cur || cur.angles.length < 2) return;
-      if (coachViewModeRef.current !== "multi") return;
-      const active = pickAngle(cur.angles, cur.currentAngleId);
-      const sec = cur.angles.find((a) => a.id !== active.id);
-      if (!sec) return;
-      const nextAngles: VideoAngle[] = cur.angles.map((a) =>
-        a.id === sec.id
-          ? {
-              ...a,
-              offsetFromGameTime: (a.offsetFromGameTime ?? 0) + deltaSec,
-            }
-          : { ...a },
-      );
-      void update(rr, {
-        angles: nextAngles,
-        updatedAt: serverTimestamp(),
-      })
-        .then(() => {
-          window.setTimeout(
-            () => syncSecondaryPlayersOnce("nudge-secondary-offset"),
-            120,
-          );
-        })
-        .catch(() => {
-          /* RTDB */
-        });
-    },
-    [isHost, roomId, syncSecondaryPlayersOnce],
-  );
+  // No post-sync nudging. Manual fine-tune controls are applied explicitly in Sync View transport.
 
   // No background / auto sync in archive: playback moves only on explicit user controls.
 
@@ -3805,68 +3672,7 @@ function RoomContent() {
     })();
   };
 
-  const handleJumpToSyncStart = useCallback(() => {
-    if (!isHost || !roomId) return;
-    if (isManualSyncModeRef.current) return;
-    const cur = roomStateRef.current;
-    if (!cur || cur.angles.length < 2) return;
-    const pr = clearFfIfActive();
-    const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
-    const secondaryAngle =
-      cur.angles.find((a) => a.id !== activeAngle.id) ?? cur.angles[0]!;
-    const syncAnchorTime = cur.syncAnchorTime ?? 0;
-    const activeTarget = Math.max(
-      syncAnchorTime,
-      sharedMultiAngleArchivePlaybackFloor(activeAngle, secondaryAngle),
-    );
-    const secondaryTarget = Math.max(
-      0,
-      playbackTimeForAngleFromActiveAnchor(
-        activeTarget,
-        secondaryAngle,
-      ),
-    );
-
-    // Write to room (paused) using the same playbackCommand path viewers understand.
-    writeImmediatePlaybackCommand("seek", {
-      currentTime: activeTarget,
-      isPlaying: false,
-      playbackRate: pr,
-    });
-
-    // Apply locally to mounted players (no native YouTube UI dependencies).
-    const primary = getPlayer();
-    const secondary =
-      secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
-    try {
-      primary?.seekTo?.(activeTarget, true);
-      primary?.pauseVideo?.();
-    } catch {
-      /* YouTube API */
-    }
-    if (coachViewModeRef.current === "multi" && secondary) {
-      try {
-        secondary.seekTo?.(secondaryTarget, true);
-        secondary.pauseVideo?.();
-        secondary.mute?.();
-      } catch {
-        /* YouTube API */
-      }
-      try {
-        primary?.unMute?.();
-      } catch {
-        /* YouTube API */
-      }
-    }
-
-    showHostNotice("Jumped to first shared sync point.");
-  }, [
-    isHost,
-    roomId,
-    clearFfIfActive,
-    writeImmediatePlaybackCommand,
-    showHostNotice,
-  ]);
+  // No "Jump to Sync Start": syncing is manual and transport is user-driven.
 
   const handleFocusPipSwap = useCallback(() => {
     if (!isHost || !roomId) return;
@@ -4115,39 +3921,7 @@ function RoomContent() {
     ],
   );
 
-  /** Authoritative snap: live time, rate, play state — bypasses drift/nudge on viewers. */
-  const handleHostResync = () => {
-    if (!isHost) return;
-    void (async () => {
-      clearFfIfActive();
-      const cur = roomStateRef.current;
-      if (!cur) return;
-      const player = getPlayer();
-      const fb = cur.currentTime ?? 0;
-      const t = await readYoutubeCurrentTime(player, fb);
-      const pr = await readYoutubePlaybackRate(
-        player,
-        cur.playbackRate ?? DEFAULT_PLAYBACK_RATE,
-      );
-      const st = await readYoutubePlayerState(player);
-      let isPlaying = cur.isPlaying;
-      if (st !== undefined) {
-        if (youtubeStateImpliesPlaying(st)) isPlaying = true;
-        else if (st === YT_PAUSED) isPlaying = false;
-      }
-      writeImmediatePlaybackCommand("resync", {
-        currentTime: t,
-        isPlaying,
-        playbackRate: pr,
-      });
-      applyHostMultiViewSecondaryDirect({
-        primaryAnchorTime: t,
-        isPlaying,
-        playbackRate: pr,
-        reason: "host-resync",
-      });
-    })();
-  };
+  // No smart resync: keep synced playback deterministic.
 
   const handlePrevChapter = () => {
     if (!isHost) return;
@@ -4211,6 +3985,54 @@ function RoomContent() {
       });
     })();
   };
+
+  const handleManualFineTuneSecondaryOffset = useCallback(
+    (deltaSec: number) => {
+      if (!isHost || !roomId) return;
+      if (isManualSyncModeRef.current) return;
+      if (roomViewModeRef.current !== "sync") return;
+      const rr = roomRefForWrite.current;
+      const cur = roomStateRef.current;
+      if (!rr || !cur) return;
+      if (coachViewModeRef.current !== "multi") return;
+      if (!cur.angles?.length || cur.angles.length < 2) return;
+
+      const active = pickAngle(cur.angles, cur.currentAngleId);
+      const sec = cur.angles.find((a) => a.id !== active.id);
+      if (!sec) return;
+
+      const nextAngles: VideoAngle[] = cur.angles.map((a) =>
+        a.id === sec.id
+          ? {
+              ...a,
+              offsetFromGameTime: (a.offsetFromGameTime ?? 0) + deltaSec,
+              autoOffsetSource: "manual" as const,
+            }
+          : { ...a },
+      );
+
+      void update(rr, { angles: nextAngles, updatedAt: serverTimestamp() })
+        .then(() => {
+          void (async () => {
+            const primary = getPlayer();
+            if (!primary) return;
+            const fb = roomStateRef.current?.currentTime ?? 0;
+            const t = await readYoutubeCurrentTime(primary, fb);
+            applyHostMultiViewSecondaryDirect({
+              primaryAnchorTime: t,
+              isPlaying: roomStateRef.current?.isPlaying ?? false,
+              playbackRate:
+                roomStateRef.current?.playbackRate ?? DEFAULT_PLAYBACK_RATE,
+              reason: "manual-fine-tune-offset",
+            });
+          })();
+        })
+        .catch(() => {
+          /* RTDB */
+        });
+    },
+    [isHost, roomId, applyHostMultiViewSecondaryDirect],
+  );
 
   const handlePlayerReady = useCallback(() => {
     const s = roomStateRef.current;
@@ -4625,9 +4447,6 @@ function RoomContent() {
   const hostChipClean =
     "rounded-md border border-white/[0.10] bg-zinc-950/85 px-2 py-1 text-[10px] font-medium text-zinc-50 shadow-sm shadow-black/35 backdrop-blur-md transition duration-150 hover:border-white/18 hover:bg-zinc-900/90 active:scale-[0.97] active:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950";
 
-  const hostChipSyncClean =
-    "rounded-md border border-blue-500/45 bg-blue-950/55 px-2 py-1 text-[10px] font-semibold text-white shadow-sm shadow-blue-950/40 backdrop-blur-md transition duration-150 hover:border-blue-400/60 hover:bg-blue-900/50 active:scale-[0.97] active:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/55 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950";
-
   const hostControlsBarClean =
     "pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-xl border border-white/[0.08] bg-zinc-950/90 px-2 py-1.5 shadow-xl shadow-black/55 backdrop-blur-md ring-1 ring-white/[0.06]";
 
@@ -4937,16 +4756,61 @@ function RoomContent() {
             >
               <button
                 type="button"
-                onClick={() => (roomState?.isPlaying ? handlePause() : handlePlay())}
+                onClick={() =>
+                  roomState?.isPlaying ? handlePause() : handlePlay()
+                }
                 className={hostChip}
               >
                 {roomState?.isPlaying ? "Pause" : "Play"}
               </button>
-              <button type="button" onClick={handleSeekLiveBack30} className={hostChip}>
+              <button
+                type="button"
+                onClick={handleSeekLiveBack30}
+                className={hostChip}
+              >
                 -30s
               </button>
               <button type="button" onClick={handleSeekBack} className={hostChip}>
                 -10s
+              </button>
+              <button
+                type="button"
+                onClick={() => void handlePrevChapter()}
+                className={hostChip}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNextChapter()}
+                className={hostChip}
+              >
+                Next
+              </button>
+              <button type="button" onClick={cycleFf} className={hostChip}>
+                {ffMode === 0
+                  ? "FF"
+                  : ffMode === 2
+                    ? "FF 2×"
+                    : ffMode === 4
+                      ? "FF 4×"
+                      : "FF 8×"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleManualFineTuneSecondaryOffset(-1)}
+                className={hostChip}
+                title="Manual fine-tune: shift secondary −1s"
+              >
+                −1s
+              </button>
+              <button
+                type="button"
+                onClick={() => handleManualFineTuneSecondaryOffset(1)}
+                className={hostChip}
+                title="Manual fine-tune: shift secondary +1s"
+              >
+                +1s
               </button>
               <button
                 type="button"
@@ -4969,7 +4833,11 @@ function RoomContent() {
                 </button>
               ) : null}
               {showResetSyncBtn ? (
-                <button type="button" onClick={handleResetManualSyncLock} className={hostChip}>
+                <button
+                  type="button"
+                  onClick={handleResetManualSyncLock}
+                  className={hostChip}
+                >
                   Reset Sync
                 </button>
               ) : null}
@@ -5072,12 +4940,6 @@ function RoomContent() {
                   onClick={() => {
                     roomViewModeRef.current = "sync";
                     setRoomViewMode("sync");
-                    const s = roomStateRef.current;
-                    const syncAnchor = s?.syncAnchorTime ?? 0;
-                    const synced = syncAnchor > 0 || s?.manualSyncLocked === true;
-                    if (synced && isHost && syncAnchor > 0) {
-                      window.setTimeout(() => handleHostScrubCommit(syncAnchor), 0);
-                    }
                   }}
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                     roomViewMode === "sync"
@@ -5275,22 +5137,7 @@ function RoomContent() {
                       <span className="hidden text-[9px] font-medium uppercase tracking-wide text-zinc-500 sm:inline">
                         2nd
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleNudgeSecondaryOffset(-1)}
-                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
-                        title="Shift secondary angle −1s vs game clock"
-                      >
-                        −1s
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleNudgeSecondaryOffset(1)}
-                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
-                        title="Shift secondary angle +1s vs game clock"
-                      >
-                        +1s
-                      </button>
+                      {/* Manual fine-tune moved to Sync View transport bar */}
                     </div>
                   ) : null}
                   {manualSyncBadgeVisible ? (
@@ -6017,23 +5864,7 @@ function RoomContent() {
                   >
                     Reconnect
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleHostResync}
-                    className={hostChipSyncClean}
-                  >
-                    Sync
-                  </button>
-                  {roomState?.angles?.length && roomState.angles.length > 1 ? (
-                    <button
-                      type="button"
-                      onClick={handleJumpToSyncStart}
-                      className={hostChipClean}
-                      title="Seek to the earliest shared moment where all angles exist"
-                    >
-                      Jump to Sync Start
-                    </button>
-                  ) : null}
+                  {/* Removed smart resync / jump-to-start for deterministic sync */}
                   </div>
                   {isManualSyncMode ? (
                     <div className="mt-1 w-full rounded-lg border border-amber-500/20 bg-amber-950/20 px-3 py-2 text-[11px] font-medium text-amber-100/90">
@@ -6166,23 +5997,7 @@ function RoomContent() {
                       >
                         Reconnect Live
                       </button>
-                      <button
-                        type="button"
-                        onClick={handleHostResync}
-                        className={hostChipSync}
-                      >
-                        Sync
-                      </button>
-                      {roomState?.angles?.length && roomState.angles.length > 1 ? (
-                        <button
-                          type="button"
-                          onClick={handleJumpToSyncStart}
-                          className={hostChip}
-                          title="Seek to the earliest shared moment where all angles exist"
-                        >
-                          Jump to Sync Start
-                        </button>
-                      ) : null}
+                      {/* Removed smart resync / jump-to-start for deterministic sync */}
                       <button
                         type="button"
                         onClick={cycleFf}
