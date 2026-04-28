@@ -533,6 +533,23 @@ function stableKey(s: RoomState): string {
   return `${s.videoId}|${s.currentAngleId}|${s.isPlaying}|${s.currentTime}|${s.playbackRate}|${s.updatedAt}|${s.action}|${s.actionId}|pc:${pc}`;
 }
 
+function getSafeAnchorTime(requestedTime: unknown, state: RoomState): number {
+  const requested =
+    typeof requestedTime === "number" && Number.isFinite(requestedTime)
+      ? requestedTime
+      : state.currentTime ?? 0;
+  const syncAnchor = state.syncAnchorTime ?? 0;
+  const safe = Math.max(requested, syncAnchor);
+  if (safe !== requested && syncAnchor > 0) {
+    syncLog("anchor clamped to syncAnchorTime", {
+      requested,
+      syncAnchorTime: syncAnchor,
+      safe,
+    });
+  }
+  return safe;
+}
+
 /** Compare Firebase `currentTime` snapshots (often stale during playback). */
 function sameDbClock(a: number, b: number): boolean {
   return Math.abs(a - b) < 0.05;
@@ -1045,11 +1062,12 @@ async function viewerApplyPauseCommand(
   lastViewerSyncRateRef: { current: number },
 ): Promise<void> {
   const localT = await player.getCurrentTime();
-  const drift = localT - state.currentTime;
+  const anchorTime = getSafeAnchorTime(state.currentTime, state);
+  const drift = localT - anchorTime;
   await safeSetPlaybackRate(player, state.playbackRate);
   lastViewerSyncRateRef.current = state.playbackRate;
   if (Math.abs(drift) > SEEK_DRIFT_PAUSED_S) {
-    await player.seekTo(state.currentTime, true);
+    await player.seekTo(anchorTime, true);
   }
   await applyPlaybackIfNeeded(player, false);
 }
@@ -1060,7 +1078,8 @@ async function viewerApplySeekCommand(
   lastViewerSyncRateRef: { current: number },
   viewerPlaybackUnlockedRef: { current: boolean },
 ): Promise<void> {
-  await player.seekTo(state.currentTime, true);
+  const anchorTime = getSafeAnchorTime(state.currentTime, state);
+  await player.seekTo(anchorTime, true);
   await safeSetPlaybackRate(player, state.playbackRate);
   lastViewerSyncRateRef.current = state.playbackRate;
   await ensureViewerPlaybackIntent(
@@ -1093,7 +1112,8 @@ async function applyViewerImmediatePlaybackCommand(
     pauseRetryTimerRef.current = null;
   }
 
-  await player.seekTo(cmd.anchorVideoTime, true);
+  const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, roomSnapshot);
+  await player.seekTo(anchorTime, true);
   await safeSetPlaybackRate(player, cmd.playbackRate);
   lastViewerSyncRateRef.current = cmd.playbackRate;
 
@@ -1116,7 +1136,7 @@ async function applyViewerImmediatePlaybackCommand(
           /* ignore */
         }
         const st2 = await readYoutubePlayerState(player);
-        const ct = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+        const ct = await readYoutubeCurrentTime(player, anchorTime);
         syncLog("viewer post-apply (after play retry)", {
           commandId: cmd.commandId,
           ytState: st2,
@@ -1143,7 +1163,7 @@ async function applyViewerImmediatePlaybackCommand(
           /* ignore */
         }
         const st2 = await readYoutubePlayerState(player);
-        const ct = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+        const ct = await readYoutubeCurrentTime(player, anchorTime);
         syncLog("viewer post-apply (after pause retry)", {
           commandId: cmd.commandId,
           ytState: st2,
@@ -1167,7 +1187,7 @@ async function applyViewerImmediatePlaybackCommand(
   }
 
   const stFinal = await readYoutubePlayerState(player);
-  const ctFinal = await readYoutubeCurrentTime(player, cmd.anchorVideoTime);
+  const ctFinal = await readYoutubeCurrentTime(player, anchorTime);
   syncLog("viewer post-apply (immediate command)", {
     type: cmd.type,
     commandId: cmd.commandId,
@@ -1188,29 +1208,30 @@ async function viewerApplyLegacyTimeDriven(
 ): Promise<void> {
   const localT = await player.getCurrentTime();
   if (stale()) return;
+  const anchorTime = getSafeAnchorTime(state.currentTime, state);
 
   let tForDrift = localT;
   let didSeek = false;
   if (
     shouldSeekToRemoteTime({
       localT,
-      remoteT: state.currentTime,
+      remoteT: anchorTime,
       isPlaying: state.isPlaying,
       prev,
       state,
     })
   ) {
     syncLog("viewer legacy drift seek", {
-      drift: localT - state.currentTime,
-      remoteT: state.currentTime,
+      drift: localT - anchorTime,
+      remoteT: anchorTime,
     });
-    await player.seekTo(state.currentTime, true);
+    await player.seekTo(anchorTime, true);
     didSeek = true;
     tForDrift = await player.getCurrentTime();
   }
   if (stale()) return;
 
-  const drift = tForDrift - state.currentTime;
+  const drift = tForDrift - anchorTime;
   const hostRate = state.playbackRate;
   const targetPlaybackRate = state.isPlaying
     ? Math.abs(drift) < VIEWER_HEARTBEAT_DRIFT_IGNORE_S
@@ -1750,6 +1771,55 @@ function RoomContent() {
     return () => unsub();
   }, [roomRef]);
 
+  // Viewer multi-angle: when secondary is mounted, keep it aligned on every room snapshot.
+  useEffect(() => {
+    if (isHost) return;
+    if (!roomState) return;
+    if (isManualSyncMode) return;
+    if (coachViewModeRef.current !== "multi") return;
+    if (!roomState.angles?.length || roomState.angles.length < 2) return;
+    const secondary =
+      secondaryPlayerRef.current?.getInternalPlayer() as YouTubePlayer | null | undefined;
+    const primary = getPlayer();
+    if (!primary || !secondary) return;
+    const activeAngle = pickAngle(roomState.angles, roomState.currentAngleId);
+    const secondaryAngle =
+      roomState.angles.find((a) => a.id !== activeAngle.id) ?? roomState.angles[0]!;
+    const anchorTime = getSafeAnchorTime(roomState.currentTime, roomState);
+    const tPrimary = Math.max(0, anchorTime + (activeAngle.offsetFromGameTime ?? 0));
+    const tSecondary = Math.max(
+      0,
+      anchorTime + (secondaryAngle.offsetFromGameTime ?? 0),
+    );
+    syncLog("viewer apply snapshot to multi players", {
+      anchorTime,
+      tPrimary,
+      tSecondary,
+      isPlaying: roomState.isPlaying,
+    });
+    void (async () => {
+      try {
+        await primary.seekTo(tPrimary, true);
+        await secondary.seekTo(tSecondary, true);
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        await safeSetPlaybackRate(primary, roomState.playbackRate);
+        await safeSetPlaybackRate(secondary, roomState.playbackRate);
+      } catch {
+        /* YouTube API */
+      }
+      if (roomState.isPlaying) {
+        await ensureViewerPlaybackIntent(primary, true, viewerPlaybackUnlockedRef);
+        await ensureViewerPlaybackIntent(secondary, true, viewerPlaybackUnlockedRef);
+      } else {
+        await applyPlaybackIfNeeded(primary, false);
+        await applyPlaybackIfNeeded(secondary, false);
+      }
+    })();
+  }, [isHost, roomState, isManualSyncMode]);
+
   const applyRoomStateToPlayer = useCallback(
     async (state: RoomState, prev: RoomState | null, gen: number) => {
       const stale = () => gen !== applyRoomGenRef.current;
@@ -1840,6 +1910,19 @@ function RoomContent() {
 
           if (stale()) return;
 
+          const viewerSecondary =
+            coachViewModeRef.current === "multi"
+              ? (secondaryPlayerRef.current?.getInternalPlayer() as
+                  | YouTubePlayer
+                  | null
+                  | undefined)
+              : undefined;
+          const viewerHasMulti =
+            coachViewModeRef.current === "multi" &&
+            !!viewerSecondary &&
+            !!state.angles?.length &&
+            state.angles.length > 1;
+
           const cmd = state.playbackCommand;
           const cmdApply =
             !!cmd &&
@@ -1851,24 +1934,74 @@ function RoomContent() {
             cmd.commandId > lastAppliedCommandIdRef.current;
 
           if (cmdApply) {
-            syncLog("viewer immediate apply", cmd);
-            await applyViewerImmediatePlaybackCommand(
-              cmd,
-              state,
-              player,
-              lastViewerSyncRateRef,
-              viewerPlaybackUnlockedRef,
-              playRetryTimerRef,
-              pauseRetryTimerRef,
-              retryTargetCommandIdRef,
-            );
+            if (viewerHasMulti && viewerSecondary) {
+              const activeAngle = pickAngle(state.angles, state.currentAngleId);
+              const secondaryAngle =
+                state.angles.find((a) => a.id !== activeAngle.id) ?? state.angles[0]!;
+              const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, state);
+              const tPrimary = Math.max(
+                0,
+                anchorTime + (activeAngle.offsetFromGameTime ?? 0),
+              );
+              const tSecondary = Math.max(
+                0,
+                anchorTime + (secondaryAngle.offsetFromGameTime ?? 0),
+              );
+              syncLog("viewer apply cmd (multi)", {
+                type: cmd.type,
+                commandId: cmd.commandId,
+                anchorTime,
+                tPrimary,
+                tSecondary,
+                isPlaying: state.isPlaying,
+              });
+              await safeSetPlaybackRate(player, cmd.playbackRate);
+              await safeSetPlaybackRate(viewerSecondary, cmd.playbackRate);
+              lastViewerSyncRateRef.current = cmd.playbackRate;
+              await player.seekTo(tPrimary, true);
+              await viewerSecondary.seekTo(tSecondary, true);
+              if (state.isPlaying) {
+                await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+                await ensureViewerPlaybackIntent(
+                  viewerSecondary,
+                  true,
+                  viewerPlaybackUnlockedRef,
+                );
+              } else {
+                await applyPlaybackIfNeeded(player, false);
+                await applyPlaybackIfNeeded(viewerSecondary, false);
+              }
+            } else {
+              syncLog("viewer immediate apply", cmd);
+              await applyViewerImmediatePlaybackCommand(
+                cmd,
+                state,
+                player,
+                lastViewerSyncRateRef,
+                viewerPlaybackUnlockedRef,
+                playRetryTimerRef,
+                pauseRetryTimerRef,
+                retryTargetCommandIdRef,
+              );
+            }
             lastAppliedCommandIdRef.current = cmd.commandId;
+          } else if (cmd) {
+            syncLog("viewer command ignored", {
+              cmdId: cmd.commandId,
+              lastApplied: lastAppliedCommandIdRef.current,
+              activeVideoId: cmd.activeVideoId,
+              roomVideoId: state.videoId,
+            });
           }
 
           if (stale()) return;
 
           switch (state.action) {
             case "sync":
+              syncLog("viewer sync snapshot", {
+                currentTime: state.currentTime,
+                syncAnchorTime: state.syncAnchorTime ?? 0,
+              });
               await viewerApplySyncSnapshot(
                 player,
                 state,
@@ -1898,7 +2031,8 @@ function RoomContent() {
                 !state.playbackCommand ||
                 state.playbackCommand.activeVideoId !== state.videoId
               ) {
-                await player.seekTo(state.currentTime, true);
+                const anchorTime = getSafeAnchorTime(state.currentTime, state);
+                await player.seekTo(anchorTime, true);
                 await safeSetPlaybackRate(player, state.playbackRate);
                 lastViewerSyncRateRef.current = state.playbackRate;
                 if (state.isPlaying) {
@@ -2868,6 +3002,9 @@ function RoomContent() {
     ) => {
       const rr = roomRefForWrite.current;
       if (!rr || !isHostRef.current || !roomId) return;
+      const s = roomStateRef.current;
+      const safeAnchorTime =
+        s !== null ? getSafeAnchorTime(fields.currentTime, s) : fields.currentTime;
       hostActionSeqRef.current += 1;
       const commandId = hostActionSeqRef.current;
       const activeVideoId =
@@ -2877,7 +3014,7 @@ function RoomContent() {
         roomId,
         activeVideoId,
         issuedAt: Date.now(),
-        anchorVideoTime: fields.currentTime,
+        anchorVideoTime: safeAnchorTime,
         playbackRate: fields.playbackRate,
         commandId,
       };
@@ -2890,7 +3027,7 @@ function RoomContent() {
       });
       void update(rr, {
         isPlaying: fields.isPlaying,
-        currentTime: fields.currentTime,
+        currentTime: safeAnchorTime,
         playbackRate: fields.playbackRate,
         ...(fields.videoId ? { videoId: fields.videoId } : {}),
         ...(fields.currentAngleId ? { currentAngleId: fields.currentAngleId } : {}),
