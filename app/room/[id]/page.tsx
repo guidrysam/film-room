@@ -199,6 +199,8 @@ type RoomState = {
   /** Camera angles; synthesized as a single default angle when absent from RTDB. */
   angles: VideoAngle[];
   currentAngleId: string;
+  /** Which angle is shown on top in stacked (viewer follow-coach). */
+  selectedDisplayAngleId?: string;
   /** UI flag after manual sync (no automatic background sync in archive mode). */
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
@@ -480,6 +482,14 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
       ? rawAngleId.trim()
       : angles[0]!.id;
 
+  const rawSelected = val.selectedDisplayAngleId;
+  const selectedDisplayAngleId =
+    typeof rawSelected === "string" &&
+    rawSelected.trim() !== "" &&
+    angles.some((a) => a.id === rawSelected.trim())
+      ? rawSelected.trim()
+      : undefined;
+
   const angleByVideo = angles.findIndex((a) => a.videoId === videoIdRaw);
   if (angleByVideo >= 0) {
     currentAngleId = angles[angleByVideo]!.id;
@@ -522,6 +532,7 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
     chapters: parseChapters(val.chapters),
     angles,
     currentAngleId,
+    ...(selectedDisplayAngleId ? { selectedDisplayAngleId } : {}),
     ...(manualSyncLocked ? { manualSyncLocked: true } : {}),
     ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
   };
@@ -1126,6 +1137,7 @@ function RoomContent() {
     [roomState?.videoId, videoIdFromUrl],
   );
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
+  const viewerAnglePlayersRef = useRef<Record<string, YouTubePlayer>>({});
   const lastAppliedKey = useRef<string>("");
   /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
   const applyRoomGenRef = useRef(0);
@@ -1738,6 +1750,73 @@ function RoomContent() {
     if (isHost) return;
     if (!roomState) return;
     if (isManualSyncMode) return;
+    // Sync View stacked multi-angle viewer: apply command to ALL mounted angles.
+    if (roomViewModeRef.current === "sync" && roomState.angles.length > 1) {
+      const cmd = roomState.playbackCommand;
+      const cmdApply =
+        !!cmd &&
+        (cmd.type === "play" ||
+          cmd.type === "pause" ||
+          cmd.type === "seek" ||
+          cmd.type === "resync") &&
+        cmd.activeVideoId === roomState.videoId &&
+        cmd.commandId !== lastAppliedCommandIdRef.current;
+
+      if (!cmdApply) return;
+
+      void (async () => {
+        const anchorTime = getSafeAnchorTime(cmd.anchorVideoTime, roomState);
+        const activeId = roomState.currentAngleId;
+        const displayId =
+          roomState.selectedDisplayAngleId ?? roomState.currentAngleId;
+
+        for (const a of roomState.angles) {
+          const p = viewerAnglePlayersRef.current[a.id];
+          if (!p) continue;
+          try {
+            await safeSetPlaybackRate(p, cmd.playbackRate);
+          } catch {
+            /* ignore */
+          }
+          const target =
+            a.id === activeId
+              ? Math.max(0, anchorTime)
+              : Math.max(0, anchorTime + (a.offsetFromGameTime ?? 0));
+          try {
+            const ct = await readYoutubeCurrentTime(p, target);
+            if (Math.abs(ct - target) >= VIEWER_SEEK_DEADBAND_S) {
+              await p.seekTo(target, true);
+            }
+          } catch {
+            /* ignore */
+          }
+
+          try {
+            if (a.id === displayId) p.unMute?.();
+            else p.mute?.();
+          } catch {
+            /* ignore */
+          }
+        }
+
+        // Apply play/pause intent once (no background correction).
+        for (const a of roomState.angles) {
+          const p = viewerAnglePlayersRef.current[a.id];
+          if (!p) continue;
+          if (roomState.isPlaying) {
+            await ensureViewerPlaybackIntent(p, true, viewerPlaybackUnlockedRef);
+          } else {
+            await applyPlaybackIfNeeded(p, false);
+          }
+        }
+
+        lastAppliedCommandIdRef.current = cmd.commandId;
+        viewerInitialAppliedRef.current = true;
+      })();
+
+      return;
+    }
+
     const yt = playerRef.current;
     const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
 
@@ -3225,6 +3304,21 @@ function RoomContent() {
       if (!cur || angleId === cur.currentAngleId) return;
       const nextAngle = cur.angles.find((a) => a.id === angleId);
       if (!nextAngle) return;
+
+      // Sync View (stacked multi-angle): do not reload iframes or swap video ids.
+      if (roomViewModeRef.current === "sync" && cur.angles.length > 1) {
+        const rr = roomRefForWrite.current;
+        if (!rr) return;
+        void update(rr, {
+          currentAngleId: angleId,
+          selectedDisplayAngleId: angleId,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {
+          /* RTDB */
+        });
+        return;
+      }
+
       void (async () => {
         const scheduleMultiViewSecondary = () =>
           window.setTimeout(() => syncSecondaryPlayersOnce("angle-switch"), 420);
@@ -4471,6 +4565,8 @@ function RoomContent() {
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const secondaryAngle =
       s.angles.find((a) => a.id !== activeAngle.id) ?? s.angles[0]!;
+    const displayAngleId =
+      s.selectedDisplayAngleId ?? s.currentAngleId ?? s.angles[0]!.id;
 
     return (
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
@@ -4689,16 +4785,49 @@ function RoomContent() {
               </div>
             </div>
             <div className="relative aspect-video w-full overflow-hidden bg-black">
-              <YouTube
-                key="sync-primary"
-                ref={playerRef}
-                videoId={safeDecodeVideoId(activeAngle.videoId)}
-                onReady={handlePlayerReady}
-                onStateChange={handleYoutubeStateChange}
-                className="absolute left-0 top-0 h-full w-full"
-                iframeClassName="absolute left-0 top-0 h-full w-full"
-                opts={youtubePlayerOpts}
-              />
+              {!isHost && multi ? (
+                <div className="absolute inset-0">
+                  {s.angles.map((a) => {
+                    const top = a.id === displayAngleId;
+                    return (
+                      <div
+                        key={a.id}
+                        className={`absolute inset-0 transition-opacity duration-150 ${
+                          top ? "z-20 opacity-100" : "z-10 opacity-0"
+                        }`}
+                        style={{ pointerEvents: top ? "auto" : "none" }}
+                      >
+                        <YouTube
+                          videoId={safeDecodeVideoId(a.videoId)}
+                          onReady={(e) => {
+                            viewerAnglePlayersRef.current[a.id] = e.target as YouTubePlayer;
+                            try {
+                              if (a.id === displayAngleId) e.target.unMute?.();
+                              else e.target.mute?.();
+                            } catch {
+                              /* ignore */
+                            }
+                          }}
+                          className="absolute left-0 top-0 h-full w-full"
+                          iframeClassName="absolute left-0 top-0 h-full w-full"
+                          opts={youtubePlayerOpts}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <YouTube
+                  key="sync-primary"
+                  ref={playerRef}
+                  videoId={safeDecodeVideoId(activeAngle.videoId)}
+                  onReady={handlePlayerReady}
+                  onStateChange={handleYoutubeStateChange}
+                  className="absolute left-0 top-0 h-full w-full"
+                  iframeClassName="absolute left-0 top-0 h-full w-full"
+                  opts={youtubePlayerOpts}
+                />
+              )}
             </div>
             {showIndependentControls
               ? renderSyncSetupControls({
@@ -4709,7 +4838,7 @@ function RoomContent() {
               : null}
           </div>
 
-          {multi && coachViewMode === "multi" ? (
+          {isHost && multi && coachViewMode === "multi" ? (
             <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-zinc-950/35 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm">
               <div className="flex items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2">
