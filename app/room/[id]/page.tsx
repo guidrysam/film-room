@@ -2461,86 +2461,89 @@ function RoomContent() {
       const playing = opts.which === "primary" ? ui.primaryPlaying : ui.secondaryPlaying;
       const safeD = Number.isFinite(d) && d > 0 ? d : Math.max(0, t + 1);
       return (
-        <div className="w-full border-t border-white/10 bg-black/65 px-2 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-zinc-200">
-                {opts.label}
-              </div>
-              <div className="mt-0.5 font-mono tabular-nums text-[11px] text-zinc-200">
-                {formatChapterTime(t)} / {formatChapterTime(safeD)}
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                onClick={() => {
-                  const p = opts.get();
-                  if (!p) return;
-                  try {
-                    if (playing) p.pauseVideo?.();
-                    else p.playVideo?.();
-                  } catch {
-                    /* YouTube API */
-                  }
-                }}
-              >
-                {playing ? "Pause" : "Play"}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                onClick={() => {
-                  const p = opts.get();
-                  if (!p) return;
-                  try {
-                    p.seekTo?.(Math.max(0, t - 10), true);
-                  } catch {
-                    /* YouTube API */
-                  }
-                }}
-                title="-10s (this angle only)"
-              >
-                -10
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                onClick={() => {
-                  const p = opts.get();
-                  if (!p) return;
-                  try {
-                    p.seekTo?.(Math.max(0, t + 10), true);
-                  } catch {
-                    /* YouTube API */
-                  }
-                }}
-                title="+10s (this angle only)"
-              >
-                +10
-              </button>
-            </div>
+        <div className="w-full border-t border-white/10 bg-black/70 px-3 py-2.5">
+          <div className="mb-2 text-[11px] font-medium text-blue-200/90">
+            {opts.label} Controls (independent)
           </div>
-          <input
-            type="range"
-            min={0}
-            max={safeD}
-            step={0.05}
-            value={Math.max(0, Math.min(safeD, t))}
-            onChange={(e) => {
-              const v = Number.parseFloat(e.target.value);
-              if (!Number.isFinite(v)) return;
-              const p = opts.get();
-              if (!p) return;
-              try {
-                p.seekTo?.(Math.max(0, v), true);
-              } catch {
-                /* YouTube API */
-              }
-            }}
-            className="mt-1 w-full accent-blue-500"
-          />
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-md border border-white/15 bg-white/[0.06] px-3 py-2 text-[11px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.10] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              onClick={() => {
+                const p = opts.get();
+                if (!p) return;
+                try {
+                  if (playing) p.pauseVideo?.();
+                  else p.playVideo?.();
+                } catch {
+                  /* YouTube API */
+                }
+              }}
+            >
+              {playing ? "Pause" : "Play"}
+            </button>
+            <span className="rounded-md border border-white/10 bg-black/60 px-2 py-1 font-mono text-[11px] tabular-nums text-zinc-200">
+              {formatChapterTime(t)}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={safeD}
+              step={0.05}
+              value={Math.max(0, Math.min(safeD, t))}
+              onChange={(e) => {
+                const v = Number.parseFloat(e.target.value);
+                if (!Number.isFinite(v)) return;
+                const p = opts.get();
+                if (!p) return;
+                try {
+                  p.seekTo?.(Math.max(0, v), true);
+                } catch {
+                  /* YouTube API */
+                }
+              }}
+              className="min-w-0 flex-1 accent-blue-500"
+            />
+            <span className="w-12 text-right font-mono text-[11px] tabular-nums text-zinc-400">
+              {formatChapterTime(safeD)}
+            </span>
+          </div>
+
+          <div className="mt-2 flex justify-center gap-3">
+            <button
+              type="button"
+              className="rounded-md border border-white/12 bg-white/[0.05] px-3 py-1.5 text-[11px] font-semibold text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              onClick={() => {
+                const p = opts.get();
+                if (!p) return;
+                try {
+                  p.seekTo?.(Math.max(0, t - 10), true);
+                } catch {
+                  /* YouTube API */
+                }
+              }}
+              title="-10s (this angle only)"
+            >
+              -10s
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-white/12 bg-white/[0.05] px-3 py-1.5 text-[11px] font-semibold text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              onClick={() => {
+                const p = opts.get();
+                if (!p) return;
+                try {
+                  p.seekTo?.(Math.max(0, t + 10), true);
+                } catch {
+                  /* YouTube API */
+                }
+              }}
+              title="+10s (this angle only)"
+            >
+              +10s
+            </button>
+          </div>
         </div>
       );
     },
@@ -4796,40 +4799,14 @@ function RoomContent() {
           <div className={frPanel}>
             <p className={frPanelTitle}>Camera angle</p>
             <div className="flex flex-wrap items-center gap-2">
-              {isHost ? (
-                !isManualSyncMode ? (
-                  <button
-                    type="button"
-                    onClick={handleManualSyncEnter}
-                    className={secondaryHostBtn}
-                  >
-                    Sync Angles
-                  </button>
-                ) : (
-                  <div className="flex min-w-0 w-full flex-col gap-2 sm:w-auto">
-                    <div className="max-w-md rounded-lg border border-amber-500/15 bg-amber-950/20 px-3 py-2 text-[11px] font-medium text-amber-100/90">
-                      <span className="font-semibold">Sync Setup Mode:</span>{" "}
-                      position both videos to the same moment, then click{" "}
-                      <span className="font-semibold">Sync These Angles</span>.
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleManualSyncTheseAngles()}
-                        className={secondaryHostBtn}
-                      >
-                        Sync These Angles
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleManualSyncCancel}
-                        className={secondaryHostBtn}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )
+              {isHost && !isManualSyncMode ? (
+                <button
+                  type="button"
+                  onClick={handleManualSyncEnter}
+                  className={secondaryHostBtn}
+                >
+                  Sync Angles
+                </button>
               ) : null}
               {isHost ? (
                 <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
@@ -5107,6 +5084,45 @@ function RoomContent() {
         ) : roomState && !isHost ? (
           <div className="mb-3 flex items-center justify-center rounded-lg border border-white/[0.06] bg-zinc-950/35 px-3 py-2.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
             Watching live
+          </div>
+        ) : null}
+
+        {isHost &&
+        isManualSyncMode &&
+        coachViewMode === "multi" &&
+        roomState?.angles?.length &&
+        roomState.angles.length > 1 &&
+        !cleanMode ? (
+          <div className="mb-3">
+            <div className="flex items-stretch justify-between gap-3 rounded-xl border border-blue-500/35 bg-blue-950/15 px-4 py-3 shadow-[0_0_0_1px_rgba(59,130,246,0.15)]">
+              <div className="min-w-0">
+                <div className="text-[12px] font-extrabold uppercase tracking-wide text-blue-200">
+                  Sync Setup Mode
+                </div>
+                <div className="mt-0.5 text-[12px] text-blue-100/80">
+                  Position both videos to the same real-world moment, then click{" "}
+                  <span className="font-semibold text-blue-100">
+                    “Sync These Angles.”
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualSyncCancel}
+                  className="rounded-lg border border-white/12 bg-white/[0.04] px-4 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleManualSyncTheseAngles()}
+                  className="rounded-lg border border-blue-400/35 bg-blue-600 px-4 py-2 text-[12px] font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                >
+                  Sync These Angles
+                </button>
+              </div>
+            </div>
           </div>
         ) : null}
 
