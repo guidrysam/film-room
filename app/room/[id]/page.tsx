@@ -549,7 +549,7 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
   };
 }
 
-/** Stacked Sync View: which angle viewers see on top (unmuted). */
+/** Sync View (viewer): Player View / active angle = large main (unmuted); other = PiP (muted). */
 function resolveViewerStackTopAngleId(state: RoomState): string {
   const ids = state.angles.map((a) => a.id);
   if (
@@ -562,7 +562,7 @@ function resolveViewerStackTopAngleId(state: RoomState): string {
   return state.angles[0]!.id;
 }
 
-/** Stable key for stacked-viewer mute layout only (ignores playhead / heartbeat fields). */
+/** Stable key for viewer main/PiP mute layout only (ignores playhead / heartbeat fields). */
 function viewerStackSelectionMuteKey(state: RoomState | null): string {
   if (!state || state.angles.length < 2) return "";
   return [
@@ -1337,24 +1337,25 @@ function RoomContent() {
     isHostRef.current = isHost;
   });
 
-  /** Stacked Sync viewer: nudge the visible angle to play (no seek; respects unlock + room isPlaying). */
+  /** Sync multi-angle viewer: nudge every mounted angle to play (no seek; respects unlock + room isPlaying). */
   const ensureSelectedViewerStackPlayerPlaying = useCallback(async () => {
     if (isHostRef.current) return;
     if (roomViewModeRef.current !== "sync") return;
     const rs = roomStateRef.current;
     if (!rs || rs.angles.length < 2) return;
-    const topAngleId = resolveViewerStackTopAngleId(rs);
-    const selected = viewerAnglePlayersRef.current[topAngleId];
-    if (!selected) return;
     if (!rs.isPlaying) return;
     if (!viewerPlaybackUnlockedRef.current) return;
-    const st = await readYoutubePlayerState(selected);
-    syncLog("viewer ensure playing", topAngleId, st);
-    if (st !== YT_PLAYING) {
-      try {
-        selected.playVideo?.();
-      } catch {
-        /* YouTube API */
+    for (const a of rs.angles) {
+      const p = viewerAnglePlayersRef.current[a.id];
+      if (!p) continue;
+      const st = await readYoutubePlayerState(p);
+      syncLog("viewer ensure playing", a.id, st);
+      if (st !== YT_PLAYING) {
+        try {
+          p.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
       }
     }
   }, []);
@@ -5046,55 +5047,46 @@ function RoomContent() {
               ) : null}
             </div>
             <div className="relative aspect-video w-full overflow-hidden bg-black">
-              {roomId && !isHost && multi ? (
-                <TelestratorOverlay
-                  roomId={roomId}
-                  isHost={isHost}
-                  drawEnabled={telDrawOn}
-                  wrapClassName="pointer-events-none absolute inset-0 z-[5]"
-                />
-              ) : null}
               {!isHost && multi ? (
-                <div className="absolute inset-0 z-[18]">
+                <>
                   {s.angles.map((a) => {
-                    const top = a.id === viewerStackTopResolvedId;
+                    const isMain = a.id === viewerStackTopResolvedId;
                     return (
                       <div
                         key={a.id}
-                        className={`absolute inset-0 transition-opacity duration-150 ease-out ${
-                          top
-                            ? "z-[30] opacity-100 visible pointer-events-auto"
-                            : "z-10 opacity-0 invisible pointer-events-none"
-                        }`}
+                        className={
+                          isMain
+                            ? "absolute inset-0 z-10"
+                            : "absolute bottom-3 right-3 z-20 aspect-video w-[min(38vw,16rem)] max-w-[44%] overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50"
+                        }
                       >
-                        <YoutubePointerGate drawOn={false} blockOn={false}>
-                          <YouTube
-                            videoId={safeDecodeVideoId(a.videoId)}
-                            onReady={(e) => {
-                              viewerAnglePlayersRef.current[a.id] =
-                                e.target as YouTubePlayer;
-                              try {
-                                if (a.id === viewerStackTopResolvedId) {
-                                  e.target.unMute?.();
-                                } else {
-                                  e.target.mute?.();
-                                }
-                              } catch {
-                                /* ignore */
-                              }
-                            }}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
-                          />
-                        </YoutubePointerGate>
+                        <YouTube
+                          videoId={safeDecodeVideoId(a.videoId)}
+                          onReady={(e) => {
+                            const pl = e.target as YouTubePlayer;
+                            viewerAnglePlayersRef.current[a.id] = pl;
+                            const rs = roomStateRef.current;
+                            const topId = rs
+                              ? resolveViewerStackTopAngleId(rs)
+                              : viewerStackTopResolvedId;
+                            try {
+                              if (a.id === topId) pl.unMute?.();
+                              else pl.mute?.();
+                            } catch {
+                              /* ignore */
+                            }
+                          }}
+                          className="absolute left-0 top-0 h-full w-full"
+                          iframeClassName="absolute left-0 top-0 h-full w-full"
+                          opts={youtubePlayerOpts}
+                        />
                       </div>
                     );
                   })}
-                  <div className="pointer-events-none absolute left-2 top-2 z-[40] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
-                    Viewer angle: {viewerTopAngleForLabel.name}
+                  <div className="pointer-events-none absolute left-2 top-2 z-[30] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
+                    Main: {viewerTopAngleForLabel.name} · PiP muted
                   </div>
-                </div>
+                </>
               ) : (
                 <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                   <YouTube
@@ -5117,6 +5109,21 @@ function RoomContent() {
                 />
               ) : null}
             </div>
+            {!isHost && multi && !viewerPlaybackUnlocked ? (
+              <div className="border-t border-white/[0.06] bg-zinc-900/55 px-3 py-2.5">
+                <p className="mb-2 text-[11px] leading-snug text-zinc-400">
+                  Tap once so both angles can play in sync with the host (no
+                  overlay on the video).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleViewerPlaybackUnlock}
+                  className="w-full rounded-lg border border-blue-500/35 bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/25 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                >
+                  Enable playback
+                </button>
+              </div>
+            ) : null}
             {showIndependentControls
               ? renderSyncSetupControls({
                   label: "Angle 1",
