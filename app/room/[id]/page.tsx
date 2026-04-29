@@ -1246,6 +1246,7 @@ function RoomContent() {
     null,
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
+  const [sessionSavedToast, setSessionSavedToast] = useState(false);
   const [coachViewMode, setCoachViewMode] = useState<"single" | "multi">("single");
   const coachViewModeRef = useRef(coachViewMode);
   useLayoutEffect(() => {
@@ -1652,8 +1653,10 @@ function RoomContent() {
             );
             const activeId = template.clips[idx]?.videoId ?? vid;
             const tplAngles = template.angles;
-            const multiAngle =
-              Array.isArray(tplAngles) && tplAngles.length > 1 ? tplAngles : null;
+            const hasTemplateAngles =
+              Array.isArray(tplAngles) && tplAngles.length >= 1
+                ? tplAngles
+                : null;
             void set(roomRef, {
               videoId: activeId,
               clips: template.clips.map((c) => ({
@@ -1669,15 +1672,29 @@ function RoomContent() {
                 videoId: ch.videoId,
                 ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
               })),
-              ...(multiAngle
+              ...(hasTemplateAngles
                 ? {
-                    angles: multiAngle,
+                    angles: hasTemplateAngles,
                     currentAngleId:
                       template.currentAngleId &&
-                      multiAngle.some((a) => a.id === template.currentAngleId)
+                      hasTemplateAngles.some((a) => a.id === template.currentAngleId)
                         ? template.currentAngleId
-                        : multiAngle[0]!.id,
+                        : hasTemplateAngles[0]!.id,
                   }
+                : {}),
+              ...(typeof template.syncAnchorTime === "number" &&
+              template.syncAnchorTime > 0
+                ? { syncAnchorTime: template.syncAnchorTime }
+                : {}),
+              ...(template.manualSyncLocked === true
+                ? { manualSyncLocked: true }
+                : {}),
+              ...(template.playerViewAngleId &&
+              hasTemplateAngles?.some((a) => a.id === template.playerViewAngleId)
+                ? { playerViewAngleId: template.playerViewAngleId }
+                : {}),
+              ...(typeof template.manualSyncAt === "number"
+                ? { manualSyncAt: template.manualSyncAt }
                 : {}),
               isPlaying: false,
               currentTime: 0,
@@ -4670,15 +4687,29 @@ function RoomContent() {
         })),
         currentClipIndex: roomState.currentClipIndex,
         ...(folderTrim !== "" ? { folder: folderTrim } : {}),
-        ...(roomState.angles.length > 1
+        ...(roomState.angles.length >= 1
           ? {
               angles: roomState.angles,
               currentAngleId: roomState.currentAngleId,
             }
           : {}),
+        ...(typeof roomState.syncAnchorTime === "number" &&
+        roomState.syncAnchorTime > 0
+          ? { syncAnchorTime: roomState.syncAnchorTime }
+          : {}),
+        ...(roomState.manualSyncLocked === true
+          ? { manualSyncLocked: true }
+          : {}),
+        ...(roomState.playerViewAngleId
+          ? { playerViewAngleId: roomState.playerViewAngleId }
+          : {}),
+        ...(typeof roomState.manualSyncAt === "number"
+          ? { manualSyncAt: roomState.manualSyncAt }
+          : {}),
       });
       closeSaveSessionDialog();
-      alert("Session saved.");
+      setSessionSavedToast(true);
+      window.setTimeout(() => setSessionSavedToast(false), 2500);
     } catch {
       alert("Could not save session. Check Firestore rules and login.");
     } finally {
@@ -4991,7 +5022,16 @@ function RoomContent() {
               {isHost ? "Host" : "Viewer"}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isHost ? (
+              <button
+                type="button"
+                onClick={() => void openSaveSessionDialog()}
+                className={secondaryHostBtn}
+              >
+                Save Session
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={handleCopySyncViewerLink}
@@ -7310,6 +7350,14 @@ function RoomContent() {
         ) : null}
       </div>
     </div>
+    {sessionSavedToast ? (
+      <div
+        className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
+        role="status"
+      >
+        Session saved
+      </div>
+    ) : null}
     {saveSessionOpen ? (
       <div
         className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"

@@ -42,6 +42,11 @@ export type SavedSessionDoc = {
   /** Alternate camera feeds (single-clip sessions); omitted when not used. */
   angles?: VideoAngle[];
   currentAngleId?: string;
+  /** Sync View: anchor time on the active angle (archive sync). */
+  syncAnchorTime?: number;
+  manualSyncLocked?: boolean;
+  playerViewAngleId?: string;
+  manualSyncAt?: number;
   ownerUserId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
@@ -124,9 +129,12 @@ function parseSavedSessionFields(
   );
   const fallbackVid = clips[safeIdx]?.videoId ?? clips[0]?.videoId ?? "";
   const chapters = parseSavedChapters(v.chapters);
+  const anglesRaw = v.angles;
+  const hasStoredAngles =
+    Array.isArray(anglesRaw) && anglesRaw.length >= 1;
   const angles =
     typeof fallbackVid === "string" && /^[a-zA-Z0-9_-]{11}$/.test(fallbackVid)
-      ? parseVideoAngles(v.angles, fallbackVid)
+      ? parseVideoAngles(hasStoredAngles ? anglesRaw : undefined, fallbackVid)
       : parseVideoAngles(undefined, "xxxxxxxxxxx");
   const currentAngleIdRaw = v.currentAngleId;
   const currentAngleId =
@@ -135,15 +143,42 @@ function parseSavedSessionFields(
     angles.some((a) => a.id === currentAngleIdRaw.trim())
       ? currentAngleIdRaw.trim()
       : angles[0]?.id;
+  const syncAnchorTimeRaw = v.syncAnchorTime;
+  const syncAnchorTime =
+    typeof syncAnchorTimeRaw === "number" &&
+    Number.isFinite(syncAnchorTimeRaw) &&
+    syncAnchorTimeRaw > 0
+      ? syncAnchorTimeRaw
+      : undefined;
+  const manualSyncLocked = v.manualSyncLocked === true;
+  const playerViewRaw = v.playerViewAngleId;
+  const playerViewAngleId =
+    typeof playerViewRaw === "string" && playerViewRaw.trim() !== ""
+      ? playerViewRaw.trim()
+      : undefined;
+  const manualSyncAtRaw = v.manualSyncAt;
+  const manualSyncAt =
+    typeof manualSyncAtRaw === "number" && Number.isFinite(manualSyncAtRaw)
+      ? manualSyncAtRaw
+      : undefined;
+  const playerViewValid =
+    !playerViewAngleId ||
+    (angles.length > 0 && angles.some((a) => a.id === playerViewAngleId));
   return {
     name: typeof v.name === "string" ? v.name : "Session",
     ...(folder ? { folder } : {}),
     clips,
     chapters,
     currentClipIndex,
-    ...(angles.length > 1
+    ...(hasStoredAngles && angles.length >= 1
       ? { angles, currentAngleId: currentAngleId ?? angles[0]!.id }
       : {}),
+    ...(syncAnchorTime !== undefined ? { syncAnchorTime } : {}),
+    ...(manualSyncLocked ? { manualSyncLocked: true } : {}),
+    ...(playerViewAngleId && playerViewValid
+      ? { playerViewAngleId }
+      : {}),
+    ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
     ownerUserId:
       typeof v.ownerUserId === "string" ? v.ownerUserId : ownerUserId,
     createdAt: v.createdAt instanceof Timestamp ? v.createdAt : undefined,
@@ -190,14 +225,20 @@ export async function saveSessionTemplate(
     folder?: string;
     angles?: VideoAngle[];
     currentAngleId?: string;
+    syncAnchorTime?: number;
+    manualSyncLocked?: boolean;
+    playerViewAngleId?: string;
+    manualSyncAt?: number;
   },
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId));
   const now = serverTimestamp();
   const folderTrim =
     typeof data.folder === "string" ? data.folder.trim() : "";
-  const multiAngle =
-    Array.isArray(data.angles) && data.angles.length > 1 ? data.angles : null;
+  const anglesToSave =
+    Array.isArray(data.angles) && data.angles.length >= 1
+      ? data.angles
+      : null;
   await setDoc(ref, {
     name: data.name,
     clips: data.clips,
@@ -207,15 +248,29 @@ export async function saveSessionTemplate(
     createdAt: now,
     updatedAt: now,
     ...(folderTrim !== "" ? { folder: folderTrim } : {}),
-    ...(multiAngle
+    ...(anglesToSave
       ? {
-          angles: multiAngle,
+          angles: anglesToSave,
           currentAngleId:
             data.currentAngleId &&
-            multiAngle.some((a) => a.id === data.currentAngleId)
+            anglesToSave.some((a) => a.id === data.currentAngleId)
               ? data.currentAngleId
-              : multiAngle[0]!.id,
+              : anglesToSave[0]!.id,
         }
+      : {}),
+    ...(typeof data.syncAnchorTime === "number" &&
+    Number.isFinite(data.syncAnchorTime) &&
+    data.syncAnchorTime > 0
+      ? { syncAnchorTime: data.syncAnchorTime }
+      : {}),
+    ...(data.manualSyncLocked === true ? { manualSyncLocked: true } : {}),
+    ...(typeof data.playerViewAngleId === "string" &&
+    data.playerViewAngleId.trim() !== ""
+      ? { playerViewAngleId: data.playerViewAngleId.trim() }
+      : {}),
+    ...(typeof data.manualSyncAt === "number" &&
+    Number.isFinite(data.manualSyncAt)
+      ? { manualSyncAt: data.manualSyncAt }
       : {}),
   });
   return ref.id;
@@ -261,12 +316,16 @@ export async function listSavedSessions(
         clips: v.clips,
         chapters: v.chapters,
         currentClipIndex: v.currentClipIndex,
-        ...(Array.isArray(v.angles) && v.angles.length > 1
+        ...(Array.isArray(v.angles) && v.angles.length >= 1
           ? {
               angles: v.angles,
               currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
             }
           : {}),
+        ...(v.syncAnchorTime !== undefined ? { syncAnchorTime: v.syncAnchorTime } : {}),
+        ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
+        ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
+        ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
         ownerUserId: v.ownerUserId,
         createdAt: v.createdAt ?? null,
         updatedAt: v.updatedAt ?? null,
@@ -298,12 +357,16 @@ export async function getSavedSession(
     clips: v.clips,
     chapters: v.chapters,
     currentClipIndex: v.currentClipIndex,
-    ...(Array.isArray(v.angles) && v.angles.length > 1
+    ...(Array.isArray(v.angles) && v.angles.length >= 1
       ? {
           angles: v.angles,
           currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
         }
       : {}),
+    ...(v.syncAnchorTime !== undefined ? { syncAnchorTime: v.syncAnchorTime } : {}),
+    ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
+    ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
+    ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
     ownerUserId: v.ownerUserId,
     createdAt: v.createdAt ?? null,
     updatedAt: v.updatedAt ?? null,
@@ -462,12 +525,16 @@ export async function getSavedSessionByShareId(
       clips: v.clips,
       chapters: v.chapters,
       currentClipIndex: v.currentClipIndex,
-      ...(Array.isArray(v.angles) && v.angles.length > 1
+      ...(Array.isArray(v.angles) && v.angles.length >= 1
         ? {
             angles: v.angles,
             currentAngleId: v.currentAngleId ?? v.angles[0]!.id,
           }
         : {}),
+      ...(v.syncAnchorTime !== undefined ? { syncAnchorTime: v.syncAnchorTime } : {}),
+      ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
+      ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
+      ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
       ownerUserId: v.ownerUserId,
       createdAt: v.createdAt ?? null,
       updatedAt: v.updatedAt ?? null,
@@ -505,7 +572,7 @@ export async function duplicateSessionToMyLibrary(
       Math.max(0, source.currentClipIndex),
       Math.max(0, source.clips.length - 1),
     ),
-    ...(source.angles && source.angles.length > 1
+    ...(source.angles && source.angles.length >= 1
       ? {
           angles: source.angles.map((a) => ({ ...a })),
           currentAngleId:
@@ -514,6 +581,18 @@ export async function duplicateSessionToMyLibrary(
               ? source.currentAngleId
               : source.angles[0]!.id,
         }
+      : {}),
+    ...(typeof source.syncAnchorTime === "number" &&
+    source.syncAnchorTime > 0
+      ? { syncAnchorTime: source.syncAnchorTime }
+      : {}),
+    ...(source.manualSyncLocked === true ? { manualSyncLocked: true } : {}),
+    ...(typeof source.playerViewAngleId === "string" &&
+    source.playerViewAngleId.trim() !== ""
+      ? { playerViewAngleId: source.playerViewAngleId.trim() }
+      : {}),
+    ...(typeof source.manualSyncAt === "number"
+      ? { manualSyncAt: source.manualSyncAt }
       : {}),
   });
 }
