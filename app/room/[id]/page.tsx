@@ -1337,6 +1337,28 @@ function RoomContent() {
     isHostRef.current = isHost;
   });
 
+  /** Stacked Sync viewer: nudge the visible angle to play (no seek; respects unlock + room isPlaying). */
+  const ensureSelectedViewerStackPlayerPlaying = useCallback(async () => {
+    if (isHostRef.current) return;
+    if (roomViewModeRef.current !== "sync") return;
+    const rs = roomStateRef.current;
+    if (!rs || rs.angles.length < 2) return;
+    const topAngleId = resolveViewerStackTopAngleId(rs);
+    const selected = viewerAnglePlayersRef.current[topAngleId];
+    if (!selected) return;
+    if (!rs.isPlaying) return;
+    if (!viewerPlaybackUnlockedRef.current) return;
+    const st = await readYoutubePlayerState(selected);
+    syncLog("viewer ensure playing", topAngleId, st);
+    if (st !== YT_PLAYING) {
+      try {
+        selected.playVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+    }
+  }, []);
+
   useLayoutEffect(() => {
     ffModeRef.current = ffMode;
   }, [ffMode]);
@@ -1834,7 +1856,8 @@ function RoomContent() {
         /* YouTube API */
       }
     }
-  }, [isHost, roomViewMode, viewerStackMuteLayoutKey]);
+    void ensureSelectedViewerStackPlayerPlaying();
+  }, [isHost, roomViewMode, viewerStackMuteLayoutKey, ensureSelectedViewerStackPlayerPlaying]);
 
   useEffect(() => {
     if (isHost) return;
@@ -1902,6 +1925,8 @@ function RoomContent() {
             await applyPlaybackIfNeeded(p, false);
           }
         }
+
+        await ensureSelectedViewerStackPlayerPlaying();
 
         lastAppliedCommandIdRef.current = cmd.commandId;
         viewerInitialAppliedRef.current = true;
@@ -2014,6 +2039,7 @@ function RoomContent() {
     roomViewMode,
     isManualSyncMode,
     roomId,
+    ensureSelectedViewerStackPlayerPlaying,
   ]);
 
   // No viewer drift correction: viewers apply playback only on host playbackCommand changes.
@@ -2620,6 +2646,7 @@ function RoomContent() {
         /* autoplay / API */
       }
     }
+    void ensureSelectedViewerStackPlayerPlaying();
     const s = roomStateRef.current;
     if (s) {
       lastAppliedKey.current = "";
@@ -2630,7 +2657,7 @@ function RoomContent() {
         gen,
       );
     }
-  }, []);
+  }, [ensureSelectedViewerStackPlayerPlaying]);
 
   const writeHostTransport = useCallback(
     (
