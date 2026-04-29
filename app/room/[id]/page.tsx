@@ -2062,11 +2062,99 @@ function RoomContent() {
       | undefined;
   };
 
+  /** Push room transport state to one mounted Sync View player (seek/rate/play + mute). */
+  const applySyncStateToAnglePlayer = useCallback(
+    (angleId: string, reason: string) => {
+      const rs = roomStateRef.current;
+      if (!rs || rs.angles.length === 0) return;
+      if (roomViewModeRef.current !== "sync") return;
+
+      const angle = rs.angles.find((a) => a.id === angleId);
+      if (!angle) return;
+      const player = syncPlayerRefs.current[angleId];
+      if (!player) return;
+
+      const anchor = Math.max(0, rs.currentTime ?? 0, rs.syncAnchorTime ?? 0);
+      const target =
+        angleId === rs.currentAngleId
+          ? anchor
+          : Math.max(0, anchor + (angle.offsetFromGameTime ?? 0));
+      const isPlaying = rs.isPlaying;
+      syncLog("sync angle ready apply", { angleId, target, isPlaying });
+      void reason;
+
+      void (async () => {
+        const rate = rs.playbackRate ?? DEFAULT_PLAYBACK_RATE;
+        try {
+          await safeSetPlaybackRate(player, rate);
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          player.seekTo?.(target, true);
+        } catch {
+          /* YouTube API */
+        }
+        const audibleId = resolveViewerStackTopAngleId(rs);
+        try {
+          if (angleId === audibleId) player.unMute?.();
+          else player.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+        if (isHostRef.current) {
+          if (isPlaying) {
+            try {
+              player.playVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          } else {
+            try {
+              player.pauseVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          }
+        } else {
+          await ensureViewerPlaybackIntent(
+            player,
+            isPlaying,
+            viewerPlaybackUnlockedRef,
+          );
+        }
+      })();
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!isHost || !roomState || roomState.angles.length < 2) {
       if (coachViewMode !== "single") setCoachViewMode("single");
     }
   }, [isHost, roomState, coachViewMode]);
+
+  /** When host enters Sync + Multi, nudge every mounted angle once iframes are up. */
+  useEffect(() => {
+    if (!isHost) return;
+    if (roomViewMode !== "sync" || coachViewMode !== "multi") return;
+    const s = roomStateRef.current;
+    if (!s || s.angles.length < 2) return;
+    const tid = window.setTimeout(() => {
+      const snap = roomStateRef.current;
+      if (!snap || snap.angles.length < 2) return;
+      for (const a of snap.angles) {
+        applySyncStateToAnglePlayer(a.id, "enter-sync-multi");
+      }
+    }, 320);
+    return () => window.clearTimeout(tid);
+  }, [
+    isHost,
+    roomViewMode,
+    coachViewMode,
+    stackedAngleIdsKey,
+    applySyncStateToAnglePlayer,
+  ]);
 
   const syncSecondaryPlayersOnce = useCallback((reason: string) => {
     if (roomViewModeRef.current !== "sync") return;
@@ -2455,12 +2543,20 @@ function RoomContent() {
 
       showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
       setIsManualSyncMode(false);
+      window.setTimeout(() => {
+        const snap = roomStateRef.current;
+        if (!snap) return;
+        for (const a of snap.angles) {
+          applySyncStateToAnglePlayer(a.id, "manual-sync-complete");
+        }
+      }, 280);
     })();
   }, [
     isHost,
     isManualSyncMode,
     showHostNotice,
     roomId,
+    applySyncStateToAnglePlayer,
   ]);
 
   // Manual sync setup: expose independent per-angle controls + keep local times fresh.
@@ -3834,6 +3930,21 @@ function RoomContent() {
         playbackRate: pr,
         reason: "play",
       });
+      const snap = roomStateRef.current;
+      if (snap && roomViewModeRef.current === "sync" && snap.angles.length > 1) {
+        for (const a of snap.angles) {
+          const p = syncPlayerRefs.current[a.id];
+          if (!p) continue;
+          try {
+            const st = await readYoutubePlayerState(p);
+            if (st === YT_UNSTARTED) {
+              applySyncStateToAnglePlayer(a.id, "play-after-unstarted");
+            }
+          } catch {
+            /* YouTube API */
+          }
+        }
+      }
     })();
   };
 
@@ -5058,12 +5169,10 @@ function RoomContent() {
                         if (angle.id === s.currentAngleId) {
                           handlePlayerReady();
                         }
-                        try {
-                          if (angle.id === s.currentAngleId) pl.unMute?.();
-                          else pl.mute?.();
-                        } catch {
-                          /* YouTube API */
-                        }
+                        applySyncStateToAnglePlayer(
+                          angle.id,
+                          "host-sync-card-onReady",
+                        );
                       }}
                       onStateChange={
                         angle.id === s.currentAngleId
@@ -5164,16 +5273,10 @@ function RoomContent() {
                             onReady={(e) => {
                               const pl = e.target as YouTubePlayer;
                               syncPlayerRefs.current[a.id] = pl;
-                              const rs = roomStateRef.current;
-                              const topId = rs
-                                ? resolveViewerStackTopAngleId(rs)
-                                : viewerStackTopResolvedId;
-                              try {
-                                if (a.id === topId) pl.unMute?.();
-                                else pl.mute?.();
-                              } catch {
-                                /* ignore */
-                              }
+                              applySyncStateToAnglePlayer(
+                                a.id,
+                                "viewer-sync-pip-onReady",
+                              );
                             }}
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
@@ -5202,6 +5305,10 @@ function RoomContent() {
                         const pl = e.target as YouTubePlayer;
                         syncPlayerRefs.current[activeAngle.id] = pl;
                         handlePlayerReady();
+                        applySyncStateToAnglePlayer(
+                          activeAngle.id,
+                          "sync-single-onReady",
+                        );
                       }}
                       onStateChange={handleYoutubeStateChange}
                       className="absolute left-0 top-0 h-full w-full"
@@ -6105,11 +6212,10 @@ function RoomContent() {
                           ) {
                             handlePlayerReady();
                           }
-                          try {
-                            p?.unMute?.();
-                          } catch {
-                            /* YouTube API */
-                          }
+                          applySyncStateToAnglePlayer(
+                            hostMultiAngles.activeAngle.id,
+                            "clean-sync-active-onReady",
+                          );
                         }}
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
@@ -6191,11 +6297,10 @@ function RoomContent() {
                           syncPlayerRefs.current[
                             hostMultiAngles.secondaryAngle.id
                           ] = p;
-                          try {
-                            p?.mute?.();
-                          } catch {
-                            /* YouTube API */
-                          }
+                          applySyncStateToAnglePlayer(
+                            hostMultiAngles.secondaryAngle.id,
+                            "clean-sync-secondary-onReady",
+                          );
                         }}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
@@ -6268,11 +6373,10 @@ function RoomContent() {
                           ) {
                             handlePlayerReady();
                           }
-                          try {
-                            p?.unMute?.();
-                          } catch {
-                            /* YouTube API */
-                          }
+                          applySyncStateToAnglePlayer(
+                            hostMultiAngles.activeAngle.id,
+                            "clean-sync-active-onReady",
+                          );
                         }}
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
@@ -6322,11 +6426,10 @@ function RoomContent() {
                           syncPlayerRefs.current[
                             hostMultiAngles.secondaryAngle.id
                           ] = p;
-                          try {
-                            p?.mute?.();
-                          } catch {
-                            /* YouTube API */
-                          }
+                          applySyncStateToAnglePlayer(
+                            hostMultiAngles.secondaryAngle.id,
+                            "clean-sync-secondary-onReady",
+                          );
                         }}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
@@ -6816,11 +6919,10 @@ function RoomContent() {
                               ) {
                                 handlePlayerReady();
                               }
-                              try {
-                                p?.unMute?.();
-                              } catch {
-                                /* YouTube API */
-                              }
+                              applySyncStateToAnglePlayer(
+                                hostMultiAngles.activeAngle.id,
+                                "clean-sync-active-onReady",
+                              );
                             }}
                             onStateChange={handleYoutubeStateChange}
                             className="absolute left-0 top-0 h-full w-full"
@@ -6902,11 +7004,10 @@ function RoomContent() {
                               syncPlayerRefs.current[
                                 hostMultiAngles.secondaryAngle.id
                               ] = p;
-                              try {
-                                p?.mute?.();
-                              } catch {
-                                /* YouTube API */
-                              }
+                              applySyncStateToAnglePlayer(
+                                hostMultiAngles.secondaryAngle.id,
+                                "clean-sync-secondary-onReady",
+                              );
                             }}
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
@@ -6980,11 +7081,10 @@ function RoomContent() {
                               ) {
                                 handlePlayerReady();
                               }
-                              try {
-                                p?.unMute?.();
-                              } catch {
-                                /* YouTube API */
-                              }
+                              applySyncStateToAnglePlayer(
+                                hostMultiAngles.activeAngle.id,
+                                "clean-sync-active-onReady",
+                              );
                             }}
                             onStateChange={handleYoutubeStateChange}
                             className="absolute left-0 top-0 h-full w-full"
@@ -7036,11 +7136,10 @@ function RoomContent() {
                               syncPlayerRefs.current[
                                 hostMultiAngles.secondaryAngle.id
                               ] = p;
-                              try {
-                                p?.mute?.();
-                              } catch {
-                                /* YouTube API */
-                              }
+                              applySyncStateToAnglePlayer(
+                                hostMultiAngles.secondaryAngle.id,
+                                "clean-sync-secondary-onReady",
+                              );
                             }}
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
