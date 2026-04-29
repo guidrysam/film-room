@@ -22,6 +22,10 @@ export type FilmRoomTelestratorClearDetail =
 
 export const FILM_ROOM_TELESTRATOR_CLEAR_EVENT = "film-room-telestrator-clear";
 
+const POST_CLEAR_SUPPRESS_MS = 1500;
+
+const EMPTY_STROKES: RemoteStroke[] = [];
+
 type Props = {
   roomId: string;
   isHost: boolean;
@@ -43,6 +47,31 @@ type Props = {
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
+}
+
+function filterStrokesForRender(
+  remote: RemoteStroke[],
+  renderAngleId: string | undefined,
+  allowLegacy: boolean,
+): RemoteStroke[] {
+  if (renderAngleId === undefined) return remote;
+  return remote.filter((st) => {
+    if (!st.angleId) return allowLegacy;
+    return st.angleId === renderAngleId;
+  });
+}
+
+/** Full bitmap reset: clear, reset backing store, clear again (avoids GPU/driver ghost pixels). */
+function resetCanvasHard(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.width = canvas.width;
+  const ctx2 = canvas.getContext("2d");
+  if (ctx2) {
+    ctx2.clearRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 function parseStrokes(val: unknown): RemoteStroke[] {
@@ -84,11 +113,13 @@ export function TelestratorOverlay({
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [remoteStrokes, setRemoteStrokes] = useState<RemoteStroke[]>([]);
+  const [postClearEmpty, setPostClearEmpty] = useState(false);
   const currentStrokeRef = useRef<Point[] | null>(null);
   const drawingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
-  /** Skip painting remote strokes until RTDB drops cleared rows (avoids one frame of stale ink). */
-  const suppressRemotePaintUntilRef = useRef(0);
+  /** Set on clear so drawAll refuses to paint remote strokes for POST_CLEAR_SUPPRESS_MS. */
+  const lastClearTimestampRef = useRef(0);
+  const staleAfterClearLoggedRef = useRef(false);
 
   const canDraw = isHost && drawEnabled;
 
@@ -101,13 +132,38 @@ export function TelestratorOverlay({
     return unsub;
   }, [roomId]);
 
+  const filteredFromRemote = useMemo(
+    () =>
+      filterStrokesForRender(
+        remoteStrokes,
+        renderAngleId,
+        allowLegacyWithoutAngleId,
+      ),
+    [remoteStrokes, renderAngleId, allowLegacyWithoutAngleId],
+  );
+
   const visibleStrokes = useMemo(() => {
-    if (renderAngleId === undefined) return remoteStrokes;
-    return remoteStrokes.filter((st) => {
-      if (!st.angleId) return allowLegacyWithoutAngleId;
-      return st.angleId === renderAngleId;
-    });
-  }, [remoteStrokes, renderAngleId, allowLegacyWithoutAngleId]);
+    if (postClearEmpty && filteredFromRemote.length > 0) {
+      return EMPTY_STROKES;
+    }
+    return filteredFromRemote;
+  }, [filteredFromRemote, postClearEmpty]);
+
+  useEffect(() => {
+    if (!postClearEmpty || filteredFromRemote.length > 0) return;
+    const id = window.setTimeout(() => {
+      setPostClearEmpty(false);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [postClearEmpty, filteredFromRemote.length]);
+
+  useEffect(() => {
+    if (!postClearEmpty) return;
+    const id = window.setTimeout(() => {
+      setPostClearEmpty(false);
+    }, POST_CLEAR_SUPPRESS_MS);
+    return () => window.clearTimeout(id);
+  }, [postClearEmpty]);
 
   useEffect(() => {
     if (isHost || renderAngleId === undefined) return;
@@ -126,6 +182,28 @@ export function TelestratorOverlay({
       angleIds,
     );
   }, [isHost, renderAngleId, remoteStrokes, visibleStrokes.length]);
+
+  /** Temporary: confirm stale RTDB rows vs render angle after host clear. */
+  useEffect(() => {
+    if (!postClearEmpty) {
+      staleAfterClearLoggedRef.current = false;
+      return;
+    }
+    if (staleAfterClearLoggedRef.current) return;
+    if (filteredFromRemote.length === 0) return;
+    staleAfterClearLoggedRef.current = true;
+    for (const stroke of filteredFromRemote) {
+      console.warn(
+        "stale strokes",
+        "stroke.angleId=",
+        stroke.angleId ?? "(legacy)",
+        "renderAngleId=",
+        renderAngleId,
+        "stroke.id=",
+        stroke.id,
+      );
+    }
+  }, [postClearEmpty, filteredFromRemote, renderAngleId]);
 
   const normPoint = useCallback(
     (clientX: number, clientY: number): Point | null => {
@@ -151,7 +229,7 @@ export function TelestratorOverlay({
     const wipeBitmap = () => {
       const ctx0 = canvas.getContext("2d");
       if (!ctx0 || canvas.width < 1 || canvas.height < 1) return;
-      ctx0.clearRect(0, 0, canvas.width, canvas.height);
+      resetCanvasHard(canvas, ctx0);
     };
 
     if (cssW < 2 || cssH < 2) {
@@ -162,19 +240,55 @@ export function TelestratorOverlay({
       canvas.width = cssW;
       canvas.height = cssH;
     }
-    const ctx = canvas.getContext("2d");
+    let ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const hasLiveStroke =
       canDraw &&
       drawingRef.current &&
       currentStrokeRef.current &&
       currentStrokeRef.current.length > 0;
-    if (visibleStrokes.length === 0 && !hasLiveStroke) {
+
+    const sinceClear =
+      lastClearTimestampRef.current > 0
+        ? Date.now() - lastClearTimestampRef.current
+        : POST_CLEAR_SUPPRESS_MS;
+
+    if (sinceClear < POST_CLEAR_SUPPRESS_MS) {
+      resetCanvasHard(canvas, ctx);
+      ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      if (hasLiveStroke) {
+        ctx.strokeStyle = "rgba(255, 230, 80, 0.95)";
+        ctx.fillStyle = "rgba(255, 230, 80, 0.95)";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        const cur = currentStrokeRef.current!;
+        if (cur.length === 1) {
+          const x = cur[0].x * cssW;
+          const y = cur[0].y * cssH;
+          ctx.beginPath();
+          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (cur.length > 1) {
+          ctx.beginPath();
+          ctx.moveTo(cur[0].x * cssW, cur[0].y * cssH);
+          for (let i = 1; i < cur.length; i++) {
+            ctx.lineTo(cur[i].x * cssW, cur[i].y * cssH);
+          }
+          ctx.stroke();
+        }
+      }
       return;
     }
 
+    if (visibleStrokes.length === 0 && !hasLiveStroke) {
+      resetCanvasHard(canvas, ctx);
+      return;
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = "rgba(255, 230, 80, 0.95)";
     ctx.fillStyle = "rgba(255, 230, 80, 0.95)";
     ctx.lineWidth = 3;
@@ -199,11 +313,7 @@ export function TelestratorOverlay({
       ctx.stroke();
     };
 
-    const suppressRemote =
-      performance.now() < suppressRemotePaintUntilRef.current;
-    if (!suppressRemote) {
-      for (const s of visibleStrokes) paintStroke(s.points);
-    }
+    for (const s of visibleStrokes) paintStroke(s.points);
     const cur = currentStrokeRef.current;
     if (cur && cur.length > 0) paintStroke(cur);
   }, [visibleStrokes, canDraw]);
@@ -220,7 +330,7 @@ export function TelestratorOverlay({
     drawAll();
   }, [drawAll]);
 
-  /** Immediate wipe so pixels disappear before RTDB onValue catches up (Clear Drawings). */
+  /** Immediate hard reset so pixels disappear before RTDB onValue catches up (Clear Drawings). */
   useEffect(() => {
     const onClear = (ev: Event) => {
       const detail = (ev as CustomEvent<FilmRoomTelestratorClearDetail>).detail;
@@ -233,7 +343,9 @@ export function TelestratorOverlay({
           return;
         }
       }
-      suppressRemotePaintUntilRef.current = performance.now() + 800;
+      lastClearTimestampRef.current = Date.now();
+      setPostClearEmpty(true);
+      staleAfterClearLoggedRef.current = false;
       if (isHost) {
         currentStrokeRef.current = null;
         drawingRef.current = false;
@@ -241,7 +353,7 @@ export function TelestratorOverlay({
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (canvas && ctx && canvas.width > 0 && canvas.height > 0) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        resetCanvasHard(canvas, ctx);
       }
       scheduleDraw();
     };
