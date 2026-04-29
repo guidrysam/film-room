@@ -4773,6 +4773,7 @@ function RoomContent() {
 
   const openSaveSessionDialog = useCallback(async () => {
     if (!isHost || !roomState) return;
+    syncLog("save session clicked", { view: roomViewModeRef.current });
     let u = user;
     if (!u) {
       try {
@@ -4838,7 +4839,16 @@ function RoomContent() {
       closeSaveSessionDialog();
       setSessionSavedToast(true);
       window.setTimeout(() => setSessionSavedToast(false), 2500);
-    } catch {
+      syncLog("save session success", {
+        clips: roomState.clips.length,
+        angles: roomState.angles.length,
+        syncAnchorTime: roomState.syncAnchorTime ?? 0,
+        manualSyncLocked: roomState.manualSyncLocked === true,
+        playerViewAngleId: roomState.playerViewAngleId ?? "",
+        chapters: roomState.chapters.length,
+      });
+    } catch (err) {
+      syncLog("save session error", { err });
       alert("Could not save session. Check Firestore rules and login.");
     } finally {
       setSaveSessionSaving(false);
@@ -5119,6 +5129,7 @@ function RoomContent() {
       s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
 
     return (
+      <>
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
           <button
@@ -5154,7 +5165,10 @@ function RoomContent() {
             {isHost ? (
               <button
                 type="button"
-                onClick={() => void openSaveSessionDialog()}
+                onClick={() => {
+                  syncLog("save session clicked", { view: "sync" });
+                  void openSaveSessionDialog();
+                }}
                 className={secondaryHostBtn}
               >
                 Save Session
@@ -5907,6 +5921,87 @@ function RoomContent() {
           </div>
         ) : null}
       </div>
+      {sessionSavedToast ? (
+        <div
+          className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
+          role="status"
+        >
+          Session saved
+        </div>
+      ) : null}
+      {copySharedToast ? (
+        <div
+          className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
+          role="status"
+        >
+          Session copied
+        </div>
+      ) : null}
+      {saveSessionOpen ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeSaveSessionDialog();
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-zinc-950/95 p-5 shadow-2xl shadow-black/50 ring-1 ring-white/[0.05]"
+            role="dialog"
+            aria-labelledby="save-session-title"
+          >
+            <h2
+              id="save-session-title"
+              className="mb-4 text-sm font-semibold text-white"
+            >
+              Save session
+            </h2>
+            <label className="block text-xs font-medium uppercase tracking-wide text-zinc-400">
+              Name
+              <input
+                type="text"
+                value={saveSessionName}
+                onChange={(e) => setSaveSessionName(e.target.value)}
+                className={saveSessionFieldClass}
+                autoComplete="off"
+              />
+            </label>
+            <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-zinc-400">
+              Program / folder{" "}
+              <span className="font-normal normal-case text-zinc-500">
+                (optional)
+              </span>
+              <input
+                type="text"
+                value={saveSessionFolder}
+                onChange={(e) => setSaveSessionFolder(e.target.value)}
+                placeholder="e.g. U12 / Passing"
+                className={saveSessionFieldClass}
+                autoComplete="off"
+              />
+            </label>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeSaveSessionDialog}
+                className={secondaryHostBtn}
+                disabled={saveSessionSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmSaveSession()}
+                disabled={saveSessionSaving}
+                className="rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saveSessionSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      </>
     );
   }
 
