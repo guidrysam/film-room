@@ -30,6 +30,8 @@ type Props = {
   renderAngleId?: string;
   /** Legacy RTDB rows without `angleId` appear on this overlay when true (default true). */
   allowLegacyWithoutAngleId?: boolean;
+  /** Viewer-only: show temporary draw filter debug and log when strokes exist but none match. */
+  viewerDebug?: boolean;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -70,6 +72,7 @@ export function TelestratorOverlay({
   strokeAngleId,
   renderAngleId,
   allowLegacyWithoutAngleId = true,
+  viewerDebug = false,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -96,6 +99,24 @@ export function TelestratorOverlay({
       return st.angleId === renderAngleId;
     });
   }, [remoteStrokes, renderAngleId, allowLegacyWithoutAngleId]);
+
+  useEffect(() => {
+    if (isHost || renderAngleId === undefined) return;
+    if (remoteStrokes.length === 0 || visibleStrokes.length > 0) return;
+    const angleIds = [
+      ...new Set(
+        remoteStrokes.map((st) =>
+          st.angleId && st.angleId.length > 0 ? st.angleId : "(legacy)",
+        ),
+      ),
+    ];
+    console.warn(
+      "[Telestrator] viewer: strokes in room but none visible after filter; renderAngleId=",
+      renderAngleId,
+      "stroke angle ids:",
+      angleIds,
+    );
+  }, [isHost, renderAngleId, remoteStrokes, visibleStrokes.length]);
 
   const normPoint = useCallback(
     (clientX: number, clientY: number): Point | null => {
@@ -276,6 +297,11 @@ export function TelestratorOverlay({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       />
+      {viewerDebug && !isHost && renderAngleId !== undefined ? (
+        <div className="pointer-events-none absolute left-2 top-12 z-[40] max-w-[min(100%,18rem)] rounded border border-cyan-500/45 bg-black/90 px-2 py-1 text-[9px] font-mono leading-snug text-cyan-100/95 shadow-md">
+          Drawing angle: {renderAngleId} / strokes: {visibleStrokes.length}
+        </div>
+      ) : null}
     </div>
   );
 }

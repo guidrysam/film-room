@@ -1129,7 +1129,7 @@ function SyncAngleDebugStrip({
     return () => window.clearInterval(id);
   }, [angleId, videoId, syncPlayerRefs]);
   return (
-    <div className="pointer-events-none absolute left-1 bottom-1 right-1 z-[50] max-h-[42%] overflow-hidden rounded border border-amber-500/40 bg-black/88 px-1.5 py-1 text-[8px] leading-snug text-amber-100/95">
+    <div className="pointer-events-none absolute left-1 bottom-1 right-1 z-[40] max-h-[42%] overflow-hidden rounded border border-amber-500/40 bg-black/88 px-1.5 py-1 text-[8px] leading-snug text-amber-100/95">
       <div className="truncate font-semibold text-white">{angleName}</div>
       <div className="truncate font-mono text-zinc-300">{videoId || "—"}</div>
       <div className="text-zinc-200">{line}</div>
@@ -4938,6 +4938,8 @@ function RoomContent() {
     const viewerStackTopResolvedId = s.angles.some((x) => x.id === viewerStackTopAngleId)
       ? viewerStackTopAngleId
       : s.angles[0]!.id;
+    /** Same as Player View stack: valid playerViewAngleId ?? currentAngleId ?? first angle id. */
+    const viewerPlayerViewDrawAngleId = viewerStackTopResolvedId;
     const viewerTopAngleForLabel =
       s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
 
@@ -5286,7 +5288,7 @@ function RoomContent() {
                   </div>
                 ) : null}
               </div>
-              <div className="relative aspect-video w-full overflow-hidden bg-black">
+              <div className="relative isolate aspect-video w-full overflow-hidden bg-black">
                 {!isHost && multi ? (
                   <>
                     {s.angles.map((a) => {
@@ -5296,67 +5298,73 @@ function RoomContent() {
                           key={a.id}
                           className={
                             isMain
-                              ? "absolute inset-0 z-10"
+                              ? "absolute inset-0 isolate z-10"
                               : "absolute bottom-3 right-3 z-20 aspect-video w-[min(38vw,16rem)] max-w-[44%] overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50"
                           }
                         >
-                          <YouTube
-                            videoId={safeDecodeVideoId(a.videoId)}
-                            onReady={(e) => {
-                              const pl = e.target as YouTubePlayer;
-                              syncPlayerRefs.current[a.id] = pl;
-                              applySyncStateToAnglePlayer(
-                                a.id,
-                                "viewer-sync-pip-onReady",
-                              );
-                            }}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
-                          />
+                          <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                            <YouTube
+                              videoId={safeDecodeVideoId(a.videoId)}
+                              onReady={(e) => {
+                                const pl = e.target as YouTubePlayer;
+                                syncPlayerRefs.current[a.id] = pl;
+                                applySyncStateToAnglePlayer(
+                                  a.id,
+                                  "viewer-sync-pip-onReady",
+                                );
+                              }}
+                              className="absolute left-0 top-0 h-full w-full"
+                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              opts={youtubePlayerOpts}
+                            />
+                          </div>
+                          {roomId && isMain ? (
+                            <TelestratorOverlay
+                              roomId={roomId}
+                              isHost={false}
+                              drawEnabled={telDrawOn}
+                              renderAngleId={viewerPlayerViewDrawAngleId}
+                              allowLegacyWithoutAngleId
+                              wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
+                              viewerDebug
+                            />
+                          ) : null}
                           <SyncAngleDebugStrip
                             angleId={a.id}
                             angleName={a.name}
                             videoId={safeDecodeVideoId(a.videoId)}
                             syncPlayerRefs={syncPlayerRefs}
                           />
-                          {roomId && isMain ? (
-                            <TelestratorOverlay
-                              roomId={roomId}
-                              isHost={false}
-                              drawEnabled={telDrawOn}
-                              renderAngleId={viewerStackTopResolvedId}
-                              allowLegacyWithoutAngleId
-                            />
-                          ) : null}
                         </div>
                       );
                     })}
-                    <div className="pointer-events-none absolute left-2 top-2 z-[30] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
+                    <div className="pointer-events-none absolute left-2 top-2 z-[41] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
                       Main: {viewerTopAngleForLabel.name} · PiP muted
                     </div>
                   </>
                 ) : (
-                  <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
-                    <YouTube
-                      key="sync-primary"
-                      ref={playerRef}
-                      videoId={safeDecodeVideoId(activeAngle.videoId)}
-                      onReady={(e) => {
-                        const pl = e.target as YouTubePlayer;
-                        syncPlayerRefs.current[activeAngle.id] = pl;
-                        handlePlayerReady();
-                        applySyncStateToAnglePlayer(
-                          activeAngle.id,
-                          "sync-single-onReady",
-                        );
-                      }}
-                      onStateChange={handleYoutubeStateChange}
-                      className="absolute left-0 top-0 h-full w-full"
-                      iframeClassName="absolute left-0 top-0 h-full w-full"
-                      opts={youtubePlayerOpts}
-                    />
-                  </YoutubePointerGate>
+                  <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                      <YouTube
+                        key="sync-primary"
+                        ref={playerRef}
+                        videoId={safeDecodeVideoId(activeAngle.videoId)}
+                        onReady={(e) => {
+                          const pl = e.target as YouTubePlayer;
+                          syncPlayerRefs.current[activeAngle.id] = pl;
+                          handlePlayerReady();
+                          applySyncStateToAnglePlayer(
+                            activeAngle.id,
+                            "sync-single-onReady",
+                          );
+                        }}
+                        onStateChange={handleYoutubeStateChange}
+                        className="absolute left-0 top-0 h-full w-full"
+                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        opts={youtubePlayerOpts}
+                      />
+                    </YoutubePointerGate>
+                  </div>
                 )}
                 {roomId && (isHost || !multi) ? (
                   <TelestratorOverlay
@@ -5364,8 +5372,16 @@ function RoomContent() {
                     isHost={isHost}
                     drawEnabled={telDrawOn}
                     strokeAngleId={isHost ? activeAngle.id : undefined}
-                    renderAngleId={activeAngle.id}
+                    renderAngleId={
+                      isHost ? activeAngle.id : viewerPlayerViewDrawAngleId
+                    }
                     allowLegacyWithoutAngleId
+                    wrapClassName={
+                      !isHost
+                        ? "pointer-events-none absolute inset-0 z-30 touch-none"
+                        : undefined
+                    }
+                    viewerDebug={!isHost}
                   />
                 ) : null}
                 {!isHost && multi ? null : (
