@@ -4548,10 +4548,39 @@ function RoomContent() {
     }
   }, [applyRoomStateToPlayer]);
 
-  const handleClearDrawings = () => {
+  const handleClearDrawings = useCallback(() => {
     if (!roomId || !isHost) return;
-    void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
-  };
+    const s = roomStateRef.current;
+    if (
+      !s ||
+      roomViewModeRef.current !== "sync" ||
+      s.angles.length <= 1
+    ) {
+      void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
+      return;
+    }
+    const targetId = resolveViewerStackTopAngleId(s);
+    void (async () => {
+      try {
+        const snap = await get(ref(db, `rooms/${roomId}/telestrator/strokes`));
+        const val = snap.val() as Record<string, unknown> | null;
+        if (!val || typeof val !== "object") return;
+        const payload: Record<string, null> = {};
+        for (const [id, row] of Object.entries(val)) {
+          if (!row || typeof row !== "object") continue;
+          const aid = (row as { angleId?: unknown }).angleId;
+          const hasAid = typeof aid === "string" && aid.length > 0;
+          if (hasAid && aid === targetId) {
+            payload[`rooms/${roomId}/telestrator/strokes/${id}`] = null;
+          }
+        }
+        if (Object.keys(payload).length === 0) return;
+        await update(ref(db), payload);
+      } catch {
+        /* RTDB offline / rules */
+      }
+    })();
+  }, [roomId, isHost]);
 
   const handleCopyViewerLink = () => {
     const raw = roomState?.videoId ?? videoIdFromUrl;
@@ -5195,6 +5224,9 @@ function RoomContent() {
                       roomId={roomId}
                       isHost={isHost}
                       drawEnabled={telDrawOn}
+                      strokeAngleId={angle.id}
+                      renderAngleId={angle.id}
+                      allowLegacyWithoutAngleId={false}
                     />
                   ) : null}
                 </div>
@@ -5288,6 +5320,15 @@ function RoomContent() {
                             videoId={safeDecodeVideoId(a.videoId)}
                             syncPlayerRefs={syncPlayerRefs}
                           />
+                          {roomId && isMain ? (
+                            <TelestratorOverlay
+                              roomId={roomId}
+                              isHost={false}
+                              drawEnabled={telDrawOn}
+                              renderAngleId={viewerStackTopResolvedId}
+                              allowLegacyWithoutAngleId
+                            />
+                          ) : null}
                         </div>
                       );
                     })}
@@ -5322,6 +5363,9 @@ function RoomContent() {
                     roomId={roomId}
                     isHost={isHost}
                     drawEnabled={telDrawOn}
+                    strokeAngleId={isHost ? activeAngle.id : undefined}
+                    renderAngleId={activeAngle.id}
+                    allowLegacyWithoutAngleId
                   />
                 ) : null}
                 {!isHost && multi ? null : (

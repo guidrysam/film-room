@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent,
@@ -12,7 +13,7 @@ import { db } from "@/lib/firebase";
 
 export type Point = { x: number; y: number };
 
-export type RemoteStroke = { id: string; points: Point[] };
+export type RemoteStroke = { id: string; points: Point[]; angleId?: string };
 
 type Props = {
   roomId: string;
@@ -20,6 +21,15 @@ type Props = {
   drawEnabled: boolean;
   /** Merged onto the stage wrapper (e.g. fixed fullscreen so drawing tracks the video). */
   wrapClassName?: string;
+  /** When set, host saves each new stroke with this `angleId` (omit for legacy clip strokes). */
+  strokeAngleId?: string;
+  /**
+   * When set, only strokes for this angle are drawn (plus legacy strokes without `angleId`
+   * when `allowLegacyWithoutAngleId` is true).
+   */
+  renderAngleId?: string;
+  /** Legacy RTDB rows without `angleId` appear on this overlay when true (default true). */
+  allowLegacyWithoutAngleId?: boolean;
 };
 
 function clamp(n: number, min: number, max: number) {
@@ -44,7 +54,10 @@ function parseStrokes(val: unknown): RemoteStroke[] {
         valid.push({ x: (p as Point).x, y: (p as Point).y });
       }
     }
-    if (valid.length > 0) list.push({ id, points: valid });
+    const aid = (row as { angleId?: unknown }).angleId;
+    const angleId =
+      typeof aid === "string" && aid.trim().length > 0 ? aid.trim() : undefined;
+    if (valid.length > 0) list.push({ id, points: valid, angleId });
   }
   return list;
 }
@@ -54,6 +67,9 @@ export function TelestratorOverlay({
   isHost,
   drawEnabled,
   wrapClassName,
+  strokeAngleId,
+  renderAngleId,
+  allowLegacyWithoutAngleId = true,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -72,6 +88,14 @@ export function TelestratorOverlay({
     });
     return unsub;
   }, [roomId]);
+
+  const visibleStrokes = useMemo(() => {
+    if (renderAngleId === undefined) return remoteStrokes;
+    return remoteStrokes.filter((st) => {
+      if (!st.angleId) return allowLegacyWithoutAngleId;
+      return st.angleId === renderAngleId;
+    });
+  }, [remoteStrokes, renderAngleId, allowLegacyWithoutAngleId]);
 
   const normPoint = useCallback(
     (clientX: number, clientY: number): Point | null => {
@@ -125,10 +149,10 @@ export function TelestratorOverlay({
       ctx.stroke();
     };
 
-    for (const s of remoteStrokes) paintStroke(s.points);
+    for (const s of visibleStrokes) paintStroke(s.points);
     const cur = currentStrokeRef.current;
     if (cur && cur.length > 0) paintStroke(cur);
-  }, [remoteStrokes]);
+  }, [visibleStrokes]);
 
   const scheduleDraw = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -174,11 +198,11 @@ export function TelestratorOverlay({
     currentStrokeRef.current = null;
     drawingRef.current = false;
     if (!pts || pts.length < 1 || !roomId) return;
-    void push(ref(db, `rooms/${roomId}/telestrator/strokes`), {
-      points: pts,
-    });
+    const row: { points: Point[]; angleId?: string } = { points: pts };
+    if (strokeAngleId) row.angleId = strokeAngleId;
+    void push(ref(db, `rooms/${roomId}/telestrator/strokes`), row);
     scheduleDraw();
-  }, [roomId, scheduleDraw]);
+  }, [roomId, strokeAngleId, scheduleDraw]);
 
   const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (!canDraw) return;
