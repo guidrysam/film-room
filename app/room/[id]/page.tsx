@@ -32,7 +32,11 @@ import {
   subscribeToRoomHostStore,
 } from "@/lib/room-host";
 import { useAuth } from "@/components/AuthProvider";
-import { TelestratorOverlay } from "@/components/TelestratorOverlay";
+import {
+  FILM_ROOM_TELESTRATOR_CLEAR_EVENT,
+  type FilmRoomTelestratorClearDetail,
+  TelestratorOverlay,
+} from "@/components/TelestratorOverlay";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
 import {
@@ -4550,16 +4554,24 @@ function RoomContent() {
 
   const handleClearDrawings = useCallback(() => {
     if (!roomId || !isHost) return;
+    const dispatchTelestratorClear = (detail: FilmRoomTelestratorClearDetail) => {
+      if (typeof window === "undefined") return;
+      window.dispatchEvent(
+        new CustomEvent(FILM_ROOM_TELESTRATOR_CLEAR_EVENT, { detail }),
+      );
+    };
     const s = roomStateRef.current;
     if (
       !s ||
       roomViewModeRef.current !== "sync" ||
       s.angles.length <= 1
     ) {
+      dispatchTelestratorClear({ scope: "all" });
       void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
       return;
     }
     const targetId = resolveViewerStackTopAngleId(s);
+    dispatchTelestratorClear({ scope: "angle", angleId: targetId });
     void (async () => {
       try {
         const snap = await get(ref(db, `rooms/${roomId}/telestrator/strokes`));
@@ -4570,7 +4582,11 @@ function RoomContent() {
           if (!row || typeof row !== "object") continue;
           const aid = (row as { angleId?: unknown }).angleId;
           const hasAid = typeof aid === "string" && aid.length > 0;
-          if (hasAid && aid === targetId) {
+          if (!hasAid) {
+            payload[`rooms/${roomId}/telestrator/strokes/${id}`] = null;
+            continue;
+          }
+          if (aid === targetId) {
             payload[`rooms/${roomId}/telestrator/strokes/${id}`] = null;
           }
         }

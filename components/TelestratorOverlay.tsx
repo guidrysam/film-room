@@ -15,6 +15,13 @@ export type Point = { x: number; y: number };
 
 export type RemoteStroke = { id: string; points: Point[]; angleId?: string };
 
+/** Dispatched by the room page when strokes are cleared so canvases wipe before RTDB catches up. */
+export type FilmRoomTelestratorClearDetail =
+  | { scope: "all" }
+  | { scope: "angle"; angleId: string };
+
+export const FILM_ROOM_TELESTRATOR_CLEAR_EVENT = "film-room-telestrator-clear";
+
 type Props = {
   roomId: string;
   isHost: boolean;
@@ -80,6 +87,8 @@ export function TelestratorOverlay({
   const currentStrokeRef = useRef<Point[] | null>(null);
   const drawingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
+  /** Skip painting remote strokes until RTDB drops cleared rows (avoids one frame of stale ink). */
+  const suppressRemotePaintUntilRef = useRef(0);
 
   const canDraw = isHost && drawEnabled;
 
@@ -138,14 +147,34 @@ export function TelestratorOverlay({
     if (!canvas || !wrap) return;
     const cssW = wrap.clientWidth;
     const cssH = wrap.clientHeight;
-    if (cssW < 2 || cssH < 2) return;
+
+    const wipeBitmap = () => {
+      const ctx0 = canvas.getContext("2d");
+      if (!ctx0 || canvas.width < 1 || canvas.height < 1) return;
+      ctx0.clearRect(0, 0, canvas.width, canvas.height);
+    };
+
+    if (cssW < 2 || cssH < 2) {
+      wipeBitmap();
+      return;
+    }
     if (canvas.width !== cssW || canvas.height !== cssH) {
       canvas.width = cssW;
       canvas.height = cssH;
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const hasLiveStroke =
+      canDraw &&
+      drawingRef.current &&
+      currentStrokeRef.current &&
+      currentStrokeRef.current.length > 0;
+    if (visibleStrokes.length === 0 && !hasLiveStroke) {
+      return;
+    }
+
     ctx.strokeStyle = "rgba(255, 230, 80, 0.95)";
     ctx.fillStyle = "rgba(255, 230, 80, 0.95)";
     ctx.lineWidth = 3;
@@ -170,10 +199,14 @@ export function TelestratorOverlay({
       ctx.stroke();
     };
 
-    for (const s of visibleStrokes) paintStroke(s.points);
+    const suppressRemote =
+      performance.now() < suppressRemotePaintUntilRef.current;
+    if (!suppressRemote) {
+      for (const s of visibleStrokes) paintStroke(s.points);
+    }
     const cur = currentStrokeRef.current;
     if (cur && cur.length > 0) paintStroke(cur);
-  }, [visibleStrokes]);
+  }, [visibleStrokes, canDraw]);
 
   const scheduleDraw = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -186,6 +219,36 @@ export function TelestratorOverlay({
   useEffect(() => {
     drawAll();
   }, [drawAll]);
+
+  /** Immediate wipe so pixels disappear before RTDB onValue catches up (Clear Drawings). */
+  useEffect(() => {
+    const onClear = (ev: Event) => {
+      const detail = (ev as CustomEvent<FilmRoomTelestratorClearDetail>).detail;
+      if (!detail) return;
+      if (detail.scope === "angle") {
+        if (renderAngleId !== undefined && detail.angleId !== renderAngleId) {
+          return;
+        }
+        if (renderAngleId === undefined) {
+          return;
+        }
+      }
+      suppressRemotePaintUntilRef.current = performance.now() + 800;
+      if (isHost) {
+        currentStrokeRef.current = null;
+        drawingRef.current = false;
+      }
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx && canvas.width > 0 && canvas.height > 0) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      scheduleDraw();
+    };
+    window.addEventListener(FILM_ROOM_TELESTRATOR_CLEAR_EVENT, onClear);
+    return () =>
+      window.removeEventListener(FILM_ROOM_TELESTRATOR_CLEAR_EVENT, onClear);
+  }, [isHost, renderAngleId, scheduleDraw]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
