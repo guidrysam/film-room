@@ -184,6 +184,11 @@ type ChapterEntry = {
 };
 
 type RoomState = {
+  /** Room owner (optional for legacy rooms). */
+  ownerId?: string;
+  /** Optional display name / title for the session. */
+  name?: string;
+  sourceRoomId?: string;
   videoId: string;
   /** In-session queue; active clip is `clips[currentClipIndex]` (kept in sync with `videoId`). */
   clips: ClipEntry[];
@@ -453,6 +458,19 @@ function parseClipEntries(raw: unknown): ClipEntry[] {
 /** Normalize clip list + index; `videoId` from RTDB is authoritative for the active stream. */
 function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null {
   if (!val) return null;
+  const ownerIdRaw = val.ownerId;
+  const ownerId =
+    typeof ownerIdRaw === "string" && ownerIdRaw.trim() !== ""
+      ? ownerIdRaw.trim()
+      : undefined;
+  const nameRaw = val.name;
+  const name =
+    typeof nameRaw === "string" && nameRaw.trim() !== "" ? nameRaw.trim() : undefined;
+  const sourceRoomIdRaw = val.sourceRoomId;
+  const sourceRoomId =
+    typeof sourceRoomIdRaw === "string" && sourceRoomIdRaw.trim() !== ""
+      ? sourceRoomIdRaw.trim()
+      : undefined;
   const videoIdRaw = val.videoId;
   const isPlaying = val.isPlaying;
   const currentTime = val.currentTime;
@@ -532,6 +550,9 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
       : 0;
 
   return {
+    ...(ownerId ? { ownerId } : {}),
+    ...(name ? { name } : {}),
+    ...(sourceRoomId ? { sourceRoomId } : {}),
     videoId: activeVideoId,
     clips,
     currentClipIndex: idx,
@@ -1247,6 +1268,9 @@ function RoomContent() {
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   const [sessionSavedToast, setSessionSavedToast] = useState(false);
+  const [isCopyingShared, setIsCopyingShared] = useState(false);
+  const [copySharedError, setCopySharedError] = useState<string | null>(null);
+  const [copySharedToast, setCopySharedToast] = useState(false);
   const [coachViewMode, setCoachViewMode] = useState<"single" | "multi">("single");
   const coachViewModeRef = useRef(coachViewMode);
   useLayoutEffect(() => {
@@ -1658,6 +1682,7 @@ function RoomContent() {
                 ? tplAngles
                 : null;
             void set(roomRef, {
+              ...(isHost && user?.uid ? { ownerId: user.uid } : {}),
               videoId: activeId,
               clips: template.clips.map((c) => ({
                 videoId: c.videoId,
@@ -1715,6 +1740,7 @@ function RoomContent() {
       }
 
       void set(roomRef, {
+        ...(isHost && user?.uid ? { ownerId: user.uid } : {}),
         videoId: vid,
         clips: [{ videoId: vid }],
         currentClipIndex: 0,
@@ -4634,6 +4660,108 @@ function RoomContent() {
     });
   }, [roomId]);
 
+  const handleCopySharedToMySessions = useCallback(async () => {
+    if (!roomId || !user || isCopyingShared) return;
+    setIsCopyingShared(true);
+    setCopySharedError(null);
+    try {
+      const src = roomStateRef.current;
+      if (!src) throw new Error("Room not loaded.");
+      const newRoomId = Math.random().toString(36).slice(2, 10);
+      markRoomHost(newRoomId);
+      const dstRef = ref(db, `rooms/${newRoomId}`);
+
+      const clips =
+        Array.isArray(src.clips) && src.clips.length > 0
+          ? src.clips
+          : [{ videoId: src.videoId }];
+      const currentClipIndex = Math.min(
+        Math.max(0, src.currentClipIndex ?? 0),
+        Math.max(0, clips.length - 1),
+      );
+
+      const copiedFrom: Record<string, unknown> = {
+        roomId,
+        ...(typeof src.ownerId === "string" && src.ownerId.trim() !== ""
+          ? { ownerId: src.ownerId.trim() }
+          : {}),
+        ...(typeof src.name === "string" && src.name.trim() !== ""
+          ? { name: src.name.trim() }
+          : {}),
+      };
+
+      await set(dstRef, {
+        ...(typeof src.name === "string" && src.name.trim() !== ""
+          ? { name: src.name.trim() }
+          : {}),
+        ownerId: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        sourceRoomId: roomId,
+        copiedFrom,
+        videoId: src.videoId,
+        clips: clips.map((c) => ({
+          videoId: c.videoId,
+          ...(c.label?.trim() ? { label: c.label.trim() } : {}),
+        })),
+        currentClipIndex,
+        chapters: (src.chapters ?? []).map((ch) => ({
+          time: ch.time,
+          label: ch.label,
+          videoId: ch.videoId,
+          ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
+        })),
+        angles: (src.angles ?? []).map((a) => ({ ...a })),
+        currentAngleId: src.currentAngleId,
+        ...(typeof src.syncAnchorTime === "number" && src.syncAnchorTime > 0
+          ? { syncAnchorTime: src.syncAnchorTime }
+          : {}),
+        ...(src.manualSyncLocked === true ? { manualSyncLocked: true } : {}),
+        ...(typeof src.manualSyncAt === "number"
+          ? { manualSyncAt: src.manualSyncAt }
+          : {}),
+        ...(src.playerViewAngleId ? { playerViewAngleId: src.playerViewAngleId } : {}),
+        isPlaying: false,
+        currentTime: typeof src.currentTime === "number" ? src.currentTime : 0,
+        playbackRate:
+          typeof src.playbackRate === "number"
+            ? src.playbackRate
+            : DEFAULT_PLAYBACK_RATE,
+        playbackCommand: null,
+        action: "init",
+        actionId: 1,
+      });
+
+      // Best-effort copy drawings (telestrator).
+      try {
+        const strokesSnap = await get(
+          ref(db, `rooms/${roomId}/telestrator/strokes`),
+        );
+        if (strokesSnap.exists()) {
+          await set(
+            ref(db, `rooms/${newRoomId}/telestrator/strokes`),
+            strokesSnap.val(),
+          );
+        }
+      } catch {
+        /* optional */
+      }
+
+      setCopySharedToast(true);
+      window.setTimeout(() => setCopySharedToast(false), 2000);
+      const to =
+        roomViewModeRef.current === "sync"
+          ? `/room/${newRoomId}?view=sync`
+          : `/room/${newRoomId}`;
+      router.replace(to);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not copy session.";
+      setCopySharedError(msg);
+    } finally {
+      setIsCopyingShared(false);
+    }
+  }, [roomId, user, isCopyingShared, router]);
+
   const saveSessionDefaultName = useCallback(
     () =>
       `Session ${new Date().toLocaleString(undefined, {
@@ -5049,6 +5177,46 @@ function RoomContent() {
             </button>
           </div>
         </div>
+
+        {!isHost && (!s.ownerId || !user || s.ownerId !== user.uid) ? (
+          <div className="mb-4 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                  This is a shared session.
+                </div>
+                {!user ? (
+                  <div className="mt-1 text-sm text-zinc-300">
+                    Sign in to save your own copy.
+                  </div>
+                ) : null}
+                {copySharedError ? (
+                  <div className="mt-1 text-sm text-red-200">
+                    {copySharedError}
+                  </div>
+                ) : null}
+              </div>
+              {user ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopySharedToMySessions()}
+                  disabled={isCopyingShared}
+                  className="rounded-lg border border-emerald-500/40 bg-emerald-950/45 px-4 py-2 text-sm font-semibold text-emerald-100 shadow-md shadow-black/30 transition hover:border-emerald-400/55 hover:bg-emerald-950/65 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isCopyingShared ? "Saving…" : "Save to My Sessions"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void signInWithGoogle()}
+                  className="rounded-lg border border-white/12 bg-white/[0.06] px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
           <div className="md:col-span-2">
@@ -5730,6 +5898,14 @@ function RoomContent() {
             ) : null}
           </div>
         ) : null}
+        {copySharedToast ? (
+          <div
+            className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
+            role="status"
+          >
+            Session copied
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -5830,6 +6006,42 @@ function RoomContent() {
                 </button>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {!cleanMode && !isHost && roomState && (!roomState.ownerId || !user || roomState.ownerId !== user.uid) ? (
+          <div className={frPanel}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className={frPanelTitle}>This is a shared session.</p>
+                {!user ? (
+                  <p className="text-sm text-zinc-300">
+                    Sign in to save your own copy.
+                  </p>
+                ) : null}
+                {copySharedError ? (
+                  <p className="text-sm text-red-200">{copySharedError}</p>
+                ) : null}
+              </div>
+              {user ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCopySharedToMySessions()}
+                  disabled={isCopyingShared}
+                  className="rounded-lg border border-emerald-500/40 bg-emerald-950/45 px-4 py-2 text-sm font-semibold text-emerald-100 shadow-md shadow-black/30 transition hover:border-emerald-400/55 hover:bg-emerald-950/65 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isCopyingShared ? "Saving…" : "Save to My Sessions"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void signInWithGoogle()}
+                  className={secondaryHostBtn}
+                >
+                  Sign in
+                </button>
+              )}
+            </div>
           </div>
         ) : null}
 
@@ -7356,6 +7568,14 @@ function RoomContent() {
         role="status"
       >
         Session saved
+      </div>
+    ) : null}
+    {copySharedToast ? (
+      <div
+        className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
+        role="status"
+      >
+        Session copied
       </div>
     ) : null}
     {saveSessionOpen ? (
