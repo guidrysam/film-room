@@ -1548,6 +1548,8 @@ function RoomContent() {
   const roomStateRef = useRef<RoomState | null>(null);
   /** Skip redundant host heartbeat RTDB writes when playhead barely moved. */
   const lastHostHeartbeatSentRef = useRef<number | null>(null);
+  /** Host multi-view: last `actionId` / `playbackCommand.commandId` used for secondary `alignSeq` dedupe. */
+  const lastHostSecondaryAlignSeqRef = useRef<number | null>(null);
   /** Last host Play tap — used to avoid heartbeat / drift-seek races on Android. */
   const hostLastPlayGestureAtRef = useRef(0);
   /** Last logged YouTube `event.data` for host (avoids duplicate BUFFERING spam). */
@@ -1617,6 +1619,7 @@ function RoomContent() {
 
   useEffect(() => {
     lastViewerSyncRateRef.current = Number.NaN;
+    lastHostSecondaryAlignSeqRef.current = null;
   }, [roomId]);
 
   useEffect(() => {
@@ -2179,6 +2182,14 @@ function RoomContent() {
           try {
             const ct = await readYoutubeCurrentTime(p, target);
             if (Math.abs(ct - target) >= VIEWER_SEEK_DEADBAND_S) {
+              if (roomState.sourceType === "live") {
+                syncLog("LIVE SEEK", {
+                  reason: "viewer-playback-command",
+                  angleId: a.id,
+                  target,
+                  commandId: cmd.commandId,
+                });
+              }
               await p.seekTo(target, true);
             }
           } catch {
@@ -2315,10 +2326,47 @@ function RoomContent() {
         } catch {
           /* YouTube API */
         }
-        try {
-          player.seekTo?.(target, true);
-        } catch {
-          /* YouTube API */
+        const liveMultiAngle =
+          isLiveStreamRef.current && rs.angles.length > 1;
+        if (liveMultiAngle) {
+          try {
+            const ct = await readYoutubeCurrentTime(player, target);
+            if (Math.abs(ct - target) < VIEWER_SEEK_DEADBAND_S) {
+              syncLog("LIVE SEEK skip (deadband)", {
+                reason,
+                angleId,
+                target,
+                ct,
+                commandId: rs.playbackCommand?.commandId ?? null,
+              });
+            } else {
+              syncLog("LIVE SEEK", {
+                reason,
+                angleId,
+                target,
+                commandId: rs.playbackCommand?.commandId ?? null,
+              });
+              player.seekTo?.(target, true);
+            }
+          } catch {
+            syncLog("LIVE SEEK", {
+              reason,
+              angleId,
+              target,
+              commandId: rs.playbackCommand?.commandId ?? null,
+            });
+            try {
+              player.seekTo?.(target, true);
+            } catch {
+              /* YouTube API */
+            }
+          }
+        } else {
+          try {
+            player.seekTo?.(target, true);
+          } catch {
+            /* YouTube API */
+          }
         }
         const audibleId = resolveViewerStackTopAngleId(rs);
         try {
@@ -2449,10 +2497,46 @@ function RoomContent() {
         }
 
         const expected = Math.max(0, rawSecondary);
-        try {
-          secondary.seekTo?.(expected, true);
-        } catch {
-          /* YouTube API */
+        const cmdId = s.playbackCommand?.commandId ?? null;
+        if (isLiveStreamRef.current) {
+          try {
+            const ct = await readYoutubeCurrentTime(secondary, expected);
+            if (Math.abs(ct - expected) < VIEWER_SEEK_DEADBAND_S) {
+              syncLog("LIVE SEEK skip (deadband)", {
+                reason,
+                angleId: a.id,
+                target: expected,
+                ct,
+                commandId: cmdId,
+              });
+            } else {
+              syncLog("LIVE SEEK", {
+                reason,
+                angleId: a.id,
+                target: expected,
+                commandId: cmdId,
+              });
+              secondary.seekTo?.(expected, true);
+            }
+          } catch {
+            syncLog("LIVE SEEK", {
+              reason,
+              angleId: a.id,
+              target: expected,
+              commandId: cmdId,
+            });
+            try {
+              secondary.seekTo?.(expected, true);
+            } catch {
+              /* YouTube API */
+            }
+          }
+        } else {
+          try {
+            secondary.seekTo?.(expected, true);
+          } catch {
+            /* YouTube API */
+          }
         }
         try {
           secondary.mute?.();
@@ -2511,6 +2595,8 @@ function RoomContent() {
       isPlaying: boolean;
       reason: string;
       allowWhileManualSync?: boolean;
+      /** Same value as latest RTDB `actionId` / `playbackCommand.commandId` after a transport write — dedupes duplicate align calls. */
+      alignSeq?: number;
     }) => {
       if (!isSyncLayoutMode(roomViewModeRef.current)) return;
       if (!opts.allowWhileManualSync && isManualSyncModeRef.current) return;
@@ -2518,6 +2604,17 @@ function RoomContent() {
       if (coachViewModeRef.current !== "multi") return;
       const s = roomStateRef.current;
       if (!s?.angles?.length || s.angles.length < 2) return;
+
+      if (typeof opts.alignSeq === "number" && Number.isFinite(opts.alignSeq)) {
+        if (lastHostSecondaryAlignSeqRef.current === opts.alignSeq) {
+          syncLog("host secondary direct skip (duplicate alignSeq)", {
+            alignSeq: opts.alignSeq,
+            reason: opts.reason,
+          });
+          return;
+        }
+        lastHostSecondaryAlignSeqRef.current = opts.alignSeq;
+      }
 
       void (async () => {
         const s2 = roomStateRef.current;
@@ -2578,6 +2675,16 @@ function RoomContent() {
           }
 
           if (rawSecondary < 0) {
+            if (isLiveStreamRef.current) {
+              syncLog("LIVE SEEK", {
+                reason: opts.reason,
+                angleId: a.id,
+                target: 0,
+                commandId:
+                  s2.playbackCommand?.commandId ??
+                  (typeof opts.alignSeq === "number" ? opts.alignSeq : null),
+              });
+            }
             try {
               player.seekTo?.(0, true);
             } catch {
@@ -2590,10 +2697,48 @@ function RoomContent() {
             }
           } else {
             const expected = Math.max(0, rawSecondary);
-            try {
-              player.seekTo?.(expected, true);
-            } catch {
-              /* YouTube API */
+            const cmdId =
+              s2.playbackCommand?.commandId ??
+              (typeof opts.alignSeq === "number" ? opts.alignSeq : null);
+            if (isLiveStreamRef.current) {
+              try {
+                const ct = await readYoutubeCurrentTime(player, expected);
+                if (Math.abs(ct - expected) < VIEWER_SEEK_DEADBAND_S) {
+                  syncLog("LIVE SEEK skip (deadband)", {
+                    reason: opts.reason,
+                    angleId: a.id,
+                    target: expected,
+                    ct,
+                    commandId: cmdId,
+                  });
+                } else {
+                  syncLog("LIVE SEEK", {
+                    reason: opts.reason,
+                    angleId: a.id,
+                    target: expected,
+                    commandId: cmdId,
+                  });
+                  player.seekTo?.(expected, true);
+                }
+              } catch {
+                syncLog("LIVE SEEK", {
+                  reason: opts.reason,
+                  angleId: a.id,
+                  target: expected,
+                  commandId: cmdId,
+                });
+                try {
+                  player.seekTo?.(expected, true);
+                } catch {
+                  /* YouTube API */
+                }
+              }
+            } else {
+              try {
+                player.seekTo?.(expected, true);
+              } catch {
+                /* YouTube API */
+              }
             }
             const stMid = await readYoutubePlayerState(player);
             if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) continue;
@@ -3053,6 +3198,7 @@ function RoomContent() {
     if (next === 0) {
       const restored = playbackRateBeforeFfRef.current;
       writeHostTransport({ playbackRate: restored }, "rate");
+      const alignSeq = hostActionSeqRef.current;
       setFfMode(0);
       void (async () => {
         const cur = roomStateRef.current;
@@ -3064,11 +3210,13 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: restored,
           reason: "ff-off",
+          alignSeq,
         });
       })();
       return;
     }
     writeHostTransport({ playbackRate: FF_NATIVE_CAP }, "rate");
+    const alignSeq = hostActionSeqRef.current;
     setFfMode(next);
     void (async () => {
       const cur = roomStateRef.current;
@@ -3080,6 +3228,7 @@ function RoomContent() {
         isPlaying: cur.isPlaying,
         playbackRate: FF_NATIVE_CAP,
         reason: "ff-tier",
+        alignSeq,
       });
     })();
   }, [isHost, writeHostTransport, applyHostMultiViewSecondaryDirect]);
@@ -3111,6 +3260,14 @@ function RoomContent() {
             Math.max(0, edge - LIVE_EDGE_CLAMP_PAD_S),
           );
         }
+        if (isLiveStreamRef.current) {
+          syncLog("LIVE SEEK", {
+            reason: "ff-sim-primary",
+            angleId: cur.currentAngleId,
+            target: newT,
+            commandId: null,
+          });
+        }
         try {
           (
             player as YouTubePlayer & {
@@ -3128,11 +3285,13 @@ function RoomContent() {
           },
           "sync",
         );
+        const alignSeq = hostActionSeqRef.current;
         applyHostMultiViewSecondaryDirect({
           primaryAnchorTime: newT,
           isPlaying: true,
           playbackRate: FF_NATIVE_CAP,
           reason: "ff-sim-tick",
+          alignSeq,
         });
       })();
     }, FF_SIM_MS);
@@ -3291,6 +3450,7 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: pr,
           reason: "chapter-jump",
+          alignSeq: hostActionSeqRef.current,
         });
         return;
       }
@@ -4076,6 +4236,12 @@ function RoomContent() {
           offsetFromGameTime: a.offsetFromGameTime ?? 0,
         });
         if (!pl) continue;
+        syncLog("LIVE SEEK", {
+          reason: "go-live",
+          angleId: a.id,
+          target: t,
+          commandId: null,
+        });
         try {
           pl.seekTo?.(t, true);
         } catch {
@@ -4094,6 +4260,7 @@ function RoomContent() {
         isPlaying: true,
         playbackRate: pr,
         reason: "go-live",
+        alignSeq: hostActionSeqRef.current,
       });
     })();
   }, [
@@ -4123,6 +4290,12 @@ function RoomContent() {
             seekT,
             edge,
             ct,
+          });
+          syncLog("LIVE SEEK", {
+            reason: "reconnect-live",
+            angleId: a.id,
+            target: seekT,
+            commandId: null,
           });
           try {
             p.seekTo?.(seekT, true);
@@ -4244,6 +4417,7 @@ function RoomContent() {
         isPlaying: true,
         playbackRate: pr,
         reason: "play",
+        alignSeq: hostActionSeqRef.current,
       });
       const snap = roomStateRef.current;
       if (
@@ -4287,6 +4461,7 @@ function RoomContent() {
         isPlaying: false,
         playbackRate: pr,
         reason: "pause",
+        alignSeq: hostActionSeqRef.current,
       });
     })();
   };
@@ -4312,6 +4487,7 @@ function RoomContent() {
         isPlaying: playing,
         playbackRate: pr,
         reason: "seek-back-10",
+        alignSeq: hostActionSeqRef.current,
       });
     })();
   };
@@ -4337,6 +4513,7 @@ function RoomContent() {
         isPlaying: playing,
         playbackRate: pr,
         reason: "seek-back-30",
+        alignSeq: hostActionSeqRef.current,
       });
     })();
   };
@@ -4362,6 +4539,7 @@ function RoomContent() {
         isPlaying: playing,
         playbackRate: pr,
         reason: "live-edge",
+        alignSeq: hostActionSeqRef.current,
       });
     })();
   };
@@ -4593,6 +4771,18 @@ function RoomContent() {
         });
 
         const p = getPlayer();
+        if (
+          cur.sourceType === "live" &&
+          roomViewModeRef.current === "sync" &&
+          cur.angles.length > 1
+        ) {
+          syncLog("LIVE SEEK", {
+            reason: "scrub-primary",
+            angleId: cur.currentAngleId,
+            target: clamped,
+            commandId: hostActionSeqRef.current,
+          });
+        }
         try {
           p?.seekTo?.(clamped, true);
         } catch {
@@ -4618,6 +4808,7 @@ function RoomContent() {
             isPlaying: wasPlaying,
             playbackRate: pr,
             reason: "scrub",
+            alignSeq: hostActionSeqRef.current,
           });
         }
       })();
@@ -4681,6 +4872,7 @@ function RoomContent() {
       setFfMode(0);
     }
     writeHostTransport({ playbackRate: rate }, "rate");
+    const alignSeq = hostActionSeqRef.current;
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur) return;
@@ -4705,6 +4897,7 @@ function RoomContent() {
         isPlaying: cur.isPlaying,
         playbackRate: rate,
         reason: "speed",
+        alignSeq,
       });
     })();
   };
