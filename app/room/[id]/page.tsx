@@ -4537,15 +4537,22 @@ function RoomContent() {
     const rr = roomRefForWrite.current;
     const cur = roomStateRef.current;
     if (!rr || !cur) return;
-    const nextAngles: VideoAngle[] = cur.angles.map((a) =>
-      a.autoOffsetSource === "manual"
-        ? { ...a, autoOffsetSource: "unknown" as const }
-        : a,
-    );
+    const nextAngles: VideoAngle[] = cur.angles.map((a) => ({
+      ...a,
+      offsetFromGameTime: 0,
+      ...(a.autoOffsetSource === "manual"
+        ? { autoOffsetSource: "unknown" as const }
+        : {}),
+    }));
+    syncLog("reset sync", {
+      angles: nextAngles.length,
+      sourceType: cur.sourceType ?? "",
+    });
     void update(rr, {
       angles: nextAngles,
-      manualSyncLocked: null,
+      manualSyncLocked: false,
       manualSyncAt: null,
+      syncAnchorTime: 0,
       updatedAt: serverTimestamp(),
     }).catch(() => {
       /* RTDB */
