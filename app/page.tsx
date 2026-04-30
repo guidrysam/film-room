@@ -66,6 +66,9 @@ export default function Home() {
           <Link href="/about" className={ghostLink}>
             What is Film Room?
           </Link>
+          <Link href="/stream" className={ghostLink}>
+            Stream Room
+          </Link>
           <Link
             href="/app"
             className={`${ghostLink} text-xs text-white hover:text-white/85`}
