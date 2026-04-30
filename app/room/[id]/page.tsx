@@ -3137,6 +3137,11 @@ function RoomContent() {
                     } catch {
                       /* YouTube API */
                     }
+                    try {
+                      p.playVideo?.();
+                    } catch {
+                      /* YouTube API */
+                    }
                   })();
                 }}
                 title="Seek this angle to near live edge (local only)"
@@ -4646,6 +4651,34 @@ function RoomContent() {
     })();
   };
 
+  /** Per-angle only: near-live edge + local play. No RTDB, offsets, or other players. */
+  const handleSyncAngleTileLive = useCallback((angleId: string) => {
+    const cur = roomStateRef.current;
+    if (!cur || cur.sourceType !== "live") return;
+    if (roomViewModeRef.current !== "sync") return;
+    const pl = syncPlayerRefs.current[angleId];
+    if (!pl) return;
+    void (async () => {
+      const fb = await readYoutubeCurrentTime(pl, 0);
+      const edge = await readLiveEdgeTime(pl, fb);
+      const target = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
+      try {
+        (
+          pl as YouTubePlayer & {
+            seekTo?: (s: number, allowSeekAhead: boolean) => void;
+          }
+        ).seekTo?.(target, true);
+      } catch {
+        /* YouTube API */
+      }
+      try {
+        pl.playVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+    })();
+  }, []);
+
   // No "Jump to Sync Start": syncing is manual and transport is user-driven.
 
   const handleFocusPipSwap = useCallback(() => {
@@ -5771,6 +5804,10 @@ function RoomContent() {
     const isLiveSource = s.sourceType === "live";
     const showGoLiveControls =
       isHost && roomViewMode === "sync" && isLiveSource;
+    const showPerAngleLiveTiles =
+      isLiveSource && roomViewMode === "sync";
+    const perAngleLiveBtnClass =
+      "rounded-md border border-rose-500/40 bg-rose-950/55 px-2 py-1 text-[10px] font-semibold text-rose-100 shadow-sm transition hover:border-rose-400/55 hover:bg-rose-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/45";
 
     return (
       <>
@@ -6117,12 +6154,39 @@ function RoomContent() {
                                 />
                                 Player View
                               </label>
+                              {showPerAngleLiveTiles ? (
+                                <button
+                                  type="button"
+                                  className={perAngleLiveBtnClass}
+                                  title="Seek this angle to near live edge (local only)"
+                                  onClick={() =>
+                                    void handleSyncAngleTileLive(angle.id)
+                                  }
+                                >
+                                  Live
+                                </button>
+                              ) : null}
                             </div>
                           </div>
                         ) : (
-                          <span className="pointer-events-none absolute left-2 top-2 z-[40] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
-                            {angle.name}
-                          </span>
+                          <>
+                            <span className="pointer-events-none absolute left-2 top-2 z-[40] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
+                              {angle.name}
+                            </span>
+                            {showPerAngleLiveTiles ? (
+                              <button
+                                type="button"
+                                className={`pointer-events-auto absolute right-2 top-2 z-[45] ${perAngleLiveBtnClass}`}
+                                title="Seek this angle to near live edge (local only)"
+                                onClick={(e) => {
+                                  if (!isFeatured) e.stopPropagation();
+                                  void handleSyncAngleTileLive(angle.id);
+                                }}
+                              >
+                                Live
+                              </button>
+                            ) : null}
+                          </>
                         )}
                         <div
                           className={
@@ -6242,6 +6306,18 @@ function RoomContent() {
                         Player View
                       </label>
                     ) : null}
+                    {showPerAngleLiveTiles ? (
+                      <button
+                        type="button"
+                        className={perAngleLiveBtnClass}
+                        title="Seek this angle to near live edge (local only)"
+                        onClick={() =>
+                          void handleSyncAngleTileLive(activeAngle.id)
+                        }
+                      >
+                        Live
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -6296,6 +6372,16 @@ function RoomContent() {
                             videoId={safeDecodeVideoId(a.videoId)}
                             syncPlayerRefs={syncPlayerRefs}
                           />
+                          {showPerAngleLiveTiles ? (
+                            <button
+                              type="button"
+                              className={`pointer-events-auto absolute right-2 top-2 z-[55] ${perAngleLiveBtnClass}`}
+                              title="Seek this angle to near live edge (local only)"
+                              onClick={() => void handleSyncAngleTileLive(a.id)}
+                            >
+                              Live
+                            </button>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -6327,6 +6413,18 @@ function RoomContent() {
                     </YoutubePointerGate>
                   </div>
                 )}
+                {showPerAngleLiveTiles && !multi ? (
+                  <button
+                    type="button"
+                    className={`pointer-events-auto absolute right-2 top-2 z-[55] ${perAngleLiveBtnClass}`}
+                    title="Seek this angle to near live edge (local only)"
+                    onClick={() =>
+                      void handleSyncAngleTileLive(activeAngle.id)
+                    }
+                  >
+                    Live
+                  </button>
+                ) : null}
                 {roomId && (isHost || !multi) ? (
                   <TelestratorOverlay
                     roomId={roomId}
@@ -6555,7 +6653,7 @@ function RoomContent() {
               >
                 {markPlayState === "marked" ? "Marked" : "Mark Play"}
               </button>
-                    {isLiveRoom ? (
+              {isLiveRoom ? (
                 <button
                   type="button"
                   onClick={handleJumpLiveEdge}
