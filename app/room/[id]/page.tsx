@@ -886,6 +886,68 @@ async function readYoutubePlayerState(
   }
 }
 
+/** After seek on live, kick playback; retry once if still UNSTARTED/CUED. */
+async function livePlayRequestedWithRetry(
+  player: YouTubePlayer,
+  angleId: string,
+  context: string,
+): Promise<void> {
+  let stBefore: number | undefined;
+  try {
+    stBefore = await readYoutubePlayerState(player);
+  } catch {
+    stBefore = undefined;
+  }
+  syncLog("live play requested", {
+    angleId,
+    context,
+    stateBefore:
+      stBefore === undefined ? undefined : youtubeStateLabel(stBefore),
+  });
+  try {
+    player.playVideo?.();
+  } catch {
+    /* YouTube API */
+  }
+
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 250);
+  });
+
+  let stMid: number | undefined;
+  try {
+    stMid = await readYoutubePlayerState(player);
+  } catch {
+    stMid = undefined;
+  }
+
+  if (stMid !== YT_UNSTARTED && stMid !== YT_CUED) {
+    return;
+  }
+
+  try {
+    player.playVideo?.();
+  } catch {
+    /* YouTube API */
+  }
+
+  let stAfter: number | undefined;
+  try {
+    stAfter = await readYoutubePlayerState(player);
+  } catch {
+    stAfter = undefined;
+  }
+
+  syncLog("live play retry", {
+    angleId,
+    context,
+    stateBefore:
+      stMid === undefined ? undefined : youtubeStateLabel(stMid),
+    stateAfter:
+      stAfter === undefined ? undefined : youtubeStateLabel(stAfter),
+  });
+}
+
 /**
  * Only toggles play/pause when the iframe state disagrees — avoids stop-start from repeated calls.
  * Caller should invoke only on play/pause intent change or after seek (not on every heartbeat).
@@ -3032,6 +3094,7 @@ function RoomContent() {
     (opts: {
       label: string;
       which: "primary" | "secondary";
+      angleId: string;
       get: () => YouTubePlayer | null | undefined;
     }) => {
       if (!isHost || !isManualSyncMode || coachViewMode !== "multi") return null;
@@ -3140,11 +3203,11 @@ function RoomContent() {
                     } catch {
                       /* YouTube API */
                     }
-                    try {
-                      p.playVideo?.();
-                    } catch {
-                      /* YouTube API */
-                    }
+                    await livePlayRequestedWithRetry(
+                      p,
+                      opts.angleId,
+                      "manual-sync-tile-live",
+                    );
                   })();
                 }}
                 title="Seek this angle to near live edge (local only)"
@@ -4336,11 +4399,11 @@ function RoomContent() {
           } catch {
             /* YouTube API */
           }
-          try {
-            pl.playVideo?.();
-          } catch {
-            /* YouTube API */
-          }
+        }
+        for (const a of cur.angles) {
+          const pl = syncPlayerRefs.current[a.id];
+          if (!pl) continue;
+          await livePlayRequestedWithRetry(pl, a.id, "go-live-unsynced");
         }
         return;
       }
@@ -4377,11 +4440,12 @@ function RoomContent() {
         } catch {
           /* YouTube API */
         }
-        try {
-          pl.playVideo?.();
-        } catch {
-          /* YouTube API */
-        }
+      }
+
+      for (const a of cur.angles) {
+        const pl = syncPlayerRefs.current[a.id];
+        if (!pl) continue;
+        await livePlayRequestedWithRetry(pl, a.id, "go-live-manual-sync");
       }
 
       lastAppliedKey.current = "";
@@ -4404,14 +4468,27 @@ function RoomContent() {
           const p = syncPlayerRefs.current[a.id];
           if (!p) continue;
           const edge = await getLiveEdgeSeconds(p);
-          const ct = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
           const cap = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
-          const seekT = Math.min(ct, cap);
+          const ct = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
+          let st: number | undefined;
+          try {
+            st = await readYoutubePlayerState(p);
+          } catch {
+            st = undefined;
+          }
+          const needNearLive =
+            ct <= 0.05 ||
+            st === YT_UNSTARTED ||
+            st === YT_CUED;
+          const seekT = needNearLive ? cap : Math.min(ct, cap);
           syncLog("reconnect live player", {
             angleId: a.id,
             seekT,
             edge,
             ct,
+            needNearLive,
+            state:
+              st === undefined ? undefined : youtubeStateLabel(st),
           });
           syncLog("LIVE SEEK", {
             reason: "reconnect-live",
@@ -4424,11 +4501,7 @@ function RoomContent() {
           } catch {
             /* YouTube API */
           }
-          try {
-            p.playVideo?.();
-          } catch {
-            /* YouTube API */
-          }
+          await livePlayRequestedWithRetry(p, a.id, "reconnect-live");
         }
       })();
       return;
@@ -4645,11 +4718,12 @@ function RoomContent() {
     if (isManualSyncModeRef.current) return;
     const pr = clearFfIfActive();
     void (async () => {
+      const snap = roomStateRef.current;
       const player = getPlayer();
-      const fb = roomStateRef.current?.currentTime ?? 0;
-      const playing = roomStateRef.current?.isPlaying ?? false;
+      const fb = snap?.currentTime ?? 0;
+      const playing = snap?.isPlaying ?? false;
       const edge = await readLiveEdgeTime(player, fb);
-      const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
+      const syncAnchorTime = snap?.syncAnchorTime ?? 0;
       const clamped = Math.max(syncAnchorTime, edge - LIVE_EDGE_CLAMP_PAD_S);
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
@@ -4663,6 +4737,17 @@ function RoomContent() {
         reason: "live-edge",
         alignSeq: hostActionSeqRef.current,
       });
+      if (
+        snap?.sourceType === "live" &&
+        isSyncLayoutMode(roomViewModeRef.current) &&
+        snap.angles.length > 0
+      ) {
+        for (const a of snap.angles) {
+          const p = syncPlayerRefs.current[a.id];
+          if (!p) continue;
+          await livePlayRequestedWithRetry(p, a.id, "transport-live");
+        }
+      }
     })();
   };
 
@@ -4686,11 +4771,7 @@ function RoomContent() {
       } catch {
         /* YouTube API */
       }
-      try {
-        pl.playVideo?.();
-      } catch {
-        /* YouTube API */
-      }
+      await livePlayRequestedWithRetry(pl, angleId, "tile-live");
     })();
   }, []);
 
@@ -6275,6 +6356,7 @@ function RoomContent() {
                                 angle.id === s.currentAngleId
                                   ? "primary"
                                   : "secondary",
+                              angleId: angle.id,
                               get: () =>
                                 syncPlayerRefs.current[angle.id] ?? undefined,
                             })
@@ -6493,6 +6575,7 @@ function RoomContent() {
                 ? renderSyncSetupControls({
                     label: "Angle 1",
                     which: "primary",
+                    angleId: activeAngle.id,
                     get: getPlayer,
                   })
                 : null}
@@ -7383,6 +7466,7 @@ function RoomContent() {
                     {renderSyncSetupControls({
                       label: hostMultiAngles.activeAngle.name,
                       which: "primary",
+                      angleId: hostMultiAngles.activeAngle.id,
                       get: getPlayer,
                     })}
                   </div>
@@ -7486,6 +7570,7 @@ function RoomContent() {
                     {renderSyncSetupControls({
                       label: fsMA?.secondaryAngle.name ?? "Angle",
                       which: "secondary",
+                      angleId: fsMA?.secondaryAngle.id ?? "",
                       get: () =>
                         syncPlayerRefs.current[
                           fsMA?.secondaryAngle.id ?? ""
@@ -7542,6 +7627,7 @@ function RoomContent() {
                     {renderSyncSetupControls({
                       label: fsMA?.activeAngle.name ?? "Angle",
                       which: "primary",
+                      angleId: fsMA?.activeAngle.id ?? "",
                       get: getPlayer,
                     })}
                   </div>
@@ -7612,6 +7698,7 @@ function RoomContent() {
                     {renderSyncSetupControls({
                       label: fsMA?.secondaryAngle.name ?? "Angle",
                       which: "secondary",
+                      angleId: fsMA?.secondaryAngle.id ?? "",
                       get: () =>
                         syncPlayerRefs.current[
                           fsMA?.secondaryAngle.id ?? ""
@@ -8085,6 +8172,7 @@ function RoomContent() {
                         {renderSyncSetupControls({
                           label: hostMultiAngles!.activeAngle.name,
                           which: "primary",
+                          angleId: hostMultiAngles!.activeAngle.id,
                           get: getPlayer,
                         })}
                       </div>
@@ -8188,6 +8276,7 @@ function RoomContent() {
                         {renderSyncSetupControls({
                           label: hostMultiAngles!.secondaryAngle.name,
                           which: "secondary",
+                          angleId: hostMultiAngles!.secondaryAngle.id,
                           get: () =>
                             syncPlayerRefs.current[
                               hostMultiAngles!.secondaryAngle.id
@@ -8247,6 +8336,7 @@ function RoomContent() {
                         {renderSyncSetupControls({
                           label: hostMultiAngles!.activeAngle.name,
                           which: "primary",
+                          angleId: hostMultiAngles!.activeAngle.id,
                           get: getPlayer,
                         })}
                       </div>
@@ -8319,6 +8409,7 @@ function RoomContent() {
                         {renderSyncSetupControls({
                           label: hostMultiAngles!.secondaryAngle.name,
                           which: "secondary",
+                          angleId: hostMultiAngles!.secondaryAngle.id,
                           get: () =>
                             syncPlayerRefs.current[
                               hostMultiAngles!.secondaryAngle.id
