@@ -37,7 +37,6 @@ import {
   type FilmRoomTelestratorClearDetail,
   TelestratorOverlay,
 } from "@/components/TelestratorOverlay";
-import SyncLayout, { type LayoutMode, type SyncLayoutAngle } from "@/components/SyncLayout";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
 import {
@@ -1277,8 +1276,7 @@ function RoomContent() {
   useLayoutEffect(() => {
     coachViewModeRef.current = coachViewMode;
   }, [coachViewMode]);
-  /** Host-only multi layout mode (CSS/layout only; do not remount players). */
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("pip");
+  // layoutMode removed: Sync View is controlled by coachViewMode only.
   const [roomViewMode, setRoomViewMode] = useState<"clip" | "sync">("clip");
   const roomViewModeRef = useRef(roomViewMode);
   useLayoutEffect(() => {
@@ -2470,7 +2468,6 @@ function RoomContent() {
   useEffect(() => {
     if (coachViewMode !== "multi") {
       setMultiViewSecondaryHold(null);
-      setLayoutMode("grid");
       setHostFocusAngleId(null);
     }
   }, [coachViewMode]);
@@ -2488,7 +2485,6 @@ function RoomContent() {
     if (!isHost) return;
     // Sync setup requires both players mounted/visible.
     setCoachViewMode("multi");
-    setLayoutMode("grid");
     setRoomViewMode("sync");
     setIsManualSyncMode(true);
   }, [isHost]);
@@ -4101,7 +4097,6 @@ function RoomContent() {
     const s = roomStateRef.current;
     if (!s || s.angles.length < 2) return;
     if (coachViewModeRef.current !== "multi") return;
-    if (layoutMode !== "pip") return;
 
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const pipAngle =
@@ -4234,7 +4229,6 @@ function RoomContent() {
   }, [
     isHost,
     roomId,
-    layoutMode,
     clearFfIfActive,
     showHostNotice,
     applyHostMultiViewSecondaryDirect,
@@ -4248,7 +4242,6 @@ function RoomContent() {
       const cur = roomStateRef.current;
       if (!cur || cur.angles.length < 2) return;
       if (coachViewModeRef.current !== "multi") return;
-      if (layoutMode !== "pip") return;
       const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
       const secondaryAngle =
         cur.angles.find((a) => a.id !== activeAngle.id) ?? null;
@@ -4259,7 +4252,7 @@ function RoomContent() {
         setHostFocusAngleId(secondaryAngle.id);
       }
     },
-    [isHost, layoutMode],
+    [isHost],
   );
 
   const handleResetManualSyncLock = useCallback(() => {
@@ -4947,7 +4940,7 @@ function RoomContent() {
 
   const fsMA = hostMultiAngles;
   const fsGridLayoutMode = Boolean(
-    fsActive && layoutMode === "grid" && fsMA && fullscreenAngleId !== null,
+    fsActive && fsMA && fullscreenAngleId !== null,
   );
   const fsGridPrimaryBig = Boolean(
     fsGridLayoutMode &&
@@ -4966,10 +4959,10 @@ function RoomContent() {
 
   useEffect(() => {
     if (!isHost) return;
-    if (coachViewMode !== "multi" || layoutMode !== "pip") {
+    if (coachViewMode !== "multi") {
       if (hostFocusAngleIdRef.current !== null) setHostFocusAngleId(null);
     }
-  }, [isHost, coachViewMode, layoutMode]);
+  }, [isHost, coachViewMode]);
 
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -5289,58 +5282,7 @@ function RoomContent() {
             </button>
           </div>
 
-          <div>
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-              Layout
-            </div>
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
-              <button
-                type="button"
-                onClick={() => {
-                  console.log("layoutMode set:", "grid");
-                  setLayoutMode("grid");
-                }}
-                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                  layoutMode === "grid"
-                    ? "bg-blue-600/45 text-white"
-                    : "text-zinc-300 hover:text-white"
-                }`}
-              >
-                Grid
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  console.log("layoutMode set:", "focus");
-                  setLayoutMode("focus");
-                }}
-                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                  layoutMode === "focus"
-                    ? "bg-blue-600/45 text-white"
-                    : "text-zinc-300 hover:text-white"
-                }`}
-              >
-                Focus
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  console.log("layoutMode set:", "pip");
-                  setLayoutMode("pip");
-                }}
-                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                  layoutMode === "pip"
-                    ? "bg-blue-600/45 text-white"
-                    : "text-zinc-300 hover:text-white"
-                }`}
-              >
-                PiP
-              </button>
-            </div>
-            <div className="mt-1 text-[11px] font-medium text-zinc-400">
-              Current layout: <span className="font-mono text-zinc-200">{layoutMode}</span>
-            </div>
-          </div>
+          {/* layoutMode removed: Single/Multi view only */}
 
           <div className="md:col-span-5">
             <div className="flex items-center justify-end gap-2">
@@ -5393,107 +5335,180 @@ function RoomContent() {
         ) : null}
 
         <div className="w-full">
-          {isHost && multi && coachViewMode === "multi" ? (
-            <SyncLayout
-              angles={s.angles.map(
-                (angle): SyncLayoutAngle => ({
-                  id: angle.id,
-                  element: (
-                    <div
-                      className={`h-full w-full overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
-                        s.playerViewAngleId && s.playerViewAngleId === angle.id
-                          ? "border border-violet-500/45 ring-2 ring-violet-500/40"
-                          : "border border-white/[0.07] ring-1 ring-white/[0.04]"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                          <span className="truncate text-sm font-semibold text-zinc-100">
+          {isHost && multi ? (
+            (() => {
+              const featuredId =
+                s.playerViewAngleId ?? s.currentAngleId ?? s.angles[0]!.id;
+              const featuredIdx = Math.max(
+                0,
+                s.angles.findIndex((a) => a.id === featuredId),
+              );
+              const featured = s.angles[featuredIdx] ?? s.angles[0]!;
+              const others = s.angles.filter((a) => a.id !== featured.id);
+              return (
+                <div
+                  className={
+                    coachViewMode === "multi"
+                      ? "grid w-full grid-cols-1 gap-4 md:grid-cols-2"
+                      : "relative isolate aspect-video w-full overflow-hidden rounded-xl bg-black"
+                  }
+                >
+                  {s.angles.map((angle) => {
+                    const isFeatured = angle.id === featured.id;
+                    const pipIndex = others.findIndex((a) => a.id === angle.id);
+                    const pipStyle =
+                      pipIndex >= 0
+                        ? {
+                            transform: `translateY(-${pipIndex * 150}px)`,
+                          }
+                        : undefined;
+                    const outerClass =
+                      coachViewMode === "multi"
+                        ? `overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
+                            s.playerViewAngleId &&
+                            s.playerViewAngleId === angle.id
+                              ? "border border-violet-500/45 ring-2 ring-violet-500/40"
+                              : "border border-white/[0.07] ring-1 ring-white/[0.04]"
+                          }`
+                        : isFeatured
+                          ? "absolute inset-0 z-10"
+                          : "absolute bottom-4 right-4 z-20 h-36 w-64 cursor-pointer overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50";
+                    return (
+                      <div
+                        key={angle.id}
+                        className={outerClass}
+                        style={coachViewMode === "single" && !isFeatured ? pipStyle : undefined}
+                        role={
+                          coachViewMode === "single" && !isFeatured ? "button" : undefined
+                        }
+                        tabIndex={
+                          coachViewMode === "single" && !isFeatured ? 0 : undefined
+                        }
+                        onClick={() => {
+                          if (coachViewMode !== "single" || isFeatured) return;
+                          handleSetPlayerViewAngleId(angle.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (coachViewMode !== "single" || isFeatured) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleSetPlayerViewAngleId(angle.id);
+                          }
+                        }}
+                      >
+                        {coachViewMode === "multi" ? (
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                              <span className="truncate text-sm font-semibold text-zinc-100">
+                                {angle.name}
+                              </span>
+                              {angle.id === s.currentAngleId ? (
+                                <span className="rounded-md border border-blue-500/35 bg-blue-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-100">
+                                  Game clock
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                              {s.playerViewAngleId === angle.id ? (
+                                <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
+                                  Player View
+                                </span>
+                              ) : null}
+                              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
+                                <input
+                                  type="radio"
+                                  name="film-room-player-view"
+                                  className="h-3.5 w-3.5 accent-violet-500"
+                                  checked={s.playerViewAngleId === angle.id}
+                                  onChange={() =>
+                                    handleSetPlayerViewAngleId(angle.id)
+                                  }
+                                />
+                                Player View
+                              </label>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="pointer-events-none absolute left-2 top-2 z-[40] rounded bg-black/70 px-2 py-1 text-[10px] font-semibold text-white/90">
                             {angle.name}
                           </span>
-                          {angle.id === s.currentAngleId ? (
-                            <span className="rounded-md border border-blue-500/35 bg-blue-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-100">
-                              Game clock
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                          {s.playerViewAngleId === angle.id ? (
-                            <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
-                              Player View
-                            </span>
-                          ) : null}
-                          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
-                            <input
-                              type="radio"
-                              name="film-room-player-view"
-                              className="h-3.5 w-3.5 accent-violet-500"
-                              checked={s.playerViewAngleId === angle.id}
-                              onChange={() => handleSetPlayerViewAngleId(angle.id)}
-                            />
-                            Player View
-                          </label>
-                        </div>
-                      </div>
-                      <div className="relative aspect-video w-full overflow-hidden bg-black">
-                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
-                          <YouTube
-                            key={angle.id}
-                            videoId={safeDecodeVideoId(angle.videoId)}
-                            onReady={(e) => {
-                              const pl = e.target as YouTubePlayer;
-                              syncPlayerRefs.current[angle.id] = pl;
-                              if (angle.id === s.currentAngleId) {
-                                handlePlayerReady();
+                        )}
+                        <div
+                          className={
+                            coachViewMode === "multi"
+                              ? "relative aspect-video w-full overflow-hidden bg-black"
+                              : "absolute inset-0"
+                          }
+                        >
+                          <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                            <YouTube
+                              key={angle.id}
+                              videoId={safeDecodeVideoId(angle.videoId)}
+                              onReady={(e) => {
+                                const pl = e.target as YouTubePlayer;
+                                syncPlayerRefs.current[angle.id] = pl;
+                                if (angle.id === s.currentAngleId) {
+                                  handlePlayerReady();
+                                }
+                                applySyncStateToAnglePlayer(
+                                  angle.id,
+                                  "host-sync-card-onReady",
+                                );
+                              }}
+                              onStateChange={
+                                angle.id === s.currentAngleId
+                                  ? handleYoutubeStateChange
+                                  : () => {}
                               }
-                              applySyncStateToAnglePlayer(
-                                angle.id,
-                                "host-sync-card-onReady",
-                              );
-                            }}
-                            onStateChange={
-                              angle.id === s.currentAngleId
-                                ? handleYoutubeStateChange
-                                : () => {}
-                            }
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
+                              className="absolute left-0 top-0 h-full w-full"
+                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              opts={youtubePlayerOpts}
+                            />
+                          </YoutubePointerGate>
+                          <SyncAngleDebugStrip
+                            angleId={angle.id}
+                            angleName={angle.name}
+                            videoId={safeDecodeVideoId(angle.videoId)}
+                            syncPlayerRefs={syncPlayerRefs}
                           />
-                        </YoutubePointerGate>
-                        <SyncAngleDebugStrip
-                          angleId={angle.id}
-                          angleName={angle.name}
-                          videoId={safeDecodeVideoId(angle.videoId)}
-                          syncPlayerRefs={syncPlayerRefs}
-                        />
-                        {roomId ? (
-                          <TelestratorOverlay
-                            roomId={roomId}
-                            isHost={isHost}
-                            drawEnabled={telDrawOn}
-                            strokeAngleId={angle.id}
-                            renderAngleId={angle.id}
-                            allowLegacyWithoutAngleId={false}
-                          />
-                        ) : null}
+                          {roomId && coachViewMode === "single" && isFeatured ? (
+                            <TelestratorOverlay
+                              roomId={roomId}
+                              isHost={isHost}
+                              drawEnabled={telDrawOn}
+                              strokeAngleId={featured.id}
+                              renderAngleId={featured.id}
+                              allowLegacyWithoutAngleId={false}
+                            />
+                          ) : roomId && coachViewMode === "multi" ? (
+                            <TelestratorOverlay
+                              roomId={roomId}
+                              isHost={isHost}
+                              drawEnabled={telDrawOn}
+                              strokeAngleId={angle.id}
+                              renderAngleId={angle.id}
+                              allowLegacyWithoutAngleId={false}
+                            />
+                          ) : null}
+                        </div>
+                        {coachViewMode === "multi" && showIndependentControls
+                          ? renderSyncSetupControls({
+                              label: angle.name,
+                              which:
+                                angle.id === s.currentAngleId
+                                  ? "primary"
+                                  : "secondary",
+                              get: () =>
+                                syncPlayerRefs.current[angle.id] ?? undefined,
+                            })
+                          : null}
                       </div>
-                      {showIndependentControls
-                        ? renderSyncSetupControls({
-                            label: angle.name,
-                            which:
-                              angle.id === s.currentAngleId ? "primary" : "secondary",
-                            get: () => syncPlayerRefs.current[angle.id] ?? undefined,
-                          })
-                        : null}
-                    </div>
-                  ),
-                }),
-              )}
-              playerViewAngleId={s.playerViewAngleId ?? s.currentAngleId ?? s.angles[0]!.id}
-              layoutMode={layoutMode}
-            />
+                    );
+                  })}
+                </div>
+              );
+            })()
           ) : (
             <div
               className={`overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
@@ -5542,57 +5557,62 @@ function RoomContent() {
               </div>
               <div className="relative isolate aspect-video w-full overflow-hidden bg-black">
                 {!isHost && multi ? (
-                  <>
-                    <SyncLayout
-                      angles={s.angles.map(
-                        (a): SyncLayoutAngle => ({
-                          id: a.id,
-                          element: (
-                            <div className="absolute inset-0 isolate">
-                              <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
-                                <YouTube
-                                  videoId={safeDecodeVideoId(a.videoId)}
-                                  onReady={(e) => {
-                                    const pl = e.target as YouTubePlayer;
-                                    syncPlayerRefs.current[a.id] = pl;
-                                    applySyncStateToAnglePlayer(
-                                      a.id,
-                                      "viewer-sync-onReady",
-                                    );
-                                  }}
-                                  className="absolute left-0 top-0 h-full w-full"
-                                  iframeClassName="absolute left-0 top-0 h-full w-full"
-                                  opts={youtubePlayerOpts}
-                                />
-                              </div>
-                              {roomId && a.id === viewerStackTopResolvedId ? (
-                                <TelestratorOverlay
-                                  roomId={roomId}
-                                  isHost={false}
-                                  drawEnabled={telDrawOn}
-                                  renderAngleId={viewerPlayerViewDrawAngleId}
-                                  allowLegacyWithoutAngleId
-                                  wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
-                                  viewerDebug
-                                />
-                              ) : null}
-                              <SyncAngleDebugStrip
-                                angleId={a.id}
-                                angleName={a.name}
-                                videoId={safeDecodeVideoId(a.videoId)}
-                                syncPlayerRefs={syncPlayerRefs}
-                              />
-                            </div>
-                          ),
-                        }),
-                      )}
-                      playerViewAngleId={viewerStackTopResolvedId}
-                      layoutMode={layoutMode}
-                    />
+                  <div className="relative isolate h-full w-full">
+                    {s.angles.map((a, i) => {
+                      const isMain = a.id === viewerStackTopResolvedId;
+                      const pipIndex = isMain ? -1 : i;
+                      return (
+                        <div
+                          key={a.id}
+                          className={
+                            isMain
+                              ? "absolute inset-0 z-10"
+                              : "absolute bottom-4 right-4 z-20 h-36 w-64 overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50"
+                          }
+                          style={
+                            isMain ? undefined : { transform: `translateY(-${pipIndex * 150}px)` }
+                          }
+                        >
+                          <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                            <YouTube
+                              videoId={safeDecodeVideoId(a.videoId)}
+                              onReady={(e) => {
+                                const pl = e.target as YouTubePlayer;
+                                syncPlayerRefs.current[a.id] = pl;
+                                applySyncStateToAnglePlayer(
+                                  a.id,
+                                  "viewer-sync-onReady",
+                                );
+                              }}
+                              className="absolute left-0 top-0 h-full w-full"
+                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              opts={youtubePlayerOpts}
+                            />
+                          </div>
+                          {roomId && isMain ? (
+                            <TelestratorOverlay
+                              roomId={roomId}
+                              isHost={false}
+                              drawEnabled={telDrawOn}
+                              renderAngleId={viewerPlayerViewDrawAngleId}
+                              allowLegacyWithoutAngleId
+                              wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
+                              viewerDebug
+                            />
+                          ) : null}
+                          <SyncAngleDebugStrip
+                            angleId={a.id}
+                            angleName={a.name}
+                            videoId={safeDecodeVideoId(a.videoId)}
+                            syncPlayerRefs={syncPlayerRefs}
+                          />
+                        </div>
+                      );
+                    })}
                     <div className="pointer-events-none absolute left-2 top-2 z-[41] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
                       Main: {viewerTopAngleForLabel.name} · PiP muted
                     </div>
-                  </>
+                  </div>
                 ) : (
                   <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
@@ -6268,49 +6288,9 @@ function RoomContent() {
                     Multi View
                   </button>
                   {coachViewMode === "multi" && roomState.angles.length > 1 ? (
-                    <div className="flex flex-wrap items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.03] p-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setLayoutMode("grid")}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          layoutMode === "grid"
-                            ? "bg-blue-600/45 text-white"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        Grid
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLayoutMode("focus")}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          layoutMode === "focus"
-                            ? "bg-blue-600/45 text-white"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        Focus
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLayoutMode("pip")}
-                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          layoutMode === "pip"
-                            ? "bg-blue-600/45 text-white"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        PiP
-                      </button>
-                      <span
-                        className="mx-0.5 hidden h-3 w-px bg-white/15 sm:inline"
-                        aria-hidden
-                      />
-                      <span className="hidden text-[9px] font-medium uppercase tracking-wide text-zinc-500 sm:inline">
-                        2nd
-                      </span>
-                      {/* Manual fine-tune moved to Sync View transport bar */}
-                    </div>
+                    <span className="hidden text-[9px] font-medium uppercase tracking-wide text-zinc-500 sm:inline">
+                      Multi View
+                    </span>
                   ) : null}
                   {manualSyncBadgeVisible ? (
                     <span
@@ -6582,7 +6562,7 @@ function RoomContent() {
             }}
           >
             {hostMultiAngles ? (
-              layoutMode === "pip" ? (
+              true ? (
                 <div
                   className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                 >
@@ -6645,9 +6625,9 @@ function RoomContent() {
                     )}
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
-                        key={hostMultiAngles.activeAngle.id}
+                        key={fsMA?.activeAngle.id ?? "active"}
                         videoId={safeDecodeVideoId(
-                          hostMultiAngles.activeAngle.videoId,
+                          fsMA?.activeAngle.videoId ?? "",
                         )}
                         onReady={(e) => {
                           const p = e.target as YouTubePlayer;
@@ -6742,10 +6722,10 @@ function RoomContent() {
                         onReady={(e) => {
                           const p = e.target as YouTubePlayer;
                           syncPlayerRefs.current[
-                            hostMultiAngles.secondaryAngle.id
+                            fsMA?.secondaryAngle.id ?? ""
                           ] = p;
                           applySyncStateToAnglePlayer(
-                            hostMultiAngles.secondaryAngle.id,
+                            fsMA?.secondaryAngle.id ?? "",
                             "clean-sync-secondary-onReady",
                           );
                         }}
@@ -6774,11 +6754,11 @@ function RoomContent() {
                       </div>
                     ) : null}
                     {renderSyncSetupControls({
-                      label: hostMultiAngles.secondaryAngle.name,
+                      label: fsMA?.secondaryAngle.name ?? "Angle",
                       which: "secondary",
                       get: () =>
                         syncPlayerRefs.current[
-                          hostMultiAngles.secondaryAngle.id
+                          fsMA?.secondaryAngle.id ?? ""
                         ] ?? undefined,
                     })}
                   </div>
@@ -6799,29 +6779,27 @@ function RoomContent() {
                       e.stopPropagation();
                       if (fsGridLayoutMode) {
                         applyHostMultiFullscreenTarget(
-                          hostMultiAngles.activeAngle.id,
+                          fsMA?.activeAngle.id ?? "",
                         );
                       }
                     }}
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
-                        key={hostMultiAngles.activeAngle.id}
-                        videoId={safeDecodeVideoId(
-                          hostMultiAngles.activeAngle.videoId,
-                        )}
+                        key={fsMA?.activeAngle.id ?? "active"}
+                        videoId={safeDecodeVideoId(fsMA?.activeAngle.videoId ?? "")}
                         onReady={(e) => {
                           const p = e.target as YouTubePlayer;
-                          syncPlayerRefs.current[hostMultiAngles.activeAngle.id] =
+                          syncPlayerRefs.current[fsMA?.activeAngle.id ?? ""] =
                             p;
                           if (
-                            hostMultiAngles.activeAngle.id ===
+                            fsMA?.activeAngle.id ===
                             roomStateRef.current?.currentAngleId
                           ) {
                             handlePlayerReady();
                           }
                           applySyncStateToAnglePlayer(
-                            hostMultiAngles.activeAngle.id,
+                            fsMA?.activeAngle.id ?? "",
                             "clean-sync-active-onReady",
                           );
                         }}
@@ -6832,7 +6810,7 @@ function RoomContent() {
                       />
                     </YoutubePointerGate>
                     {renderSyncSetupControls({
-                      label: hostMultiAngles.activeAngle.name,
+                      label: fsMA?.activeAngle.name ?? "Angle",
                       which: "primary",
                       get: getPlayer,
                     })}
@@ -6855,26 +6833,26 @@ function RoomContent() {
                       e.stopPropagation();
                       if (fsGridLayoutMode) {
                         applyHostMultiFullscreenTarget(
-                          hostMultiAngles.secondaryAngle.id,
+                          fsMA?.secondaryAngle.id ?? "",
                         );
                       } else {
-                        void handleSelectAngle(hostMultiAngles.secondaryAngle.id);
+                        void handleSelectAngle(fsMA?.secondaryAngle.id ?? "");
                       }
                     }}
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
-                        key={hostMultiAngles.secondaryAngle.id}
+                        key={fsMA?.secondaryAngle.id ?? "secondary"}
                         videoId={safeDecodeVideoId(
-                          hostMultiAngles.secondaryAngle.videoId,
+                          fsMA?.secondaryAngle.videoId ?? "",
                         )}
                         onReady={(e) => {
                           const p = e.target as YouTubePlayer;
                           syncPlayerRefs.current[
-                            hostMultiAngles.secondaryAngle.id
+                            fsMA?.secondaryAngle.id ?? ""
                           ] = p;
                           applySyncStateToAnglePlayer(
-                            hostMultiAngles.secondaryAngle.id,
+                            fsMA?.secondaryAngle.id ?? "",
                             "clean-sync-secondary-onReady",
                           );
                         }}
@@ -6883,19 +6861,18 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
-                    {multiViewSecondaryHold &&
-                    multiViewSecondaryHold.angleId ===
-                      hostMultiAngles.secondaryAngle.id ? (
+                    {multiViewSecondaryHold?.angleId ===
+                      (fsMA?.secondaryAngle.id ?? "") ? (
                       <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
                         <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
                           <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
-                            {hostMultiAngles.secondaryAngle.name}
+                            {fsMA?.secondaryAngle.name ?? "Angle"}
                           </p>
                           <p className="mt-1 text-sm">
                             Angle starts in{" "}
                             <span className="font-mono tabular-nums">
                               {formatCountdownMmSs(
-                                multiViewSecondaryHold.countdownSec,
+                                multiViewSecondaryHold?.countdownSec ?? 0,
                               )}
                             </span>
                           </p>
@@ -6903,11 +6880,11 @@ function RoomContent() {
                       </div>
                     ) : null}
                     {renderSyncSetupControls({
-                      label: hostMultiAngles.secondaryAngle.name,
+                      label: fsMA?.secondaryAngle.name ?? "Angle",
                       which: "secondary",
                       get: () =>
                         syncPlayerRefs.current[
-                          hostMultiAngles.secondaryAngle.id
+                          fsMA?.secondaryAngle.id ?? ""
                         ] ?? undefined,
                     })}
                   </div>
@@ -7288,7 +7265,7 @@ function RoomContent() {
                 }}
               >
             {hostMultiAngles ? (
-                  layoutMode === "pip" ? (
+                  true ? (
                     <div
                       className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                     >
@@ -7351,23 +7328,23 @@ function RoomContent() {
                         )}
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
-                            key={hostMultiAngles.activeAngle.id}
+                            key={hostMultiAngles!.activeAngle.id}
                             videoId={safeDecodeVideoId(
-                              hostMultiAngles.activeAngle.videoId,
+                              hostMultiAngles!.activeAngle.videoId,
                             )}
                             onReady={(e) => {
                               const p = e.target as YouTubePlayer;
                               syncPlayerRefs.current[
-                                hostMultiAngles.activeAngle.id
+                                hostMultiAngles!.activeAngle.id
                               ] = p;
                               if (
-                                hostMultiAngles.activeAngle.id ===
+                                hostMultiAngles!.activeAngle.id ===
                                 roomStateRef.current?.currentAngleId
                               ) {
                                 handlePlayerReady();
                               }
                               applySyncStateToAnglePlayer(
-                                hostMultiAngles.activeAngle.id,
+                                hostMultiAngles!.activeAngle.id,
                                 "clean-sync-active-onReady",
                               );
                             }}
@@ -7378,7 +7355,7 @@ function RoomContent() {
                           />
                         </YoutubePointerGate>
                         {renderSyncSetupControls({
-                          label: hostMultiAngles.activeAngle.name,
+                          label: hostMultiAngles!.activeAngle.name,
                           which: "primary",
                           get: getPlayer,
                         })}
@@ -7449,10 +7426,10 @@ function RoomContent() {
                             onReady={(e) => {
                               const p = e.target as YouTubePlayer;
                               syncPlayerRefs.current[
-                                hostMultiAngles.secondaryAngle.id
+                                hostMultiAngles!.secondaryAngle.id
                               ] = p;
                               applySyncStateToAnglePlayer(
-                                hostMultiAngles.secondaryAngle.id,
+                                hostMultiAngles!.secondaryAngle.id,
                                 "clean-sync-secondary-onReady",
                               );
                             }}
@@ -7481,11 +7458,11 @@ function RoomContent() {
                           </div>
                         ) : null}
                         {renderSyncSetupControls({
-                          label: hostMultiAngles.secondaryAngle.name,
+                          label: hostMultiAngles!.secondaryAngle.name,
                           which: "secondary",
                           get: () =>
                             syncPlayerRefs.current[
-                              hostMultiAngles.secondaryAngle.id
+                              hostMultiAngles!.secondaryAngle.id
                             ] ?? undefined,
                         })}
                       </div>
@@ -7506,30 +7483,30 @@ function RoomContent() {
                           e.stopPropagation();
                           if (fsGridLayoutMode) {
                             applyHostMultiFullscreenTarget(
-                              hostMultiAngles.activeAngle.id,
+                              hostMultiAngles!.activeAngle.id,
                             );
                           }
                         }}
                       >
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
-                            key={hostMultiAngles.activeAngle.id}
+                            key={hostMultiAngles!.activeAngle.id}
                             videoId={safeDecodeVideoId(
-                              hostMultiAngles.activeAngle.videoId,
+                              hostMultiAngles!.activeAngle.videoId,
                             )}
                             onReady={(e) => {
                               const p = e.target as YouTubePlayer;
                               syncPlayerRefs.current[
-                                hostMultiAngles.activeAngle.id
+                                hostMultiAngles!.activeAngle.id
                               ] = p;
                               if (
-                                hostMultiAngles.activeAngle.id ===
+                                hostMultiAngles!.activeAngle.id ===
                                 roomStateRef.current?.currentAngleId
                               ) {
                                 handlePlayerReady();
                               }
                               applySyncStateToAnglePlayer(
-                                hostMultiAngles.activeAngle.id,
+                                hostMultiAngles!.activeAngle.id,
                                 "clean-sync-active-onReady",
                               );
                             }}
@@ -7540,7 +7517,7 @@ function RoomContent() {
                           />
                         </YoutubePointerGate>
                         {renderSyncSetupControls({
-                          label: hostMultiAngles.activeAngle.name,
+                          label: hostMultiAngles!.activeAngle.name,
                           which: "primary",
                           get: getPlayer,
                         })}
@@ -7563,28 +7540,28 @@ function RoomContent() {
                           e.stopPropagation();
                           if (fsGridLayoutMode) {
                             applyHostMultiFullscreenTarget(
-                              hostMultiAngles.secondaryAngle.id,
+                              hostMultiAngles!.secondaryAngle.id,
                             );
                           } else {
                             void handleSelectAngle(
-                              hostMultiAngles.secondaryAngle.id,
+                              hostMultiAngles!.secondaryAngle.id,
                             );
                           }
                         }}
                       >
                         <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                           <YouTube
-                            key={hostMultiAngles.secondaryAngle.id}
+                            key={hostMultiAngles!.secondaryAngle.id}
                             videoId={safeDecodeVideoId(
-                              hostMultiAngles.secondaryAngle.videoId,
+                              hostMultiAngles!.secondaryAngle.videoId,
                             )}
                             onReady={(e) => {
                               const p = e.target as YouTubePlayer;
                               syncPlayerRefs.current[
-                                hostMultiAngles.secondaryAngle.id
+                                hostMultiAngles!.secondaryAngle.id
                               ] = p;
                               applySyncStateToAnglePlayer(
-                                hostMultiAngles.secondaryAngle.id,
+                                hostMultiAngles!.secondaryAngle.id,
                                 "clean-sync-secondary-onReady",
                               );
                             }}
@@ -7593,19 +7570,18 @@ function RoomContent() {
                             opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
-                        {multiViewSecondaryHold &&
-                        multiViewSecondaryHold.angleId ===
-                          hostMultiAngles.secondaryAngle.id ? (
+                        {multiViewSecondaryHold?.angleId ===
+                          hostMultiAngles!.secondaryAngle.id ? (
                           <div className="pointer-events-none absolute inset-0 z-[25] flex items-center justify-center bg-black/55 px-3 text-center">
                             <div className="rounded-lg border border-white/10 bg-zinc-950/80 px-3 py-2 text-[11px] font-semibold text-white shadow-lg shadow-black/40">
                               <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-300">
-                                {hostMultiAngles.secondaryAngle.name}
+                                {hostMultiAngles!.secondaryAngle.name}
                               </p>
                               <p className="mt-1 text-sm">
                                 Angle starts in{" "}
                                 <span className="font-mono tabular-nums">
                                   {formatCountdownMmSs(
-                                    multiViewSecondaryHold.countdownSec,
+                                    multiViewSecondaryHold?.countdownSec ?? 0,
                                   )}
                                 </span>
                               </p>
@@ -7613,11 +7589,11 @@ function RoomContent() {
                           </div>
                         ) : null}
                         {renderSyncSetupControls({
-                          label: hostMultiAngles.secondaryAngle.name,
+                          label: hostMultiAngles!.secondaryAngle.name,
                           which: "secondary",
                           get: () =>
                             syncPlayerRefs.current[
-                              hostMultiAngles.secondaryAngle.id
+                              hostMultiAngles!.secondaryAngle.id
                             ] ?? undefined,
                         })}
                       </div>
