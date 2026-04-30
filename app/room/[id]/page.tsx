@@ -216,14 +216,14 @@ type RoomState = {
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
   manualSyncAt?: number;
-  /** Live stream session (multi-angle YouTube live); drives Live tab + layout defaults. */
+  /** Live stream session (multi-angle YouTube live); Sync View shows LIVE controls. */
   sourceType?: "live";
 };
 
-type RoomViewMode = "clip" | "sync" | "live";
+type RoomViewMode = "clip" | "sync";
 
 function isSyncLayoutMode(mode: RoomViewMode): boolean {
-  return mode === "sync" || mode === "live";
+  return mode === "sync";
 }
 
 /** Next default label for one-tap "Mark Play" (Play → Play 2 → Play 3 …). */
@@ -669,6 +669,8 @@ const EXPLICIT_SEEK_PLAYING_MIN_DRIFT_S = 0.55;
 const LIVE_DURATION_GROWTH_S = 0.75;
 const LIVE_DURATION_MIN_BASE_S = 5;
 const LIVE_EDGE_CLAMP_PAD_S = 0.15;
+/** Near-live jump / forward scrub cap for YouTube live DVR edge (seconds behind reported edge). */
+const LIVE_SAFETY_BUFFER_SECONDS = 5;
 function meaningfulCurrentTimeChange(
   prev: RoomState | null,
   state: RoomState,
@@ -924,6 +926,16 @@ async function readYoutubeDuration(
     /* API not ready */
   }
   return 0;
+}
+
+/** Best-effort live edge: duration when available, else current time (YouTube live / DVR). */
+async function getLiveEdgeSeconds(
+  player: YouTubePlayer | null | undefined,
+): Promise<number> {
+  const ct = await readYoutubeCurrentTime(player, 0);
+  const dur = await readYoutubeDuration(player);
+  if (dur > 0) return Math.max(dur, ct);
+  return ct;
 }
 
 /** DVR / VOD end of playable range — max(duration, currentTime) when duration is known. */
@@ -1376,14 +1388,18 @@ function RoomContent() {
     }
     if (vp === "live") {
       if (roomState.sourceType === "live") {
-        setRoomViewMode("live");
+        setRoomViewMode("sync");
+        const sp = new URLSearchParams(searchParams.toString());
+        sp.set("view", "sync");
+        const q = sp.toString();
+        router.replace(`/room/${roomId}${q ? `?${q}` : ""}`, { scroll: false });
       } else {
         setRoomViewMode("clip");
       }
       return;
     }
     if (roomState.sourceType === "live") {
-      setRoomViewMode("live");
+      setRoomViewMode("sync");
       return;
     }
     const synced =
@@ -1391,7 +1407,7 @@ function RoomContent() {
     if (synced) {
       setRoomViewMode("sync");
     }
-  }, [roomState, viewParam]);
+  }, [roomState, viewParam, roomId, router, searchParams]);
 
   useEffect(() => {
     if (!isHost) return;
@@ -4021,8 +4037,108 @@ function RoomContent() {
     [],
   );
 
+  const handleGoLive = useCallback(() => {
+    if (!isHost || !roomId) return;
+    const cur = roomStateRef.current;
+    if (!cur || cur.sourceType !== "live") return;
+    if (roomViewModeRef.current !== "sync") return;
+    void (async () => {
+      const pr = clearFfIfActive();
+      const ids = cur.angles.map((a) => a.id);
+      const primaryId =
+        (cur.playerViewAngleId && ids.includes(cur.playerViewAngleId)
+          ? cur.playerViewAngleId
+          : null) ??
+        (ids.includes(cur.currentAngleId) ? cur.currentAngleId : null) ??
+        cur.angles[0]!.id;
+      const primaryPl = syncPlayerRefs.current[primaryId];
+      const primaryLiveEdge = await getLiveEdgeSeconds(primaryPl);
+      const targetPrimary = Math.max(
+        0,
+        primaryLiveEdge - LIVE_SAFETY_BUFFER_SECONDS,
+      );
+      syncLog("go live clicked", {
+        targetPrimary,
+        playerViewAngleId: cur.playerViewAngleId ?? "",
+        primaryId,
+      });
+
+      for (const a of cur.angles) {
+        const pl = syncPlayerRefs.current[a.id];
+        const edge = await getLiveEdgeSeconds(pl);
+        const cap = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
+        let t = targetPrimary + (a.offsetFromGameTime ?? 0);
+        t = Math.max(0, Math.min(t, cap));
+        syncLog("go live seek angle", {
+          angleId: a.id,
+          target: t,
+          liveEdge: edge,
+          offsetFromGameTime: a.offsetFromGameTime ?? 0,
+        });
+        if (!pl) continue;
+        try {
+          pl.seekTo?.(t, true);
+        } catch {
+          /* YouTube API */
+        }
+      }
+
+      lastAppliedKey.current = "";
+      writeImmediatePlaybackCommand("play", {
+        isPlaying: true,
+        currentTime: targetPrimary,
+        playbackRate: pr,
+      });
+      applyHostMultiViewSecondaryDirect({
+        primaryAnchorTime: targetPrimary,
+        isPlaying: true,
+        playbackRate: pr,
+        reason: "go-live",
+      });
+    })();
+  }, [
+    isHost,
+    roomId,
+    clearFfIfActive,
+    writeImmediatePlaybackCommand,
+    applyHostMultiViewSecondaryDirect,
+  ]);
+
   const handleReconnectLive = useCallback(() => {
     if (!isHost || !roomId) return;
+    const cur0 = roomStateRef.current;
+    if (cur0?.sourceType === "live") {
+      void (async () => {
+        const cur = roomStateRef.current;
+        if (!cur) return;
+        for (const a of cur.angles) {
+          const p = syncPlayerRefs.current[a.id];
+          if (!p) continue;
+          const edge = await getLiveEdgeSeconds(p);
+          const ct = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
+          const cap = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
+          const seekT = Math.min(ct, cap);
+          syncLog("reconnect live player", {
+            angleId: a.id,
+            seekT,
+            edge,
+            ct,
+          });
+          try {
+            p.seekTo?.(seekT, true);
+          } catch {
+            /* YouTube API */
+          }
+          try {
+            p.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+      })();
+      return;
+    }
+
     const rr = roomRefForWrite.current;
     if (!rr) return;
     const raw = window.prompt("Paste new YouTube live URL");
@@ -4440,50 +4556,64 @@ function RoomContent() {
     (targetSec: number) => {
       if (!isHost || !roomId) return;
       if (isManualSyncModeRef.current) return;
-      const cur = roomStateRef.current;
-      if (!cur) return;
-      const pr = clearFfIfActive();
-      const wasPlaying = cur.isPlaying;
-      const syncAnchorTime = isSyncLayoutMode(roomViewModeRef.current)
-        ? (cur.syncAnchorTime ?? 0)
-        : 0;
-      const clamped = Math.max(syncAnchorTime, targetSec);
+      void (async () => {
+        const cur = roomStateRef.current;
+        if (!cur) return;
+        const pr = clearFfIfActive();
+        const wasPlaying = cur.isPlaying;
+        const syncAnchorTime = isSyncLayoutMode(roomViewModeRef.current)
+          ? (cur.syncAnchorTime ?? 0)
+          : 0;
+        let clamped = Math.max(syncAnchorTime, targetSec);
 
-      writeImmediatePlaybackCommand("seek", {
-        currentTime: clamped,
-        isPlaying: wasPlaying,
-        playbackRate: pr,
-      });
-
-      // Apply locally to keep the UI feeling immediate.
-      const p = getPlayer();
-      try {
-        p?.seekTo?.(clamped, true);
-      } catch {
-        /* YouTube API */
-      }
-      if (wasPlaying) {
-        try {
-          p?.playVideo?.();
-        } catch {
-          /* YouTube API */
+        if (cur.sourceType === "live" && roomViewModeRef.current === "sync") {
+          const player = getPlayer();
+          const ct = await readYoutubeCurrentTime(
+            player,
+            cur.currentTime ?? 0,
+          );
+          if (clamped > ct + 0.05) {
+            const edge = await getLiveEdgeSeconds(player);
+            const maxT = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
+            clamped = Math.min(clamped, maxT);
+          }
         }
-      } else {
-        try {
-          p?.pauseVideo?.();
-        } catch {
-          /* YouTube API */
-        }
-      }
 
-      if (isSyncLayoutMode(roomViewModeRef.current)) {
-        applyHostMultiViewSecondaryDirect({
-          primaryAnchorTime: clamped,
+        writeImmediatePlaybackCommand("seek", {
+          currentTime: clamped,
           isPlaying: wasPlaying,
           playbackRate: pr,
-          reason: "scrub",
         });
-      }
+
+        const p = getPlayer();
+        try {
+          p?.seekTo?.(clamped, true);
+        } catch {
+          /* YouTube API */
+        }
+        if (wasPlaying) {
+          try {
+            p?.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        } else {
+          try {
+            p?.pauseVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+
+        if (isSyncLayoutMode(roomViewModeRef.current)) {
+          applyHostMultiViewSecondaryDirect({
+            primaryAnchorTime: clamped,
+            isPlaying: wasPlaying,
+            playbackRate: pr,
+            reason: "scrub",
+          });
+        }
+      })();
     },
     [
       isHost,
@@ -4807,9 +4937,7 @@ function RoomContent() {
 
   const handleCopySyncViewerLink = useCallback(() => {
     if (!roomId || typeof window === "undefined") return;
-    const mode = roomViewModeRef.current;
-    const view = isSyncLayoutMode(mode) ? mode : "sync";
-    const url = `${window.location.origin}/room/${roomId}?view=${view}`;
+    const url = `${window.location.origin}/room/${roomId}?view=sync`;
     void navigator.clipboard.writeText(url).then(() => {
       setSyncViewerLinkCopied(true);
       window.setTimeout(() => setSyncViewerLinkCopied(false), 2000);
@@ -4907,11 +5035,9 @@ function RoomContent() {
       setCopySharedToast(true);
       window.setTimeout(() => setCopySharedToast(false), 2000);
       const to =
-        src.sourceType === "live"
-          ? `/room/${newRoomId}?view=live`
-          : isSyncLayoutMode(roomViewModeRef.current)
-            ? `/room/${newRoomId}?view=sync`
-            : `/room/${newRoomId}`;
+        src.sourceType === "live" || isSyncLayoutMode(roomViewModeRef.current)
+          ? `/room/${newRoomId}?view=sync`
+          : `/room/${newRoomId}`;
       router.replace(to);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not copy session.";
@@ -5341,7 +5467,6 @@ function RoomContent() {
     const viewerTopAngleForLabel =
       s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
     const isLiveSource = s.sourceType === "live";
-    const isLiveTab = roomViewMode === "live";
 
     return (
       <>
@@ -5378,54 +5503,33 @@ function RoomContent() {
               >
                 Sync View
               </button>
-              <button
-                type="button"
-                title={
-                  isLiveSource
-                    ? undefined
-                    : "Live mode is only available for live stream rooms."
-                }
-                disabled={!isLiveSource}
-                onClick={() => {
-                  if (!isLiveSource) return;
-                  navigateRoomView("live");
-                }}
-                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  roomViewMode === "live"
-                    ? "bg-amber-600/45 text-white"
-                    : "text-zinc-300 hover:text-white"
-                }`}
-              >
-                Live
-              </button>
             </div>
             <span className="text-sm font-semibold text-zinc-100">Film Room</span>
             <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
               {isHost ? "Host" : "Viewer"}
             </span>
-            {isLiveTab ? (
-              <span className="rounded-md border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
+            {isLiveSource ? (
+              <span className="rounded-md border border-red-500/50 bg-red-950/50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-red-100">
                 Live
               </span>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {isHost && isLiveTab ? (
+            {isHost && isLiveSource ? (
               <>
+                <button
+                  type="button"
+                  onClick={() => void handleGoLive()}
+                  className={secondaryHostBtn}
+                >
+                  Go Live
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleReconnectLive()}
                   className={secondaryHostBtn}
                 >
                   Reconnect Live
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  title="Full live-edge controls are not wired yet."
-                  className={secondaryHostBtn}
-                >
-                  Go Live
                 </button>
               </>
             ) : null}
@@ -6437,26 +6541,6 @@ function RoomContent() {
                   }`}
                 >
                   Sync View
-                </button>
-                <button
-                  type="button"
-                  title={
-                    roomState?.sourceType === "live"
-                      ? undefined
-                      : "Live mode is only available for live stream rooms."
-                  }
-                  disabled={roomState?.sourceType !== "live"}
-                  onClick={() => {
-                    if (roomState?.sourceType !== "live") return;
-                    navigateRoomView("live");
-                  }}
-                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                    roomViewMode === "live"
-                      ? "bg-amber-600/45 text-white"
-                      : "text-zinc-300 hover:text-white"
-                  }`}
-                >
-                  Live
                 </button>
               </div>
               <p className="min-w-0">
