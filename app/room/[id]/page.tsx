@@ -673,6 +673,9 @@ const LIVE_SAFETY_BUFFER_SECONDS = 5;
 const MIXED_LIVE_ARCHIVE_MSG =
   "Live and recorded videos can't be mixed in the same sync room.";
 
+const LIVE_VIA_STREAM_ROOM_MSG =
+  "Live streams must be started from Stream Room.";
+
 async function fetchYoutubeIsLive(
   videoId: string,
 ): Promise<
@@ -725,7 +728,7 @@ async function inferRoomLiveFromAngles(
   if (sawLive && sawArchive) {
     return { ok: false, reason: MIXED_LIVE_ARCHIVE_MSG };
   }
-  if (sawLive) return { ok: true, isLive: true };
+  /* Non-live rooms never infer `sourceType: live` from YouTube API — Add Angle cannot upgrade the room. */
   return { ok: true, isLive: false };
 }
 
@@ -3751,6 +3754,10 @@ function RoomContent() {
         window.alert(incoming.reason);
         return;
       }
+      if (latest.sourceType !== "live" && incoming.isLive) {
+        window.alert(LIVE_VIA_STREAM_ROOM_MSG);
+        return;
+      }
       if (base.isLive !== incoming.isLive) {
         window.alert(MIXED_LIVE_ARCHIVE_MSG);
         return;
@@ -3965,14 +3972,22 @@ function RoomContent() {
     const offsetFromGameTime = Number.isFinite(off) ? off : 0;
     const newId = `a_${Date.now().toString(36)}`;
     void (async () => {
+      const incoming = await fetchYoutubeIsLive(id);
+      if (!incoming.ok) {
+        window.alert(incoming.reason);
+        return;
+      }
+      if (cur.sourceType !== "live" && incoming.isLive) {
+        window.alert(LIVE_VIA_STREAM_ROOM_MSG);
+        return;
+      }
       const existing = await inferRoomLiveFromAngles(cur);
       if (!existing.ok) {
         window.alert(existing.reason);
         return;
       }
-      const incoming = await fetchYoutubeIsLive(id);
-      if (!incoming.ok) {
-        window.alert(incoming.reason);
+      if (cur.sourceType === "live" && !incoming.isLive) {
+        window.alert(MIXED_LIVE_ARCHIVE_MSG);
         return;
       }
       if (existing.isLive !== incoming.isLive) {
@@ -6012,18 +6027,25 @@ function RoomContent() {
           {/* layoutMode removed: Single/Multi view only */}
 
           <div className="md:col-span-5">
-            <div className="flex items-center justify-end gap-2">
-              <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                Angles ({s.angles.length})
+            <div className="flex flex-col items-stretch gap-1.5">
+              <div className="flex items-center justify-end gap-2">
+                <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                  Angles ({s.angles.length})
+                </div>
+                {isHost && (isLiveSource || s.clips.length === 1) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleAddAngle()}
+                    className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                  >
+                    + Add Angle
+                  </button>
+                ) : null}
               </div>
-              {isHost && (isLiveSource || s.clips.length === 1) ? (
-                <button
-                  type="button"
-                  onClick={() => void handleAddAngle()}
-                  className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-2 text-[12px] font-semibold text-zinc-100 transition hover:border-white/18 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                >
-                  + Add Angle
-                </button>
+              {isHost && !isLiveSource ? (
+                <p className="text-[10px] leading-snug text-zinc-500">
+                  For live streams, use Stream Room.
+                </p>
               ) : null}
             </div>
           </div>
