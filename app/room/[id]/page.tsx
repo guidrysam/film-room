@@ -1237,6 +1237,10 @@ function RoomContent() {
     router.push(user ? "/app" : "/");
   }, [isHost, router, user]);
 
+  const goHome = useCallback(() => {
+    router.push(user ? "/app" : "/");
+  }, [router, user]);
+
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   /** First RTDB snapshot received for this `roomRef` (distinguish loading vs missing room). */
   const [roomHydrated, setRoomHydrated] = useState(false);
@@ -1268,6 +1272,10 @@ function RoomContent() {
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   const [sessionSavedToast, setSessionSavedToast] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaveConfirmError, setLeaveConfirmError] = useState<string | null>(null);
+  const goHomeAfterSaveRef = useRef(false);
+  const lastSavedRoomUpdatedAtRef = useRef<number>(0);
   const [isCopyingShared, setIsCopyingShared] = useState(false);
   const [copySharedError, setCopySharedError] = useState<string | null>(null);
   const [copySharedToast, setCopySharedToast] = useState(false);
@@ -4839,6 +4847,13 @@ function RoomContent() {
         playerViewAngleId: roomState.playerViewAngleId ?? "",
         chapters: roomState.chapters.length,
       });
+      lastSavedRoomUpdatedAtRef.current = roomState.updatedAt ?? Date.now();
+      if (goHomeAfterSaveRef.current) {
+        goHomeAfterSaveRef.current = false;
+        setLeaveConfirmOpen(false);
+        setLeaveConfirmError(null);
+        goHome();
+      }
     } catch (err) {
       syncLog("save session error", { err });
       alert("Could not save session. Check Firestore rules and login.");
@@ -4854,7 +4869,28 @@ function RoomContent() {
     saveSessionFolder,
     saveSessionDefaultName,
     closeSaveSessionDialog,
+    goHome,
   ]);
+
+  const maybeUnsaved = Boolean(
+    isHost &&
+      roomState &&
+      (lastSavedRoomUpdatedAtRef.current === 0 ||
+        (roomState.updatedAt ?? 0) > lastSavedRoomUpdatedAtRef.current),
+  );
+
+  const handleHomeFromSync = useCallback(() => {
+    if (!isHost) {
+      goHome();
+      return;
+    }
+    if (!maybeUnsaved) {
+      goHome();
+      return;
+    }
+    setLeaveConfirmError(null);
+    setLeaveConfirmOpen(true);
+  }, [goHome, isHost, maybeUnsaved]);
 
   const chaptersDisplay = useMemo(
     () =>
@@ -5173,10 +5209,10 @@ function RoomContent() {
             </button>
             <button
               type="button"
-              onClick={handleReturnHome}
+              onClick={handleHomeFromSync}
               className="rounded-lg border border-red-500/35 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-100 transition hover:border-red-400/45 hover:bg-red-950/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/40"
             >
-              Leave Room
+              Home
             </button>
           </div>
         </div>
@@ -5968,6 +6004,71 @@ function RoomContent() {
           role="status"
         >
           Session copied
+        </div>
+      ) : null}
+      {leaveConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLeaveConfirmOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-zinc-950/95 p-5 shadow-2xl shadow-black/50 ring-1 ring-white/[0.05]"
+            role="dialog"
+            aria-labelledby="leave-confirm-title"
+          >
+            <h2
+              id="leave-confirm-title"
+              className="mb-2 text-sm font-semibold text-white"
+            >
+              Save session before leaving?
+            </h2>
+            <p className="mb-4 text-sm text-zinc-300">
+              You have unsaved changes in this session.
+            </p>
+            {leaveConfirmError ? (
+              <p className="mb-3 text-sm text-red-200">{leaveConfirmError}</p>
+            ) : null}
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (saveSessionSaving) return;
+                  goHomeAfterSaveRef.current = true;
+                  void openSaveSessionDialog();
+                }}
+                className="w-full rounded-lg border border-blue-500/40 bg-blue-600/90 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={saveSessionSaving}
+              >
+                Save &amp; Go Home
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  goHomeAfterSaveRef.current = false;
+                  setLeaveConfirmOpen(false);
+                  setLeaveConfirmError(null);
+                  goHome();
+                }}
+                className="w-full rounded-lg border border-white/12 bg-white/[0.06] px-4 py-2 text-sm font-semibold text-zinc-100 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                Go Home Without Saving
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  goHomeAfterSaveRef.current = false;
+                  setLeaveConfirmOpen(false);
+                  setLeaveConfirmError(null);
+                }}
+                className={secondaryHostBtn}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
       {saveSessionOpen ? (
