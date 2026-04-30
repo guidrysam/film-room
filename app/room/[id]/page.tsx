@@ -5467,6 +5467,8 @@ function RoomContent() {
     const viewerTopAngleForLabel =
       s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
     const isLiveSource = s.sourceType === "live";
+    const showGoLiveControls =
+      isHost && roomViewMode === "sync" && isLiveSource;
 
     return (
       <>
@@ -5515,7 +5517,7 @@ function RoomContent() {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {isHost && isLiveSource ? (
+            {showGoLiveControls ? (
               <>
                 <button
                   type="button"
