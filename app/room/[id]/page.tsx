@@ -216,7 +216,15 @@ type RoomState = {
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
   manualSyncAt?: number;
+  /** Live stream session (multi-angle YouTube live); drives Live tab + layout defaults. */
+  sourceType?: "live";
 };
+
+type RoomViewMode = "clip" | "sync" | "live";
+
+function isSyncLayoutMode(mode: RoomViewMode): boolean {
+  return mode === "sync" || mode === "live";
+}
 
 /** Next default label for one-tap "Mark Play" (Play → Play 2 → Play 3 …). */
 function nextMarkPlayLabel(chapters: ChapterEntry[]): string {
@@ -549,10 +557,15 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
       ? Math.max(0, syncAnchorTimeRaw)
       : 0;
 
+  const sourceTypeRaw = val.sourceType;
+  const sourceType =
+    sourceTypeRaw === "live" ? ("live" as const) : undefined;
+
   return {
     ...(ownerId ? { ownerId } : {}),
     ...(name ? { name } : {}),
     ...(sourceRoomId ? { sourceRoomId } : {}),
+    ...(sourceType ? { sourceType } : {}),
     videoId: activeVideoId,
     clips,
     currentClipIndex: idx,
@@ -1292,11 +1305,27 @@ function RoomContent() {
     coachViewModeRef.current = coachViewMode;
   }, [coachViewMode]);
   // layoutMode removed: Sync View is controlled by coachViewMode only.
-  const [roomViewMode, setRoomViewMode] = useState<"clip" | "sync">("clip");
+  const [roomViewMode, setRoomViewMode] = useState<RoomViewMode>("clip");
   const roomViewModeRef = useRef(roomViewMode);
   useLayoutEffect(() => {
     roomViewModeRef.current = roomViewMode;
   }, [roomViewMode]);
+
+  const navigateRoomView = useCallback(
+    (mode: RoomViewMode) => {
+      setRoomViewMode(mode);
+      if (!roomId) return;
+      const sp = new URLSearchParams(searchParams.toString());
+      if (mode === "clip") {
+        sp.delete("view");
+      } else {
+        sp.set("view", mode);
+      }
+      const q = sp.toString();
+      router.replace(`/room/${roomId}${q ? `?${q}` : ""}`, { scroll: false });
+    },
+    [roomId, router, searchParams],
+  );
   /** Host-only (Focus layout): which angle is currently "active" for controls + audio without reloading iframes. */
   const [hostFocusAngleId, setHostFocusAngleId] = useState<string | null>(null);
   const hostFocusAngleIdRef = useRef<string | null>(null);
@@ -1336,9 +1365,30 @@ function RoomContent() {
 
   useEffect(() => {
     if (!roomState) return;
+    const vp = viewParam;
+    if (vp === "clip") {
+      setRoomViewMode("clip");
+      return;
+    }
+    if (vp === "sync") {
+      setRoomViewMode("sync");
+      return;
+    }
+    if (vp === "live") {
+      if (roomState.sourceType === "live") {
+        setRoomViewMode("live");
+      } else {
+        setRoomViewMode("clip");
+      }
+      return;
+    }
+    if (roomState.sourceType === "live") {
+      setRoomViewMode("live");
+      return;
+    }
     const synced =
       (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
-    if (synced || viewParam === "sync") {
+    if (synced) {
       setRoomViewMode("sync");
     }
   }, [roomState, viewParam]);
@@ -1438,7 +1488,7 @@ function RoomContent() {
 
   useEffect(() => {
     if (!isHost) return;
-    if (roomViewMode !== "sync") return;
+    if (!isSyncLayoutMode(roomViewMode)) return;
     if (!roomState) return;
     const synced =
       (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
@@ -1525,7 +1575,7 @@ function RoomContent() {
   /** Sync multi-angle viewer: nudge every mounted angle to play (no seek; respects unlock + room isPlaying). */
   const ensureSelectedViewerStackPlayerPlaying = useCallback(async () => {
     if (isHostRef.current) return;
-    if (roomViewModeRef.current !== "sync") return;
+    if (!isSyncLayoutMode(roomViewModeRef.current)) return;
     const rs = roomStateRef.current;
     if (!rs || rs.angles.length < 2) return;
     if (!rs.isPlaying) return;
@@ -1894,7 +1944,7 @@ function RoomContent() {
       if (stale()) return;
 
       const player =
-        (roomViewModeRef.current === "sync" &&
+        (isSyncLayoutMode(roomViewModeRef.current) &&
           state.angles.length > 1 &&
           coachViewModeRef.current === "multi" &&
           syncPlayerRefs.current[state.currentAngleId]) ||
@@ -2053,7 +2103,7 @@ function RoomContent() {
 
   useEffect(() => {
     if (isHost) return;
-    if (roomViewMode !== "sync") return;
+    if (!isSyncLayoutMode(roomViewMode)) return;
     const layoutKey = viewerStackMuteLayoutKey;
     if (!layoutKey) return;
     const s = roomStateRef.current;
@@ -2081,7 +2131,7 @@ function RoomContent() {
     if (!roomState) return;
 
     // Sync View stacked multi-angle viewer: apply command to ALL mounted angles.
-    if (roomViewModeRef.current === "sync" && roomState.angles.length > 1) {
+    if (isSyncLayoutMode(roomViewModeRef.current) && roomState.angles.length > 1) {
       const cmd = roomState.playbackCommand;
       const cmdApply =
         !!cmd &&
@@ -2210,7 +2260,7 @@ function RoomContent() {
 
   const getPlayer = () => {
     const s = roomStateRef.current;
-    if (s && roomViewModeRef.current === "sync" && s.angles.length > 1) {
+    if (s && isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 1) {
       const id = s.currentAngleId;
       const hit = syncPlayerRefs.current[id];
       if (hit) return hit;
@@ -2226,7 +2276,7 @@ function RoomContent() {
     (angleId: string, reason: string) => {
       const rs = roomStateRef.current;
       if (!rs || rs.angles.length === 0) return;
-      if (roomViewModeRef.current !== "sync") return;
+      if (!isSyncLayoutMode(roomViewModeRef.current)) return;
 
       const angle = rs.angles.find((a) => a.id === angleId);
       if (!angle) return;
@@ -2296,7 +2346,7 @@ function RoomContent() {
   /** When host enters Sync + Multi, nudge every mounted angle once iframes are up. */
   useEffect(() => {
     if (!isHost) return;
-    if (roomViewMode !== "sync" || coachViewMode !== "multi") return;
+    if (!isSyncLayoutMode(roomViewMode) || coachViewMode !== "multi") return;
     const s = roomStateRef.current;
     if (!s || s.angles.length < 2) return;
     const tid = window.setTimeout(() => {
@@ -2316,7 +2366,7 @@ function RoomContent() {
   ]);
 
   const syncSecondaryPlayersOnce = useCallback((reason: string) => {
-    if (roomViewModeRef.current !== "sync") return;
+    if (!isSyncLayoutMode(roomViewModeRef.current)) return;
     if (isManualSyncModeRef.current) return;
     if (!isHostRef.current) return;
     if (coachViewModeRef.current !== "multi") return;
@@ -2446,7 +2496,7 @@ function RoomContent() {
       reason: string;
       allowWhileManualSync?: boolean;
     }) => {
-      if (roomViewModeRef.current !== "sync") return;
+      if (!isSyncLayoutMode(roomViewModeRef.current)) return;
       if (!opts.allowWhileManualSync && isManualSyncModeRef.current) return;
       if (!isHostRef.current) return;
       if (coachViewModeRef.current !== "multi") return;
@@ -2595,14 +2645,6 @@ function RoomContent() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenAngleId]);
-
-  const handleManualSyncEnter = useCallback(() => {
-    if (!isHost) return;
-    // Sync setup requires both players mounted/visible.
-    setCoachViewMode("multi");
-    setRoomViewMode("sync");
-    setIsManualSyncMode(true);
-  }, [isHost]);
 
   const handleManualSyncCancel = useCallback(() => {
     setIsManualSyncMode(false);
@@ -3103,7 +3145,7 @@ function RoomContent() {
       if (!rr || !isHostRef.current || !roomId) return;
       const s = roomStateRef.current;
       const safeAnchorTime =
-        s !== null && roomViewModeRef.current === "sync"
+        s !== null && isSyncLayoutMode(roomViewModeRef.current)
           ? getSafeAnchorTime(fields.currentTime, s)
           : fields.currentTime;
       hostActionSeqRef.current += 1;
@@ -3729,7 +3771,7 @@ function RoomContent() {
       if (!nextAngle) return;
 
       // Sync View (stacked multi-angle): do not reload iframes or swap video ids.
-      if (roomViewModeRef.current === "sync" && cur.angles.length > 1) {
+      if (isSyncLayoutMode(roomViewModeRef.current) && cur.angles.length > 1) {
         const rr = roomRefForWrite.current;
         if (!rr) return;
         void update(rr, {
@@ -4088,7 +4130,11 @@ function RoomContent() {
         reason: "play",
       });
       const snap = roomStateRef.current;
-      if (snap && roomViewModeRef.current === "sync" && snap.angles.length > 1) {
+      if (
+        snap &&
+        isSyncLayoutMode(roomViewModeRef.current) &&
+        snap.angles.length > 1
+      ) {
         for (const a of snap.angles) {
           const p = syncPlayerRefs.current[a.id];
           if (!p) continue;
@@ -4398,8 +4444,9 @@ function RoomContent() {
       if (!cur) return;
       const pr = clearFfIfActive();
       const wasPlaying = cur.isPlaying;
-      const syncAnchorTime =
-        roomViewModeRef.current === "sync" ? (cur.syncAnchorTime ?? 0) : 0;
+      const syncAnchorTime = isSyncLayoutMode(roomViewModeRef.current)
+        ? (cur.syncAnchorTime ?? 0)
+        : 0;
       const clamped = Math.max(syncAnchorTime, targetSec);
 
       writeImmediatePlaybackCommand("seek", {
@@ -4429,7 +4476,7 @@ function RoomContent() {
         }
       }
 
-      if (roomViewModeRef.current === "sync") {
+      if (isSyncLayoutMode(roomViewModeRef.current)) {
         applyHostMultiViewSecondaryDirect({
           primaryAnchorTime: clamped,
           isPlaying: wasPlaying,
@@ -4500,7 +4547,7 @@ function RoomContent() {
     void (async () => {
       const cur = roomStateRef.current;
       if (!cur) return;
-      if (roomViewModeRef.current === "sync") {
+      if (isSyncLayoutMode(roomViewModeRef.current)) {
         for (const a of cur.angles) {
           const p = syncPlayerRefs.current[a.id];
           if (!p) continue;
@@ -4529,7 +4576,7 @@ function RoomContent() {
     (deltaSec: number) => {
       if (!isHost || !roomId) return;
       if (isManualSyncModeRef.current) return;
-      if (roomViewModeRef.current !== "sync") return;
+      if (!isSyncLayoutMode(roomViewModeRef.current)) return;
       const rr = roomRefForWrite.current;
       const cur = roomStateRef.current;
       if (!rr || !cur) return;
@@ -4587,7 +4634,7 @@ function RoomContent() {
         syncLog("viewer apply pending on player ready", cmd);
         void (async () => {
           const syncMulti =
-            roomViewModeRef.current === "sync" &&
+            isSyncLayoutMode(roomViewModeRef.current) &&
             !!s.angles?.length &&
             s.angles.length > 1;
 
@@ -4713,7 +4760,7 @@ function RoomContent() {
     const s = roomStateRef.current;
     if (
       !s ||
-      roomViewModeRef.current !== "sync" ||
+      !isSyncLayoutMode(roomViewModeRef.current) ||
       s.angles.length <= 1
     ) {
       dispatchTelestratorClear({ scope: "all" });
@@ -4760,7 +4807,9 @@ function RoomContent() {
 
   const handleCopySyncViewerLink = useCallback(() => {
     if (!roomId || typeof window === "undefined") return;
-    const url = `${window.location.origin}/room/${roomId}?view=sync`;
+    const mode = roomViewModeRef.current;
+    const view = isSyncLayoutMode(mode) ? mode : "sync";
+    const url = `${window.location.origin}/room/${roomId}?view=${view}`;
     void navigator.clipboard.writeText(url).then(() => {
       setSyncViewerLinkCopied(true);
       window.setTimeout(() => setSyncViewerLinkCopied(false), 2000);
@@ -4801,6 +4850,7 @@ function RoomContent() {
         ...(typeof src.name === "string" && src.name.trim() !== ""
           ? { name: src.name.trim() }
           : {}),
+        ...(src.sourceType === "live" ? { sourceType: "live" as const } : {}),
         ownerId: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -4857,9 +4907,11 @@ function RoomContent() {
       setCopySharedToast(true);
       window.setTimeout(() => setCopySharedToast(false), 2000);
       const to =
-        roomViewModeRef.current === "sync"
-          ? `/room/${newRoomId}?view=sync`
-          : `/room/${newRoomId}`;
+        src.sourceType === "live"
+          ? `/room/${newRoomId}?view=live`
+          : isSyncLayoutMode(roomViewModeRef.current)
+            ? `/room/${newRoomId}?view=sync`
+            : `/room/${newRoomId}`;
       router.replace(to);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not copy session.";
@@ -5094,7 +5146,7 @@ function RoomContent() {
 
   const hostMultiAngles =
     isHost &&
-    roomViewMode === "sync" &&
+    isSyncLayoutMode(roomViewMode) &&
     coachViewMode === "multi" &&
     roomState &&
     roomState.angles.length > 1
@@ -5212,7 +5264,7 @@ function RoomContent() {
     roomState.angles[0]?.videoId?.trim() ||
     ""
   ).trim();
-  if (!effectiveVideoId && viewParam === "sync") {
+  if (!effectiveVideoId && (viewParam === "sync" || viewParam === "live")) {
     const sid = roomState.angles.find((a) => a.videoId?.trim())?.videoId?.trim();
     if (sid) effectiveVideoId = sid;
   }
@@ -5273,7 +5325,7 @@ function RoomContent() {
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
-  if (roomViewMode === "sync" && roomState && !cleanMode) {
+  if (isSyncLayoutMode(roomViewMode) && roomState && !cleanMode) {
     const s = roomState;
     const synced = (s.syncAnchorTime ?? 0) > 0 || s.manualSyncLocked === true;
     const multi = s.angles.length > 1;
@@ -5288,6 +5340,8 @@ function RoomContent() {
     const viewerPlayerViewDrawAngleId = viewerStackTopResolvedId;
     const viewerTopAngleForLabel =
       s.angles.find((x) => x.id === viewerStackTopResolvedId) ?? s.angles[0]!;
+    const isLiveSource = s.sourceType === "live";
+    const isLiveTab = roomViewMode === "live";
 
     return (
       <>
@@ -5295,7 +5349,7 @@ function RoomContent() {
         <div className="mb-4 flex items-center justify-between gap-3">
           <button
             type="button"
-            onClick={() => setRoomViewMode("clip")}
+            onClick={() => navigateRoomView("clip")}
             className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
             ← Clip View
@@ -5304,30 +5358,82 @@ function RoomContent() {
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
-                onClick={() => setRoomViewMode("clip")}
-                className="rounded-md px-3 py-1 text-[12px] font-semibold text-zinc-300 transition hover:text-white"
+                onClick={() => navigateRoomView("clip")}
+                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                  roomViewMode === "clip"
+                    ? "bg-blue-600/40 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
               >
                 Clip View
               </button>
               <button
                 type="button"
-                onClick={() => setRoomViewMode("sync")}
-                className="rounded-md bg-blue-600/40 px-3 py-1 text-[12px] font-semibold text-white transition"
+                onClick={() => navigateRoomView("sync")}
+                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                  roomViewMode === "sync"
+                    ? "bg-blue-600/40 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
               >
                 Sync View
+              </button>
+              <button
+                type="button"
+                title={
+                  isLiveSource
+                    ? undefined
+                    : "Live mode is only available for live stream rooms."
+                }
+                disabled={!isLiveSource}
+                onClick={() => {
+                  if (!isLiveSource) return;
+                  navigateRoomView("live");
+                }}
+                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  roomViewMode === "live"
+                    ? "bg-amber-600/45 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Live
               </button>
             </div>
             <span className="text-sm font-semibold text-zinc-100">Film Room</span>
             <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
               {isHost ? "Host" : "Viewer"}
             </span>
+            {isLiveTab ? (
+              <span className="rounded-md border border-amber-500/40 bg-amber-950/40 px-2 py-0.5 text-[11px] font-semibold text-amber-100">
+                Live
+              </span>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {isHost && isLiveTab ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleReconnectLive()}
+                  className={secondaryHostBtn}
+                >
+                  Reconnect Live
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  title="Full live-edge controls are not wired yet."
+                  className={secondaryHostBtn}
+                >
+                  Go Live
+                </button>
+              </>
+            ) : null}
             {isHost ? (
               <button
                 type="button"
                 onClick={() => {
-                  syncLog("save session clicked", { view: "sync" });
+                  syncLog("save session clicked", { view: roomViewModeRef.current });
                   void openSaveSessionDialog();
                 }}
                 className={secondaryHostBtn}
@@ -5352,6 +5458,10 @@ function RoomContent() {
             </button>
           </div>
         </div>
+
+        {isHost && hostNotice ? (
+          <p className="mb-3 text-xs text-amber-200">{hostNotice}</p>
+        ) : null}
 
         {!isHost && (!s.ownerId || !user || s.ownerId !== user.uid) ? (
           <div className="mb-4 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm">
@@ -5461,7 +5571,7 @@ function RoomContent() {
               <div className="mr-auto text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                 Angles ({s.angles.length})
               </div>
-              {isHost && s.clips.length === 1 ? (
+              {isHost && (isLiveSource || s.clips.length === 1) ? (
                 <button
                   type="button"
                   onClick={() => void handleAddAngle()}
@@ -6308,7 +6418,7 @@ function RoomContent() {
               <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
                 <button
                   type="button"
-                  onClick={() => setRoomViewMode("clip")}
+                  onClick={() => navigateRoomView("clip")}
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                     roomViewMode === "clip"
                       ? "bg-blue-600/40 text-white"
@@ -6319,10 +6429,7 @@ function RoomContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    roomViewModeRef.current = "sync";
-                    setRoomViewMode("sync");
-                  }}
+                  onClick={() => navigateRoomView("sync")}
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                     roomViewMode === "sync"
                       ? "bg-blue-600/40 text-white"
@@ -6330,6 +6437,26 @@ function RoomContent() {
                   }`}
                 >
                   Sync View
+                </button>
+                <button
+                  type="button"
+                  title={
+                    roomState?.sourceType === "live"
+                      ? undefined
+                      : "Live mode is only available for live stream rooms."
+                  }
+                  disabled={roomState?.sourceType !== "live"}
+                  onClick={() => {
+                    if (roomState?.sourceType !== "live") return;
+                    navigateRoomView("live");
+                  }}
+                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    roomViewMode === "live"
+                      ? "bg-amber-600/45 text-white"
+                      : "text-zinc-300 hover:text-white"
+                  }`}
+                >
+                  Live
                 </button>
               </div>
               <p className="min-w-0">
@@ -6484,148 +6611,6 @@ function RoomContent() {
                 Clear clips
               </button>
             </div>
-          </div>
-        ) : null}
-
-        {roomViewMode === "clip" && !isManualSyncMode && roomState && roomState.angles.length > 1 && !cleanMode ? (
-          <div className={frPanel}>
-            <p className={frPanelTitle}>Camera angle</p>
-            <div className="flex flex-wrap items-center gap-2">
-              {isHost && !isManualSyncMode ? (
-                <button
-                  type="button"
-                  onClick={handleManualSyncEnter}
-                  className={secondaryHostBtn}
-                >
-                  Sync Angles
-                </button>
-              ) : null}
-              {isHost ? (
-                <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
-                  <button
-                    type="button"
-                    onClick={() => setCoachViewMode("single")}
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                      coachViewMode === "single"
-                        ? "bg-blue-600/40 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Single View
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCoachViewMode("multi")}
-                    className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                      coachViewMode === "multi"
-                        ? "bg-blue-600/40 text-white"
-                        : "text-zinc-300 hover:text-white"
-                    }`}
-                  >
-                    Multi View
-                  </button>
-                  {coachViewMode === "multi" && roomState.angles.length > 1 ? (
-                    <span className="hidden text-[9px] font-medium uppercase tracking-wide text-zinc-500 sm:inline">
-                      Multi View
-                    </span>
-                  ) : null}
-                  {manualSyncBadgeVisible ? (
-                    <span
-                      className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-emerald-100"
-                      title={
-                        roomState?.manualSyncAt
-                          ? `Manual sync (${new Date(roomState.manualSyncAt).toLocaleString()})`
-                          : "Manual angle sync"
-                      }
-                    >
-                      Manual Sync ✓
-                    </span>
-                  ) : null}
-                  {showResetSyncBtn ? (
-                    <button
-                      type="button"
-                      onClick={() => handleResetManualSyncLock()}
-                      className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-200 transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                      title="Clear manual sync lock"
-                    >
-                      Reset Sync
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {roomState.angles.map((a) => {
-                const active = a.id === roomState.currentAngleId;
-                return (
-                  <div key={a.id} className="flex flex-col items-stretch gap-1">
-                    <button
-                      type="button"
-                      disabled={!isHost}
-                      onClick={() => {
-                        if (!isHost) return;
-                        if (fullscreenAngleId !== null && hostMultiAngles) {
-                          applyHostMultiFullscreenTarget(a.id);
-                          return;
-                        }
-                        void handleSelectAngle(a.id);
-                      }}
-                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 active:scale-[0.98] ${
-                        active
-                          ? "border-blue-500/55 bg-blue-600/25 text-white ring-1 ring-blue-400/35"
-                          : "border-white/10 bg-white/[0.04] text-zinc-200 hover:border-white/18 hover:bg-white/[0.07]"
-                      } ${!isHost ? "cursor-default opacity-90" : ""}`}
-                    >
-                      {a.name}
-                    </button>
-                    {isHost ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (hostMultiAngles) {
-                            applyHostMultiFullscreenTarget(a.id);
-                            return;
-                          }
-                          setFullscreenAngleId(a.id);
-                          if (roomState.currentAngleId !== a.id) {
-                            void handleSelectAngle(a.id);
-                          }
-                        }}
-                        className="rounded-md border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[10px] font-semibold text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.1] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                      >
-                        Fullscreen
-                      </button>
-                    ) : null}
-                  </div>
-                );
-              })}
-              {isHost && roomState.clips.length === 1 ? (
-                <button
-                  type="button"
-                  onClick={() => void handleAddAngle()}
-                  className={secondaryHostBtn}
-                >
-                  Add angle
-                </button>
-              ) : null}
-            </div>
-            {isHost && hostNotice ? (
-              <p className="mt-2 text-xs text-amber-200">{hostNotice}</p>
-            ) : null}
-          </div>
-        ) : isHost && roomState && roomState.clips.length === 1 && !cleanMode ? (
-          <div className={frPanel}>
-            <p className={frPanelTitle}>Camera angle</p>
-            <p className="mb-2 text-xs text-zinc-500">
-              Add alternate YouTube feeds for the same game clock (single clip
-              only).
-            </p>
-            <button
-              type="button"
-              onClick={() => void handleAddAngle()}
-              className={secondaryHostBtn}
-            >
-              Add angle
-            </button>
           </div>
         ) : null}
 

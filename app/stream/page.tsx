@@ -332,7 +332,7 @@ export default function StreamRoomPage() {
 
     try {
       await set(ref(db, `rooms/${roomId}`), payload);
-      router.push(`/room/${roomId}?view=sync`);
+      router.push(`/room/${roomId}?view=live`);
     } catch (err) {
       console.error("[Stream Room] create room failed", err);
       alert("Could not start live session. Check Firebase permissions.");
