@@ -5,6 +5,10 @@ const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
 type YouTubeMeta = {
   videoId: string;
   title?: string;
+  /** From `snippet.liveBroadcastContent`: none | live | upcoming */
+  liveBroadcastContent?: string;
+  /** True when the video is an active/upcoming broadcast or in-progress live DVR (not a finished VOD archive of a stream). */
+  isLive?: boolean;
   actualStartTime?: string;
   scheduledStartTime?: string;
   embeddable?: boolean;
@@ -106,9 +110,10 @@ export async function GET(request: Request) {
   const root = data as {
     items?: Array<{
       id?: string;
-      snippet?: { title?: string };
+      snippet?: { title?: string; liveBroadcastContent?: string };
       liveStreamingDetails?: {
         actualStartTime?: string;
+        actualEndTime?: string;
         scheduledStartTime?: string;
       };
       status?: { embeddable?: boolean };
@@ -123,18 +128,36 @@ export async function GET(request: Request) {
     );
   }
 
+  const lbcRaw = item.snippet?.liveBroadcastContent;
+  const liveBroadcastContent =
+    typeof lbcRaw === "string" && lbcRaw.trim() !== ""
+      ? lbcRaw.trim()
+      : undefined;
+  const details = item.liveStreamingDetails;
+  const hasActualStart =
+    typeof details?.actualStartTime === "string" &&
+    details.actualStartTime.trim() !== "";
+  const hasEnded =
+    typeof details?.actualEndTime === "string" &&
+    details.actualEndTime.trim() !== "";
+  const isLive =
+    liveBroadcastContent === "live" ||
+    liveBroadcastContent === "upcoming" ||
+    (hasActualStart && !hasEnded);
+
   const meta: YouTubeMeta = {
     videoId,
     ...(typeof item.snippet?.title === "string" && item.snippet.title.trim() !== ""
       ? { title: item.snippet.title }
       : {}),
-    ...(typeof item.liveStreamingDetails?.actualStartTime === "string" &&
-    item.liveStreamingDetails.actualStartTime.trim() !== ""
-      ? { actualStartTime: item.liveStreamingDetails.actualStartTime }
+    ...(liveBroadcastContent ? { liveBroadcastContent } : {}),
+    isLive,
+    ...(hasActualStart
+      ? { actualStartTime: details!.actualStartTime }
       : {}),
-    ...(typeof item.liveStreamingDetails?.scheduledStartTime === "string" &&
-    item.liveStreamingDetails.scheduledStartTime.trim() !== ""
-      ? { scheduledStartTime: item.liveStreamingDetails.scheduledStartTime }
+    ...(typeof details?.scheduledStartTime === "string" &&
+    details.scheduledStartTime.trim() !== ""
+      ? { scheduledStartTime: details.scheduledStartTime }
       : {}),
     ...(typeof item.status?.embeddable === "boolean"
       ? { embeddable: item.status.embeddable }

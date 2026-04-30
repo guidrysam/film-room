@@ -320,10 +320,8 @@ export default function StreamRoomPage() {
       angles: valid.map((a) => ({
         id: a.id,
         name: a.name.trim() || "Angle",
-        url: a.url,
-        videoId: a.videoId,
+        videoId: a.videoId!,
         offsetFromGameTime: 0,
-        sourceType: "youtube_live",
       })),
       updatedAt: serverTimestamp(),
       action: "init",
