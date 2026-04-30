@@ -2,16 +2,32 @@ import { NextResponse } from "next/server";
 
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
 
+export type YouTubeStreamPhase = "active" | "upcoming" | "ended" | "vod";
+
 type YouTubeMeta = {
   videoId: string;
   title?: string;
   /** From `snippet.liveBroadcastContent`: none | live | upcoming */
   liveBroadcastContent?: string;
-  /** True when the video is an active/upcoming broadcast or in-progress live DVR (not a finished VOD archive of a stream). */
+  /**
+   * True for active/upcoming broadcast context, in-progress DVR, or signals like
+   * active live chat / concurrent viewers while not ended (see `streamPhase` for nuance).
+   */
   isLive?: boolean;
+  /** Narrower: stream appears to be broadcasting now (not upcoming-only, not ended). */
+  streamPhase?: YouTubeStreamPhase;
   actualStartTime?: string;
+  actualEndTime?: string;
   scheduledStartTime?: string;
+  concurrentViewers?: number;
+  activeLiveChatId?: string;
   embeddable?: boolean;
+  /** From `status` part */
+  uploadStatus?: string;
+  privacyStatus?: string;
+  license?: string;
+  /** From `snippet` */
+  publishedAt?: string;
 };
 
 type YouTubeApiErrorResponse = {
@@ -110,13 +126,24 @@ export async function GET(request: Request) {
   const root = data as {
     items?: Array<{
       id?: string;
-      snippet?: { title?: string; liveBroadcastContent?: string };
+      snippet?: {
+        title?: string;
+        liveBroadcastContent?: string;
+        publishedAt?: string;
+      };
       liveStreamingDetails?: {
         actualStartTime?: string;
         actualEndTime?: string;
         scheduledStartTime?: string;
+        concurrentViewers?: string | number;
+        activeLiveChatId?: string;
       };
-      status?: { embeddable?: boolean };
+      status?: {
+        embeddable?: boolean;
+        uploadStatus?: string;
+        privacyStatus?: string;
+        license?: string;
+      };
     }>;
   };
 
@@ -140,10 +167,58 @@ export async function GET(request: Request) {
   const hasEnded =
     typeof details?.actualEndTime === "string" &&
     details.actualEndTime.trim() !== "";
+  const hasScheduledStart =
+    typeof details?.scheduledStartTime === "string" &&
+    details.scheduledStartTime.trim() !== "";
+
+  const activeLiveChatIdRaw = details?.activeLiveChatId;
+  const activeLiveChatId =
+    typeof activeLiveChatIdRaw === "string" && activeLiveChatIdRaw.trim() !== ""
+      ? activeLiveChatIdRaw.trim()
+      : undefined;
+
+  let concurrentViewers: number | undefined;
+  const cvRaw = details?.concurrentViewers;
+  if (typeof cvRaw === "number" && Number.isFinite(cvRaw)) {
+    concurrentViewers = cvRaw;
+  } else if (typeof cvRaw === "string" && cvRaw.trim() !== "") {
+    const n = Number.parseInt(cvRaw, 10);
+    if (Number.isFinite(n)) concurrentViewers = n;
+  }
+
+  const inProgressWindow = hasActualStart && !hasEnded;
+  /** Strong signal of an ongoing public broadcast (embeddable streams often still report this). */
+  const hasLiveChatWhileNotEnded =
+    Boolean(activeLiveChatId) && !hasEnded;
+  /** Concurrent viewers are a strong hint the watch page is a live broadcast (when not ended). */
+  const hasPositiveViewersWhileNotEnded =
+    concurrentViewers !== undefined &&
+    concurrentViewers > 0 &&
+    !hasEnded;
+
+  const looksLikeActiveBroadcast =
+    liveBroadcastContent === "live" ||
+    inProgressWindow ||
+    hasLiveChatWhileNotEnded ||
+    hasPositiveViewersWhileNotEnded;
+
+  let streamPhase: YouTubeStreamPhase;
+  if (hasEnded) {
+    streamPhase = "ended";
+  } else if (looksLikeActiveBroadcast) {
+    streamPhase = "active";
+  } else if (liveBroadcastContent === "upcoming" || (hasScheduledStart && !hasActualStart)) {
+    streamPhase = "upcoming";
+  } else {
+    streamPhase = "vod";
+  }
+
   const isLive =
     liveBroadcastContent === "live" ||
     liveBroadcastContent === "upcoming" ||
-    (hasActualStart && !hasEnded);
+    inProgressWindow ||
+    hasLiveChatWhileNotEnded ||
+    hasPositiveViewersWhileNotEnded;
 
   const meta: YouTubeMeta = {
     videoId,
@@ -152,18 +227,36 @@ export async function GET(request: Request) {
       : {}),
     ...(liveBroadcastContent ? { liveBroadcastContent } : {}),
     isLive,
+    streamPhase,
     ...(hasActualStart
       ? { actualStartTime: details!.actualStartTime }
       : {}),
+    ...(hasEnded ? { actualEndTime: details!.actualEndTime } : {}),
     ...(typeof details?.scheduledStartTime === "string" &&
     details.scheduledStartTime.trim() !== ""
       ? { scheduledStartTime: details.scheduledStartTime }
       : {}),
+    ...(concurrentViewers !== undefined ? { concurrentViewers } : {}),
+    ...(activeLiveChatId ? { activeLiveChatId } : {}),
     ...(typeof item.status?.embeddable === "boolean"
       ? { embeddable: item.status.embeddable }
+      : {}),
+    ...(typeof item.status?.uploadStatus === "string" &&
+    item.status.uploadStatus.trim() !== ""
+      ? { uploadStatus: item.status.uploadStatus.trim() }
+      : {}),
+    ...(typeof item.status?.privacyStatus === "string" &&
+    item.status.privacyStatus.trim() !== ""
+      ? { privacyStatus: item.status.privacyStatus.trim() }
+      : {}),
+    ...(typeof item.status?.license === "string" && item.status.license.trim() !== ""
+      ? { license: item.status.license.trim() }
+      : {}),
+    ...(typeof item.snippet?.publishedAt === "string" &&
+    item.snippet.publishedAt.trim() !== ""
+      ? { publishedAt: item.snippet.publishedAt.trim() }
       : {}),
   };
 
   return NextResponse.json({ ok: true, meta });
 }
-

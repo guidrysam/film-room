@@ -14,9 +14,27 @@ type AngleStatus =
   | "idle"
   | "checking"
   | "ready"
+  | "live_ready"
+  | "waiting_offline"
   | "invalid_url"
-  | "not_embeddable"
-  | "offline_or_not_started";
+  | "not_embeddable";
+
+/** Temporary Stream Room diagnostics (UI + console). */
+type StreamAngleDebug = {
+  videoId: string;
+  embedResult: "ready" | "offline_or_not_started" | "error";
+  metaResponse: unknown;
+  computed: {
+    isLive?: boolean;
+    liveBroadcastContent?: string;
+    streamPhase?: string;
+    uploadStatus?: string;
+    privacyStatus?: string;
+    publishedAt?: string;
+    embeddable?: boolean;
+  };
+  finalStatus: AngleStatus;
+};
 
 type StreamAngleRow = {
   id: string;
@@ -24,6 +42,8 @@ type StreamAngleRow = {
   url: string;
   videoId: string | null;
   status: AngleStatus;
+  /** Populated after embed + meta settle (cleared when URL changes). */
+  debug?: StreamAngleDebug | null;
 };
 
 type SavedSetupV1 = {
@@ -54,9 +74,11 @@ function pillClasses(status: AngleStatus): string {
   switch (status) {
     case "ready":
       return "border-emerald-400/30 bg-emerald-500/15 text-emerald-200";
+    case "live_ready":
+      return "border-red-400/35 bg-red-500/15 text-red-100";
     case "checking":
       return "border-blue-400/30 bg-blue-500/15 text-blue-200";
-    case "offline_or_not_started":
+    case "waiting_offline":
       return "border-amber-400/30 bg-amber-500/15 text-amber-200";
     case "invalid_url":
     case "not_embeddable":
@@ -74,12 +96,14 @@ function pillLabel(status: AngleStatus): string {
       return "Checking";
     case "ready":
       return "Ready";
+    case "live_ready":
+      return "Live · Ready";
     case "invalid_url":
       return "Invalid URL";
     case "not_embeddable":
       return "Not embeddable";
-    case "offline_or_not_started":
-      return "Offline / not started";
+    case "waiting_offline":
+      return "Waiting / Offline";
     default: {
       const _exhaustive: never = status;
       return String(_exhaustive);
@@ -97,49 +121,191 @@ function StatusPill({ status }: { status: AngleStatus }) {
   );
 }
 
-function ValidationProbe({
+type MetaApiJson = {
+  ok?: boolean;
+  meta?: {
+    isLive?: boolean;
+    liveBroadcastContent?: string;
+    streamPhase?: string;
+    uploadStatus?: string;
+    privacyStatus?: string;
+    publishedAt?: string;
+    embeddable?: boolean;
+  };
+  error?: string;
+};
+
+function computeStreamAngleStatus(
+  embed: "ready" | "offline_or_not_started",
+  metaJson: MetaApiJson | null,
+): AngleStatus {
+  const metaOk =
+    metaJson &&
+    metaJson.ok === true &&
+    metaJson.meta &&
+    typeof metaJson.meta === "object";
+  const m = metaOk ? metaJson.meta! : null;
+
+  if (!m) {
+    return embed === "offline_or_not_started" ? "waiting_offline" : "ready";
+  }
+
+  const phase = m.streamPhase;
+  if (phase === "active") {
+    return "live_ready";
+  }
+  if (phase === "upcoming" || embed === "offline_or_not_started") {
+    return "waiting_offline";
+  }
+  if (phase === "ended") {
+    return "waiting_offline";
+  }
+  /* vod / none: embed offline already mapped above */
+  return "ready";
+}
+
+/**
+ * Fetches `/api/youtube-video-meta` and runs an off-screen embed probe; merges into final status + debug.
+ */
+function StreamAngleValidationPipeline({
+  angleId,
   videoId,
-  onReady,
-  onError,
+  onSettled,
 }: {
+  angleId: string;
   videoId: string;
-  onReady: (result: "ready" | "offline_or_not_started") => void;
-  onError: () => void;
+  onSettled: (rowId: string, patch: Pick<StreamAngleRow, "status" | "debug">) => void;
 }) {
   const decidedRef = useRef(false);
+  const metaRef = useRef<MetaApiJson | "pending">("pending");
+  const embedRef = useRef<"ready" | "offline_or_not_started" | null>(null);
 
-  const handleReady = useCallback(
+  const finalize = useCallback(() => {
+    if (decidedRef.current) return;
+    const meta = metaRef.current;
+    const emb = embedRef.current;
+    if (meta === "pending" || emb === null) return;
+    decidedRef.current = true;
+
+    const metaResponse: unknown = meta;
+
+    const m = meta.ok === true ? meta.meta : undefined;
+    const computed = {
+      isLive: m?.isLive,
+      liveBroadcastContent: m?.liveBroadcastContent,
+      streamPhase: m?.streamPhase,
+      uploadStatus: m?.uploadStatus,
+      privacyStatus: m?.privacyStatus,
+      publishedAt: m?.publishedAt,
+      embeddable: m?.embeddable,
+    };
+
+    const finalStatus = computeStreamAngleStatus(emb, meta);
+
+    const debug: StreamAngleDebug = {
+      videoId,
+      embedResult: emb,
+      metaResponse,
+      computed,
+      finalStatus,
+    };
+
+    console.log("[Stream Room] angle settled", angleId, {
+      videoId,
+      embed: emb,
+      meta: metaResponse,
+      isLive: computed.isLive,
+      liveBroadcastContent: computed.liveBroadcastContent,
+      uploadStatus: computed.uploadStatus,
+      privacyStatus: computed.privacyStatus,
+      publishedAt: computed.publishedAt,
+      finalStatus,
+    });
+
+    onSettled(angleId, { status: finalStatus, debug });
+  }, [angleId, onSettled, videoId]);
+
+  useEffect(() => {
+    decidedRef.current = false;
+    metaRef.current = "pending";
+    embedRef.current = null;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/youtube-video-meta?videoId=${encodeURIComponent(videoId)}`,
+        );
+        let data: MetaApiJson = {};
+        try {
+          data = (await res.json()) as MetaApiJson;
+        } catch {
+          data = { ok: false, error: "Invalid JSON from youtube-video-meta" };
+        }
+        if (cancelled) return;
+        metaRef.current = data;
+        console.log("[Stream Room] youtube-video-meta", videoId, data);
+      } catch (e) {
+        if (cancelled) return;
+        metaRef.current = {
+          ok: false,
+          error: e instanceof Error ? e.message : "Meta fetch failed",
+        };
+        console.warn("[Stream Room] meta fetch error", videoId, e);
+      }
+      finalize();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId, finalize]);
+
+  const handlePlayerReady = useCallback(
     async (evt: { target: YouTubePlayer }) => {
       if (decidedRef.current) return;
-      decidedRef.current = true;
       try {
         const state = await evt.target.getPlayerState();
-        // Heuristic: if the player is ready but still "unstarted/cued", treat as offline/not-started warning.
         if (state === -1 || state === 5) {
-          onReady("offline_or_not_started");
-          return;
+          embedRef.current = "offline_or_not_started";
+        } else {
+          embedRef.current = "ready";
         }
       } catch {
-        // If we can't read state, still treat as ready (player loaded).
+        embedRef.current = "ready";
       }
-      onReady("ready");
+      console.log("[Stream Room] embed probe", videoId, embedRef.current);
+      finalize();
     },
-    [onReady],
+    [finalize, videoId],
   );
 
-  const handleError = useCallback(() => {
+  const handlePlayerError = useCallback(() => {
     if (decidedRef.current) return;
     decidedRef.current = true;
-    onError();
-  }, [onError]);
+    const meta = metaRef.current;
+    const metaResponse: unknown =
+      meta === "pending"
+        ? { ok: false, error: "Embed error (meta still loading)" }
+        : meta;
+    const debug: StreamAngleDebug = {
+      videoId,
+      embedResult: "error",
+      metaResponse,
+      computed: {},
+      finalStatus: "not_embeddable",
+    };
+    console.warn("[Stream Room] embed error", videoId, metaResponse);
+    onSettled(angleId, { status: "not_embeddable", debug });
+  }, [angleId, onSettled, videoId]);
 
   return (
     <div className="pointer-events-none absolute -left-[99999px] -top-[99999px] h-px w-px overflow-hidden opacity-0">
       <YouTube
         videoId={videoId}
         opts={{ height: "1", width: "1", playerVars: { playsinline: 1 } }}
-        onReady={handleReady}
-        onError={handleError}
+        onReady={handlePlayerReady}
+        onError={handlePlayerError}
       />
     </div>
   );
@@ -253,6 +419,15 @@ export default function StreamRoomPage() {
     setAngles((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  const handleStreamAngleSettled = useCallback(
+    (rowId: string, patch: Pick<StreamAngleRow, "status" | "debug">) => {
+      setAngles((prev) =>
+        prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
+      );
+    },
+    [],
+  );
+
   // Debounced URL → videoId extraction + "checking" state.
   useEffect(() => {
     const timers: number[] = [];
@@ -263,14 +438,14 @@ export default function StreamRoomPage() {
           prev.map((a) => {
             if (a.id !== row.id) return a;
             if (!a.url.trim()) {
-              return { ...a, videoId: null, status: "idle" };
+              return { ...a, videoId: null, status: "idle", debug: null };
             }
             if (!vid) {
-              return { ...a, videoId: null, status: "invalid_url" };
+              return { ...a, videoId: null, status: "invalid_url", debug: null };
             }
-            // If unchanged, keep status (e.g., ready/offline).
+            // If unchanged, keep status (e.g., ready / live_ready / waiting_offline).
             if (a.videoId === vid && a.status !== "invalid_url") return a;
-            return { ...a, videoId: vid, status: "checking" };
+            return { ...a, videoId: vid, status: "checking", debug: null };
           }),
         );
       }, 500);
@@ -395,7 +570,7 @@ export default function StreamRoomPage() {
             {angles.map((a) => (
               <div
                 key={a.id}
-                className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:grid-cols-12 md:items-center"
+                className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:grid-cols-12 md:items-start"
               >
                 <div className="md:col-span-3">
                   <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
@@ -432,28 +607,43 @@ export default function StreamRoomPage() {
                   </button>
                 </div>
 
-                {/* Per-row validation probe: only mounts when we have a videoId and need to check readiness/embeddability. */}
                 {a.videoId && a.status === "checking" ? (
-                  <ValidationProbe
-                    key={a.videoId}
+                  <StreamAngleValidationPipeline
+                    key={`${a.id}-${a.videoId}`}
+                    angleId={a.id}
                     videoId={a.videoId}
-                    onReady={(result) => {
-                      setAngles((prev) =>
-                        prev.map((row) =>
-                          row.id === a.id ? { ...row, status: result } : row,
-                        ),
-                      );
-                    }}
-                    onError={() => {
-                      setAngles((prev) =>
-                        prev.map((row) =>
-                          row.id === a.id
-                            ? { ...row, status: "not_embeddable" }
-                            : row,
-                        ),
-                      );
-                    }}
+                    onSettled={handleStreamAngleSettled}
                   />
+                ) : null}
+
+                {a.debug ? (
+                  <div className="md:col-span-12">
+                    <details className="rounded-lg border border-white/10 bg-black/35 px-3 py-2">
+                      <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
+                        Live detection debug (temporary)
+                      </summary>
+                      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
+                        {JSON.stringify(
+                          {
+                            videoId: a.debug.videoId,
+                            embedResult: a.debug.embedResult,
+                            metaResponse: a.debug.metaResponse,
+                            isLive: a.debug.computed.isLive,
+                            liveBroadcastContent:
+                              a.debug.computed.liveBroadcastContent,
+                            streamPhase: a.debug.computed.streamPhase,
+                            uploadStatus: a.debug.computed.uploadStatus,
+                            privacyStatus: a.debug.computed.privacyStatus,
+                            publishedAt: a.debug.computed.publishedAt,
+                            embeddableFromApi: a.debug.computed.embeddable,
+                            finalStreamRoomStatus: a.debug.finalStatus,
+                          },
+                          null,
+                          2,
+                        )}
+                      </pre>
+                    </details>
+                  </div>
                 ) : null}
               </div>
             ))}
@@ -461,15 +651,16 @@ export default function StreamRoomPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs text-zinc-400">
-              {angles.some((a) => a.status === "offline_or_not_started") ? (
+              {angles.some((a) => a.status === "waiting_offline") ? (
                 <span className="text-amber-200">
-                  Some angles look offline/not started yet. You can still start the
-                  session, but playback may be unavailable until the stream begins.
+                  Some angles are waiting or offline (not yet live). You can still
+                  start the session; playback may begin when the stream does.
                 </span>
               ) : (
                 <span>
                   Start is enabled when at least one angle has a valid, embeddable
-                  YouTube video.
+                  YouTube video (live metadata can be uncertain — embed check is what
+                  matters).
                 </span>
               )}
             </div>
