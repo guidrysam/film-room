@@ -5296,7 +5296,10 @@ function RoomContent() {
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
-                onClick={() => setLayoutMode("grid")}
+                onClick={() => {
+                  console.log("layoutMode set:", "grid");
+                  setLayoutMode("grid");
+                }}
                 className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
                   layoutMode === "grid"
                     ? "bg-blue-600/45 text-white"
@@ -5307,7 +5310,10 @@ function RoomContent() {
               </button>
               <button
                 type="button"
-                onClick={() => setLayoutMode("focus")}
+                onClick={() => {
+                  console.log("layoutMode set:", "focus");
+                  setLayoutMode("focus");
+                }}
                 className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
                   layoutMode === "focus"
                     ? "bg-blue-600/45 text-white"
@@ -5318,7 +5324,10 @@ function RoomContent() {
               </button>
               <button
                 type="button"
-                onClick={() => setLayoutMode("pip")}
+                onClick={() => {
+                  console.log("layoutMode set:", "pip");
+                  setLayoutMode("pip");
+                }}
                 className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
                   layoutMode === "pip"
                     ? "bg-blue-600/45 text-white"
@@ -5327,6 +5336,9 @@ function RoomContent() {
               >
                 PiP
               </button>
+            </div>
+            <div className="mt-1 text-[11px] font-medium text-zinc-400">
+              Current layout: <span className="font-mono text-zinc-200">{layoutMode}</span>
             </div>
           </div>
 
@@ -5380,106 +5392,108 @@ function RoomContent() {
           </div>
         ) : null}
 
-        <div
-          className={`grid w-full grid-cols-1 gap-4 ${
-            isHost && multi && coachViewMode === "multi"
-              ? "md:grid-cols-2"
-              : ""
-          }`}
-        >
+        <div className="w-full">
           {isHost && multi && coachViewMode === "multi" ? (
-            s.angles.map((angle) => (
-              <div
-                key={angle.id}
-                className={`overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
-                  s.playerViewAngleId && s.playerViewAngleId === angle.id
-                    ? "border border-violet-500/45 ring-2 ring-violet-500/40"
-                    : "border border-white/[0.07] ring-1 ring-white/[0.04]"
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                    <span className="truncate text-sm font-semibold text-zinc-100">
-                      {angle.name}
-                    </span>
-                    {angle.id === s.currentAngleId ? (
-                      <span className="rounded-md border border-blue-500/35 bg-blue-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-100">
-                        Game clock
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    {s.playerViewAngleId === angle.id ? (
-                      <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
-                        Player View
-                      </span>
-                    ) : null}
-                    <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
-                      <input
-                        type="radio"
-                        name="film-room-player-view"
-                        className="h-3.5 w-3.5 accent-violet-500"
-                        checked={s.playerViewAngleId === angle.id}
-                        onChange={() => handleSetPlayerViewAngleId(angle.id)}
-                      />
-                      Player View
-                    </label>
-                  </div>
-                </div>
-                <div className="relative aspect-video w-full overflow-hidden bg-black">
-                  <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
-                    <YouTube
-                      key={angle.id}
-                      videoId={safeDecodeVideoId(angle.videoId)}
-                      onReady={(e) => {
-                        const pl = e.target as YouTubePlayer;
-                        syncPlayerRefs.current[angle.id] = pl;
-                        if (angle.id === s.currentAngleId) {
-                          handlePlayerReady();
-                        }
-                        applySyncStateToAnglePlayer(
-                          angle.id,
-                          "host-sync-card-onReady",
-                        );
-                      }}
-                      onStateChange={
-                        angle.id === s.currentAngleId
-                          ? handleYoutubeStateChange
-                          : () => {}
-                      }
-                      className="absolute left-0 top-0 h-full w-full"
-                      iframeClassName="absolute left-0 top-0 h-full w-full"
-                      opts={youtubePlayerOpts}
-                    />
-                  </YoutubePointerGate>
-                  <SyncAngleDebugStrip
-                    angleId={angle.id}
-                    angleName={angle.name}
-                    videoId={safeDecodeVideoId(angle.videoId)}
-                    syncPlayerRefs={syncPlayerRefs}
-                  />
-                  {roomId ? (
-                    <TelestratorOverlay
-                      roomId={roomId}
-                      isHost={isHost}
-                      drawEnabled={telDrawOn}
-                      strokeAngleId={angle.id}
-                      renderAngleId={angle.id}
-                      allowLegacyWithoutAngleId={false}
-                    />
-                  ) : null}
-                </div>
-                {showIndependentControls
-                  ? renderSyncSetupControls({
-                      label: angle.name,
-                      which:
-                        angle.id === s.currentAngleId ? "primary" : "secondary",
-                      get: () => syncPlayerRefs.current[angle.id] ?? undefined,
-                    })
-                  : null}
-              </div>
-            ))
+            <SyncLayout
+              angles={s.angles.map(
+                (angle): SyncLayoutAngle => ({
+                  id: angle.id,
+                  element: (
+                    <div
+                      className={`h-full w-full overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
+                        s.playerViewAngleId && s.playerViewAngleId === angle.id
+                          ? "border border-violet-500/45 ring-2 ring-violet-500/40"
+                          : "border border-white/[0.07] ring-1 ring-white/[0.04]"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                          <span className="truncate text-sm font-semibold text-zinc-100">
+                            {angle.name}
+                          </span>
+                          {angle.id === s.currentAngleId ? (
+                            <span className="rounded-md border border-blue-500/35 bg-blue-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-100">
+                              Game clock
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                          {s.playerViewAngleId === angle.id ? (
+                            <span className="rounded-md border border-violet-500/40 bg-violet-950/45 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100">
+                              Player View
+                            </span>
+                          ) : null}
+                          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-zinc-300">
+                            <input
+                              type="radio"
+                              name="film-room-player-view"
+                              className="h-3.5 w-3.5 accent-violet-500"
+                              checked={s.playerViewAngleId === angle.id}
+                              onChange={() => handleSetPlayerViewAngleId(angle.id)}
+                            />
+                            Player View
+                          </label>
+                        </div>
+                      </div>
+                      <div className="relative aspect-video w-full overflow-hidden bg-black">
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                          <YouTube
+                            key={angle.id}
+                            videoId={safeDecodeVideoId(angle.videoId)}
+                            onReady={(e) => {
+                              const pl = e.target as YouTubePlayer;
+                              syncPlayerRefs.current[angle.id] = pl;
+                              if (angle.id === s.currentAngleId) {
+                                handlePlayerReady();
+                              }
+                              applySyncStateToAnglePlayer(
+                                angle.id,
+                                "host-sync-card-onReady",
+                              );
+                            }}
+                            onStateChange={
+                              angle.id === s.currentAngleId
+                                ? handleYoutubeStateChange
+                                : () => {}
+                            }
+                            className="absolute left-0 top-0 h-full w-full"
+                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            opts={youtubePlayerOpts}
+                          />
+                        </YoutubePointerGate>
+                        <SyncAngleDebugStrip
+                          angleId={angle.id}
+                          angleName={angle.name}
+                          videoId={safeDecodeVideoId(angle.videoId)}
+                          syncPlayerRefs={syncPlayerRefs}
+                        />
+                        {roomId ? (
+                          <TelestratorOverlay
+                            roomId={roomId}
+                            isHost={isHost}
+                            drawEnabled={telDrawOn}
+                            strokeAngleId={angle.id}
+                            renderAngleId={angle.id}
+                            allowLegacyWithoutAngleId={false}
+                          />
+                        ) : null}
+                      </div>
+                      {showIndependentControls
+                        ? renderSyncSetupControls({
+                            label: angle.name,
+                            which:
+                              angle.id === s.currentAngleId ? "primary" : "secondary",
+                            get: () => syncPlayerRefs.current[angle.id] ?? undefined,
+                          })
+                        : null}
+                    </div>
+                  ),
+                }),
+              )}
+              playerViewAngleId={s.playerViewAngleId ?? s.currentAngleId ?? s.angles[0]!.id}
+              layoutMode={layoutMode}
+            />
           ) : (
             <div
               className={`overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
