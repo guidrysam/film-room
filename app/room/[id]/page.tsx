@@ -1537,8 +1537,6 @@ function RoomContent() {
   const isLiveStreamRef = useRef(false);
   const liveGrowthSampleRef = useRef<{ dur: number; at: number } | null>(null);
   const [isLiveStream, setIsLiveStream] = useState(false);
-  /** Host-only: seconds behind DVR live edge (derived from duration vs currentTime). */
-  const [liveBehindSec, setLiveBehindSec] = useState<number | null>(null);
   const applyRoomStateToPlayerRef = useRef<
     (state: RoomState, prev: RoomState | null, gen: number) => Promise<void>
   >(async () => {});
@@ -1637,7 +1635,6 @@ function RoomContent() {
     liveGrowthSampleRef.current = null;
     setIsLiveStream(false);
     isLiveStreamRef.current = false;
-    setLiveBehindSec(null);
     lastHostHeartbeatSentRef.current = null;
     hostLastYtStateCodeRef.current = null;
   }, [activeYouTubeVideoId]);
@@ -1689,7 +1686,17 @@ function RoomContent() {
       if (isHostRef.current || viewerPlaybackUnlockedRef.current) {
         void readYoutubeCurrentTime(p, cur.currentTime ?? 0).then((t) => {
           setUiPlaybackTime(t);
-          // Keep a best-effort duration/live-edge estimate for the scrub bar.
+          if (cur.sourceType === "live") {
+            // Live: scrub max from player duration only — not live-edge polling.
+            if (p) {
+              void readYoutubeDuration(p).then((d) => {
+                if (typeof d === "number" && Number.isFinite(d) && d > 0.25) {
+                  setUiDuration(d);
+                }
+              });
+            }
+            return;
+          }
           void readLiveEdgeTime(p, t).then((edge) => {
             if (typeof edge === "number" && Number.isFinite(edge) && edge > 0.25) {
               setUiDuration(edge);
@@ -3097,27 +3104,6 @@ function RoomContent() {
     return () => window.clearInterval(id);
   }, [activeYouTubeVideoId]);
 
-  /** Host: how far behind the DVR live edge (seconds). */
-  useEffect(() => {
-    if (!isHost || !isLiveStream) {
-      setLiveBehindSec(null);
-      return;
-    }
-    const tick = () => {
-      const p = playerRef.current?.getInternalPlayer() as YouTubePlayer | undefined;
-      if (!p) return;
-      void (async () => {
-        const fb = roomStateRef.current?.currentTime ?? 0;
-        const ct = await readYoutubeCurrentTime(p, fb);
-        const edge = await readLiveEdgeTime(p, ct);
-        setLiveBehindSec(Math.max(0, edge - ct));
-      })();
-    };
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, [isHost, isLiveStream, activeYouTubeVideoId]);
-
   const handleViewerPlaybackUnlock = useCallback(() => {
     viewerPlaybackUnlockedRef.current = true;
     setViewerPlaybackUnlocked(true);
@@ -4212,24 +4198,62 @@ function RoomContent() {
         (ids.includes(cur.currentAngleId) ? cur.currentAngleId : null) ??
         cur.angles[0]!.id;
       const primaryPl = syncPlayerRefs.current[primaryId];
+      const manualSynced =
+        cur.manualSyncLocked === true || (cur.syncAnchorTime ?? 0) > 0;
+
+      syncLog("go live clicked", {
+        manualSynced,
+        playerViewAngleId: cur.playerViewAngleId ?? "",
+        primaryId,
+      });
+
+      if (!manualSynced) {
+        /* Unsynced live: each angle jumps to its own near-live edge only — no offsets, no RTDB. */
+        for (const a of cur.angles) {
+          const pl = syncPlayerRefs.current[a.id];
+          if (!pl) continue;
+          const edge = await getLiveEdgeSeconds(pl);
+          const t = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
+          syncLog("go live seek angle (per-edge)", {
+            angleId: a.id,
+            target: t,
+            liveEdge: edge,
+          });
+          syncLog("LIVE SEEK", {
+            reason: "go-live-unsynced",
+            angleId: a.id,
+            target: t,
+            commandId: null,
+          });
+          try {
+            pl.seekTo?.(t, true);
+          } catch {
+            /* YouTube API */
+          }
+          try {
+            pl.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+        return;
+      }
+
+      /* Manually synced live: one shared anchor from the game-clock angle + offsets, one RTDB play command. */
+      if (!primaryPl) return;
       const primaryLiveEdge = await getLiveEdgeSeconds(primaryPl);
       const targetPrimary = Math.max(
         0,
         primaryLiveEdge - LIVE_SAFETY_BUFFER_SECONDS,
       );
-      syncLog("go live clicked", {
-        targetPrimary,
-        playerViewAngleId: cur.playerViewAngleId ?? "",
-        primaryId,
-      });
 
       for (const a of cur.angles) {
         const pl = syncPlayerRefs.current[a.id];
         const edge = await getLiveEdgeSeconds(pl);
         const cap = Math.max(0, edge - LIVE_SAFETY_BUFFER_SECONDS);
-        let t = targetPrimary + (a.offsetFromGameTime ?? 0);
-        t = Math.max(0, Math.min(t, cap));
-        syncLog("go live seek angle", {
+        const raw = playbackTimeForAngleFromActiveAnchor(targetPrimary, a);
+        const t = Math.max(0, Math.min(raw, cap));
+        syncLog("go live seek angle (manual-sync offsets)", {
           angleId: a.id,
           target: t,
           liveEdge: edge,
@@ -4237,13 +4261,18 @@ function RoomContent() {
         });
         if (!pl) continue;
         syncLog("LIVE SEEK", {
-          reason: "go-live",
+          reason: "go-live-manual-sync",
           angleId: a.id,
           target: t,
           commandId: null,
         });
         try {
           pl.seekTo?.(t, true);
+        } catch {
+          /* YouTube API */
+        }
+        try {
+          pl.playVideo?.();
         } catch {
           /* YouTube API */
         }
@@ -4255,21 +4284,8 @@ function RoomContent() {
         currentTime: targetPrimary,
         playbackRate: pr,
       });
-      applyHostMultiViewSecondaryDirect({
-        primaryAnchorTime: targetPrimary,
-        isPlaying: true,
-        playbackRate: pr,
-        reason: "go-live",
-        alignSeq: hostActionSeqRef.current,
-      });
     })();
-  }, [
-    isHost,
-    roomId,
-    clearFfIfActive,
-    writeImmediatePlaybackCommand,
-    applyHostMultiViewSecondaryDirect,
-  ]);
+  }, [isHost, roomId, clearFfIfActive, writeImmediatePlaybackCommand]);
 
   const handleReconnectLive = useCallback(() => {
     if (!isHost || !roomId) return;
@@ -7453,9 +7469,9 @@ function RoomContent() {
             {isHost && !isManualSyncMode ? (
             <div className="z-30 w-full shrink-0 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
               <div className="mx-auto flex w-full max-w-none flex-col items-center gap-1">
-                {isLiveStream && liveBehindSec !== null ? (
+                {isLiveStream ? (
                   <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
-                    {liveBehindSec < 2.5 ? "LIVE" : `-${Math.round(liveBehindSec)}s`}
+                    LIVE
                   </span>
                 ) : null}
                 <div
@@ -7584,11 +7600,9 @@ function RoomContent() {
               {isHost && !isManualSyncMode ? (
                 <div className="w-full shrink-0 border-b border-white/[0.06] px-2 pb-2 pt-2">
                   <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-1">
-                    {isLiveStream && liveBehindSec !== null ? (
+                    {isLiveStream ? (
                       <span className="rounded-full border border-red-500/40 bg-red-950/55 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
-                        {liveBehindSec < 2.5
-                          ? "LIVE"
-                          : `-${Math.round(liveBehindSec)}s`}
+                        LIVE
                       </span>
                     ) : null}
                     <div
