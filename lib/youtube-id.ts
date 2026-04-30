@@ -75,3 +75,68 @@ export function extractYouTubeVideoId(raw: string): string | null {
 
   return null;
 }
+
+/** True for `youtube.com/watch?...` (including `m.youtube.com`). */
+export function isYoutubeWatchVideoUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  try {
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    const url = new URL(withScheme);
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    if (host !== "youtube.com" && host !== "m.youtube.com") return false;
+    return url.pathname === "/watch" || url.pathname.startsWith("/watch/");
+  } catch {
+    return false;
+  }
+}
+
+export type PersistentLiveUrlTarget =
+  | { kind: "video"; videoId: string }
+  | { kind: "channel_live"; channelId: string }
+  | { kind: "handle_live"; handle: string };
+
+const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
+
+/**
+ * Resolve Stream Room URLs: normal video ids, `/channel/UC…/live`, or `/@handle/live`.
+ * Does not call the network — use `/api/youtube-resolve-live` for channel/handle targets.
+ */
+export function parsePersistentLiveUrlTarget(
+  raw: string,
+): PersistentLiveUrlTarget | null {
+  const vid = extractYouTubeVideoId(raw);
+  if (vid) return { kind: "video", videoId: vid };
+
+  let url: URL;
+  try {
+    const trimmed = raw.trim();
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    url = new URL(withScheme);
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+  if (host !== "youtube.com" && host !== "m.youtube.com") return null;
+
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  const chLive = /^\/channel\/([^/]+)\/live$/i.exec(path);
+  if (chLive) {
+    const id = decodeURIComponent(chLive[1]!);
+    if (CHANNEL_ID_RE.test(id)) {
+      return { kind: "channel_live", channelId: id };
+    }
+  }
+
+  const atLive = /^\/@([^/]+)\/live$/i.exec(path);
+  if (atLive) {
+    const h = decodeURIComponent(atLive[1]!);
+    if (h.trim() !== "") {
+      return { kind: "handle_live", handle: h };
+    }
+  }
+
+  return null;
+}

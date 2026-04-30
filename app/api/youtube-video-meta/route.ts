@@ -28,6 +28,10 @@ type YouTubeMeta = {
   license?: string;
   /** From `snippet` */
   publishedAt?: string;
+  /** Broadcaster channel (for persistent /live URL hints). */
+  channelId?: string;
+  /** From `channels.list` when `includeChannel=1` — use for `@handle/live` suggestions. */
+  channelCustomUrl?: string;
 };
 
 type YouTubeApiErrorResponse = {
@@ -46,9 +50,12 @@ type YouTubeApiErrorResponse = {
   };
 };
 
+const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const videoId = (searchParams.get("videoId") ?? "").trim();
+  const includeChannel = searchParams.get("includeChannel") === "1";
   if (!YT_ID.test(videoId)) {
     return NextResponse.json(
       { ok: false, error: "Invalid videoId." },
@@ -130,6 +137,7 @@ export async function GET(request: Request) {
         title?: string;
         liveBroadcastContent?: string;
         publishedAt?: string;
+        channelId?: string;
       };
       liveStreamingDetails?: {
         actualStartTime?: string;
@@ -220,6 +228,35 @@ export async function GET(request: Request) {
     hasLiveChatWhileNotEnded ||
     hasPositiveViewersWhileNotEnded;
 
+  const snippetChannelIdRaw = item.snippet?.channelId;
+  const snippetChannelId =
+    typeof snippetChannelIdRaw === "string" &&
+    snippetChannelIdRaw.trim() !== "" &&
+    CHANNEL_ID_RE.test(snippetChannelIdRaw.trim())
+      ? snippetChannelIdRaw.trim()
+      : undefined;
+
+  let channelCustomUrl: string | undefined;
+  if (includeChannel && snippetChannelId && key) {
+    const chUrl =
+      "https://www.googleapis.com/youtube/v3/channels" +
+      `?part=snippet&id=${encodeURIComponent(snippetChannelId)}&key=${encodeURIComponent(key)}`;
+    try {
+      const chRes = await fetch(chUrl, { cache: "no-store" });
+      if (chRes.ok) {
+        const chJson = (await chRes.json()) as {
+          items?: Array<{ snippet?: { customUrl?: string } }>;
+        };
+        const cu = chJson.items?.[0]?.snippet?.customUrl;
+        if (typeof cu === "string" && cu.trim() !== "") {
+          channelCustomUrl = cu.trim().replace(/^@/, "");
+        }
+      }
+    } catch {
+      /* optional */
+    }
+  }
+
   const meta: YouTubeMeta = {
     videoId,
     ...(typeof item.snippet?.title === "string" && item.snippet.title.trim() !== ""
@@ -256,6 +293,8 @@ export async function GET(request: Request) {
     item.snippet.publishedAt.trim() !== ""
       ? { publishedAt: item.snippet.publishedAt.trim() }
       : {}),
+    ...(snippetChannelId ? { channelId: snippetChannelId } : {}),
+    ...(channelCustomUrl ? { channelCustomUrl } : {}),
   };
 
   return NextResponse.json({ ok: true, meta });
