@@ -37,6 +37,7 @@ import {
   type FilmRoomTelestratorClearDetail,
   TelestratorOverlay,
 } from "@/components/TelestratorOverlay";
+import SyncLayout, { type LayoutMode, type SyncLayoutAngle } from "@/components/SyncLayout";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
 import {
@@ -1276,10 +1277,8 @@ function RoomContent() {
   useLayoutEffect(() => {
     coachViewModeRef.current = coachViewMode;
   }, [coachViewMode]);
-  /** When Multi View is on: side-by-side grid vs large + PiP (both players stay mounted). */
-  const [coachMultiLayout, setCoachMultiLayout] = useState<"grid" | "focus">(
-    "grid",
-  );
+  /** Host-only multi layout mode (CSS/layout only; do not remount players). */
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("pip");
   const [roomViewMode, setRoomViewMode] = useState<"clip" | "sync">("clip");
   const roomViewModeRef = useRef(roomViewMode);
   useLayoutEffect(() => {
@@ -2471,7 +2470,7 @@ function RoomContent() {
   useEffect(() => {
     if (coachViewMode !== "multi") {
       setMultiViewSecondaryHold(null);
-      setCoachMultiLayout("grid");
+      setLayoutMode("grid");
       setHostFocusAngleId(null);
     }
   }, [coachViewMode]);
@@ -2489,7 +2488,7 @@ function RoomContent() {
     if (!isHost) return;
     // Sync setup requires both players mounted/visible.
     setCoachViewMode("multi");
-    setCoachMultiLayout("grid");
+    setLayoutMode("grid");
     setRoomViewMode("sync");
     setIsManualSyncMode(true);
   }, [isHost]);
@@ -4102,7 +4101,7 @@ function RoomContent() {
     const s = roomStateRef.current;
     if (!s || s.angles.length < 2) return;
     if (coachViewModeRef.current !== "multi") return;
-    if (coachMultiLayout !== "focus") return;
+    if (layoutMode !== "pip") return;
 
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const pipAngle =
@@ -4235,7 +4234,7 @@ function RoomContent() {
   }, [
     isHost,
     roomId,
-    coachMultiLayout,
+    layoutMode,
     clearFfIfActive,
     showHostNotice,
     applyHostMultiViewSecondaryDirect,
@@ -4249,7 +4248,7 @@ function RoomContent() {
       const cur = roomStateRef.current;
       if (!cur || cur.angles.length < 2) return;
       if (coachViewModeRef.current !== "multi") return;
-      if (coachMultiLayout !== "focus") return;
+      if (layoutMode !== "pip") return;
       const activeAngle = pickAngle(cur.angles, cur.currentAngleId);
       const secondaryAngle =
         cur.angles.find((a) => a.id !== activeAngle.id) ?? null;
@@ -4260,7 +4259,7 @@ function RoomContent() {
         setHostFocusAngleId(secondaryAngle.id);
       }
     },
-    [isHost, coachMultiLayout],
+    [isHost, layoutMode],
   );
 
   const handleResetManualSyncLock = useCallback(() => {
@@ -4948,10 +4947,7 @@ function RoomContent() {
 
   const fsMA = hostMultiAngles;
   const fsGridLayoutMode = Boolean(
-    fsActive &&
-      coachMultiLayout === "grid" &&
-      fsMA &&
-      fullscreenAngleId !== null,
+    fsActive && layoutMode === "grid" && fsMA && fullscreenAngleId !== null,
   );
   const fsGridPrimaryBig = Boolean(
     fsGridLayoutMode &&
@@ -4970,10 +4966,10 @@ function RoomContent() {
 
   useEffect(() => {
     if (!isHost) return;
-    if (coachViewMode !== "multi" || coachMultiLayout !== "focus") {
+    if (coachViewMode !== "multi" || layoutMode !== "pip") {
       if (hostFocusAngleIdRef.current !== null) setHostFocusAngleId(null);
     }
-  }, [isHost, coachViewMode, coachMultiLayout]);
+  }, [isHost, coachViewMode, layoutMode]);
 
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -5300,9 +5296,9 @@ function RoomContent() {
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
-                onClick={() => setCoachMultiLayout("grid")}
+                onClick={() => setLayoutMode("grid")}
                 className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                  coachMultiLayout === "grid"
+                  layoutMode === "grid"
                     ? "bg-blue-600/45 text-white"
                     : "text-zinc-300 hover:text-white"
                 }`}
@@ -5311,9 +5307,9 @@ function RoomContent() {
               </button>
               <button
                 type="button"
-                onClick={() => setCoachMultiLayout("focus")}
+                onClick={() => setLayoutMode("focus")}
                 className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
-                  coachMultiLayout === "focus"
+                  layoutMode === "focus"
                     ? "bg-blue-600/45 text-white"
                     : "text-zinc-300 hover:text-white"
                 }`}
@@ -5322,8 +5318,12 @@ function RoomContent() {
               </button>
               <button
                 type="button"
-                onClick={() => setCoachMultiLayout("focus")}
-                className="rounded px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:text-white"
+                onClick={() => setLayoutMode("pip")}
+                className={`rounded px-2 py-1 text-[11px] font-semibold transition ${
+                  layoutMode === "pip"
+                    ? "bg-blue-600/45 text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
               >
                 PiP
               </button>
@@ -5529,53 +5529,52 @@ function RoomContent() {
               <div className="relative isolate aspect-video w-full overflow-hidden bg-black">
                 {!isHost && multi ? (
                   <>
-                    {s.angles.map((a) => {
-                      const isMain = a.id === viewerStackTopResolvedId;
-                      return (
-                        <div
-                          key={a.id}
-                          className={
-                            isMain
-                              ? "absolute inset-0 isolate z-10"
-                              : "absolute bottom-3 right-3 z-20 aspect-video w-[min(38vw,16rem)] max-w-[44%] overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50"
-                          }
-                        >
-                          <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
-                            <YouTube
-                              videoId={safeDecodeVideoId(a.videoId)}
-                              onReady={(e) => {
-                                const pl = e.target as YouTubePlayer;
-                                syncPlayerRefs.current[a.id] = pl;
-                                applySyncStateToAnglePlayer(
-                                  a.id,
-                                  "viewer-sync-pip-onReady",
-                                );
-                              }}
-                              className="absolute left-0 top-0 h-full w-full"
-                              iframeClassName="absolute left-0 top-0 h-full w-full"
-                              opts={youtubePlayerOpts}
-                            />
-                          </div>
-                          {roomId && isMain ? (
-                            <TelestratorOverlay
-                              roomId={roomId}
-                              isHost={false}
-                              drawEnabled={telDrawOn}
-                              renderAngleId={viewerPlayerViewDrawAngleId}
-                              allowLegacyWithoutAngleId
-                              wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
-                              viewerDebug
-                            />
-                          ) : null}
-                          <SyncAngleDebugStrip
-                            angleId={a.id}
-                            angleName={a.name}
-                            videoId={safeDecodeVideoId(a.videoId)}
-                            syncPlayerRefs={syncPlayerRefs}
-                          />
-                        </div>
-                      );
-                    })}
+                    <SyncLayout
+                      angles={s.angles.map(
+                        (a): SyncLayoutAngle => ({
+                          id: a.id,
+                          element: (
+                            <div className="absolute inset-0 isolate">
+                              <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                                <YouTube
+                                  videoId={safeDecodeVideoId(a.videoId)}
+                                  onReady={(e) => {
+                                    const pl = e.target as YouTubePlayer;
+                                    syncPlayerRefs.current[a.id] = pl;
+                                    applySyncStateToAnglePlayer(
+                                      a.id,
+                                      "viewer-sync-onReady",
+                                    );
+                                  }}
+                                  className="absolute left-0 top-0 h-full w-full"
+                                  iframeClassName="absolute left-0 top-0 h-full w-full"
+                                  opts={youtubePlayerOpts}
+                                />
+                              </div>
+                              {roomId && a.id === viewerStackTopResolvedId ? (
+                                <TelestratorOverlay
+                                  roomId={roomId}
+                                  isHost={false}
+                                  drawEnabled={telDrawOn}
+                                  renderAngleId={viewerPlayerViewDrawAngleId}
+                                  allowLegacyWithoutAngleId
+                                  wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
+                                  viewerDebug
+                                />
+                              ) : null}
+                              <SyncAngleDebugStrip
+                                angleId={a.id}
+                                angleName={a.name}
+                                videoId={safeDecodeVideoId(a.videoId)}
+                                syncPlayerRefs={syncPlayerRefs}
+                              />
+                            </div>
+                          ),
+                        }),
+                      )}
+                      playerViewAngleId={viewerStackTopResolvedId}
+                      layoutMode={layoutMode}
+                    />
                     <div className="pointer-events-none absolute left-2 top-2 z-[41] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
                       Main: {viewerTopAngleForLabel.name} · PiP muted
                     </div>
@@ -6258,9 +6257,9 @@ function RoomContent() {
                     <div className="flex flex-wrap items-center gap-0.5 rounded-md border border-white/10 bg-white/[0.03] p-0.5">
                       <button
                         type="button"
-                        onClick={() => setCoachMultiLayout("grid")}
+                        onClick={() => setLayoutMode("grid")}
                         className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          coachMultiLayout === "grid"
+                          layoutMode === "grid"
                             ? "bg-blue-600/45 text-white"
                             : "text-zinc-400 hover:text-white"
                         }`}
@@ -6269,14 +6268,25 @@ function RoomContent() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setCoachMultiLayout("focus")}
+                        onClick={() => setLayoutMode("focus")}
                         className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
-                          coachMultiLayout === "focus"
+                          layoutMode === "focus"
                             ? "bg-blue-600/45 text-white"
                             : "text-zinc-400 hover:text-white"
                         }`}
                       >
                         Focus
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLayoutMode("pip")}
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-semibold transition ${
+                          layoutMode === "pip"
+                            ? "bg-blue-600/45 text-white"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        PiP
                       </button>
                       <span
                         className="mx-0.5 hidden h-3 w-px bg-white/15 sm:inline"
@@ -6558,7 +6568,7 @@ function RoomContent() {
             }}
           >
             {hostMultiAngles ? (
-              coachMultiLayout === "focus" ? (
+              layoutMode === "pip" ? (
                 <div
                   className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                 >
@@ -7263,8 +7273,8 @@ function RoomContent() {
                   handleToggleCleanMode(e);
                 }}
               >
-                {hostMultiAngles ? (
-                  coachMultiLayout === "focus" ? (
+            {hostMultiAngles ? (
+                  layoutMode === "pip" ? (
                     <div
                       className={`absolute inset-0 flex min-h-0 flex-1 flex-col gap-1 bg-black ${fsStageClass}`}
                     >
