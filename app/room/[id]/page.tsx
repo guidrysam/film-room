@@ -1272,10 +1272,17 @@ function RoomContent() {
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   const [sessionSavedToast, setSessionSavedToast] = useState(false);
+  const [sessionDirty, setSessionDirty] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [leaveConfirmError, setLeaveConfirmError] = useState<string | null>(null);
   const goHomeAfterSaveRef = useRef(false);
   const lastSavedRoomUpdatedAtRef = useRef<number>(0);
+  const dirtyInitRef = useRef(false);
+  const lastDirtyChapterSigRef = useRef("");
+  const lastDirtyAngleOffsetSigRef = useRef("");
+  const lastDirtyPlayerViewAngleIdRef = useRef<string>("");
+  const lastDirtyStrokeSigRef = useRef("");
+  const dirtyStrokeInitRef = useRef(false);
   const [isCopyingShared, setIsCopyingShared] = useState(false);
   const [copySharedError, setCopySharedError] = useState<string | null>(null);
   const [copySharedToast, setCopySharedToast] = useState(false);
@@ -1318,6 +1325,13 @@ function RoomContent() {
     setRoomHydrated(false);
     setRoomState(null);
     lastAppliedViewerSelectionKeyRef.current = "";
+    setSessionDirty(false);
+    dirtyInitRef.current = false;
+    dirtyStrokeInitRef.current = false;
+    lastDirtyChapterSigRef.current = "";
+    lastDirtyAngleOffsetSigRef.current = "";
+    lastDirtyPlayerViewAngleIdRef.current = "";
+    lastDirtyStrokeSigRef.current = "";
   }, [roomId]);
 
   useEffect(() => {
@@ -1328,6 +1342,99 @@ function RoomContent() {
       setRoomViewMode("sync");
     }
   }, [roomState, viewParam]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    if (!roomState) return;
+
+    const chapterSig = (roomState.chapters ?? [])
+      .map((ch) =>
+        [
+          ch.videoId ?? "",
+          String(ch.time ?? 0),
+          ch.label ?? "",
+          typeof ch.gameTime === "number" ? String(ch.gameTime) : "",
+        ].join("|"),
+      )
+      .join("~");
+
+    const angleOffsetSig = (roomState.angles ?? [])
+      .map((a) =>
+        [
+          a.id ?? "",
+          a.videoId ?? "",
+          typeof (a as { offsetFromGameTime?: number }).offsetFromGameTime ===
+          "number"
+            ? String((a as { offsetFromGameTime?: number }).offsetFromGameTime)
+            : "0",
+        ].join("|"),
+      )
+      .join("~");
+
+    const playerViewId = roomState.playerViewAngleId ?? "";
+
+    if (!dirtyInitRef.current) {
+      dirtyInitRef.current = true;
+      lastDirtyChapterSigRef.current = chapterSig;
+      lastDirtyAngleOffsetSigRef.current = angleOffsetSig;
+      lastDirtyPlayerViewAngleIdRef.current = playerViewId;
+      return;
+    }
+
+    if (chapterSig !== lastDirtyChapterSigRef.current) {
+      setSessionDirty(true);
+      lastDirtyChapterSigRef.current = chapterSig;
+    }
+    if (angleOffsetSig !== lastDirtyAngleOffsetSigRef.current) {
+      setSessionDirty(true);
+      lastDirtyAngleOffsetSigRef.current = angleOffsetSig;
+    }
+    if (playerViewId !== lastDirtyPlayerViewAngleIdRef.current) {
+      setSessionDirty(true);
+      lastDirtyPlayerViewAngleIdRef.current = playerViewId;
+    }
+  }, [isHost, roomState]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    if (!roomId) return;
+
+    const strokesRef = ref(db, `rooms/${roomId}/telestrator/strokes`);
+    return onValue(strokesRef, (snap) => {
+      const v = snap.val() as unknown;
+      let sig = "";
+      if (!v || typeof v !== "object") {
+        sig = "";
+      } else {
+        const obj = v as Record<string, unknown>;
+        const ids = Object.keys(obj).sort();
+        const parts: string[] = [];
+        for (const id of ids) {
+          const raw = obj[id] as unknown;
+          if (!raw || typeof raw !== "object") {
+            parts.push(id);
+            continue;
+          }
+          const s = raw as Record<string, unknown>;
+          const angleId = typeof s.angleId === "string" ? s.angleId : "";
+          const pts = Array.isArray(s.points) ? s.points.length : 0;
+          parts.push([id, angleId, String(pts)].join("|"));
+        }
+        sig = parts.join("~");
+      }
+
+      if (!dirtyStrokeInitRef.current) {
+        // Initialize on first read without marking dirty.
+        dirtyStrokeInitRef.current = true;
+        lastDirtyStrokeSigRef.current = sig;
+        return;
+      }
+      if (sig !== lastDirtyStrokeSigRef.current) {
+        setSessionDirty(true);
+        lastDirtyStrokeSigRef.current = sig;
+      }
+    });
+  }, [isHost, roomId]);
 
   useEffect(() => {
     if (!isHost) return;
@@ -4836,6 +4943,34 @@ function RoomContent() {
           ? { manualSyncAt: roomState.manualSyncAt }
           : {}),
       });
+
+      // Save succeeded: mark clean and reset dirty baselines to current state.
+      setSessionDirty(false);
+      dirtyInitRef.current = true;
+      lastDirtyChapterSigRef.current = (roomState.chapters ?? [])
+        .map((ch) =>
+          [
+            ch.videoId ?? "",
+            String(ch.time ?? 0),
+            ch.label ?? "",
+            typeof ch.gameTime === "number" ? String(ch.gameTime) : "",
+          ].join("|"),
+        )
+        .join("~");
+      lastDirtyAngleOffsetSigRef.current = (roomState.angles ?? [])
+        .map((a) =>
+          [
+            a.id ?? "",
+            a.videoId ?? "",
+            typeof (a as { offsetFromGameTime?: number }).offsetFromGameTime ===
+            "number"
+              ? String((a as { offsetFromGameTime?: number }).offsetFromGameTime)
+              : "0",
+          ].join("|"),
+        )
+        .join("~");
+      lastDirtyPlayerViewAngleIdRef.current = roomState.playerViewAngleId ?? "";
+
       closeSaveSessionDialog();
       setSessionSavedToast(true);
       window.setTimeout(() => setSessionSavedToast(false), 2500);
@@ -4875,7 +5010,8 @@ function RoomContent() {
   const maybeUnsaved = Boolean(
     isHost &&
       roomState &&
-      (lastSavedRoomUpdatedAtRef.current === 0 ||
+      (sessionDirty ||
+        lastSavedRoomUpdatedAtRef.current === 0 ||
         (roomState.updatedAt ?? 0) > lastSavedRoomUpdatedAtRef.current),
   );
 
