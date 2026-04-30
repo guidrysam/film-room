@@ -7,10 +7,15 @@ import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import {
+  deleteSavedSession,
   ensureSessionSharing,
+  inferSavedSessionKind,
   listSavedSessions,
+  savedSessionMatchesFilter,
   updateSavedSessionMetadata,
   type SavedSessionDoc,
+  type SavedSessionFilterTab,
+  type SavedSessionKind,
 } from "@/lib/saved-sessions";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
@@ -30,6 +35,31 @@ const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
 
 const UNCATEGORIZED = "Uncategorized";
+
+const filterTabBtn =
+  "rounded-lg border px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
+function sessionKindBadgeClasses(kind: SavedSessionKind): string {
+  switch (kind) {
+    case "live_sync":
+      return "border-rose-400/35 bg-rose-500/15 text-rose-100";
+    case "sync":
+      return "border-amber-400/30 bg-amber-500/15 text-amber-100";
+    default:
+      return "border-white/15 bg-white/[0.06] text-zinc-300";
+  }
+}
+
+function sessionKindLabel(kind: SavedSessionKind): string {
+  switch (kind) {
+    case "live_sync":
+      return "Live Sync";
+    case "sync":
+      return "Sync";
+    default:
+      return "Clip";
+  }
+}
 
 function buildFolderGroups(
   rows: Array<{ id: string; data: SavedSessionDoc }>,
@@ -89,10 +119,20 @@ export default function DashboardPage() {
   const [editName, setEditName] = useState("");
   const [editFolder, setEditFolder] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [sessionFilter, setSessionFilter] =
+    useState<SavedSessionFilterTab>("all");
+
+  const filteredSessions = useMemo(
+    () =>
+      sessions.filter(({ data }) =>
+        savedSessionMatchesFilter(data, sessionFilter),
+      ),
+    [sessions, sessionFilter],
+  );
 
   const folderGroups = useMemo(
-    () => buildFolderGroups(sessions),
-    [sessions],
+    () => buildFolderGroups(filteredSessions),
+    [filteredSessions],
   );
 
   const refreshList = useCallback(async () => {
@@ -186,6 +226,36 @@ export default function DashboardPage() {
     setEditFolder("");
     setEditSaving(false);
   };
+
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      if (!user) return;
+      if (
+        !window.confirm(
+          "Delete this session? This cannot be undone.",
+        )
+      ) {
+        return;
+      }
+      const wasEditing = editingId === sessionId;
+      try {
+        await deleteSavedSession(user.uid, sessionId);
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (wasEditing) {
+          setEditingId(null);
+          setEditName("");
+          setEditFolder("");
+          setEditSaving(false);
+        }
+      } catch (err) {
+        console.error("[Dashboard] delete session failed:", err);
+        alert(
+          `Could not delete session: ${errorMessage(err, "Unknown error while deleting.")}`,
+        );
+      }
+    },
+    [user, editingId],
+  );
 
   const saveEditSession = async (sessionId: string) => {
     if (!user) return;
@@ -322,6 +392,35 @@ export default function DashboardPage() {
               No saved sessions yet. Save one from a live room (host).
             </p>
           ) : (
+            <>
+              <div className="mb-3 flex flex-wrap gap-2">
+                {(
+                  [
+                    ["all", "All"],
+                    ["clip", "Clip"],
+                    ["sync", "Sync"],
+                    ["live_sync", "Live Sync"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setSessionFilter(key)}
+                    className={`${filterTabBtn} ${
+                      sessionFilter === key
+                        ? "border-blue-500/45 bg-blue-600/25 text-white"
+                        : "border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {filteredSessions.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-zinc-400">
+                  No sessions match this filter.
+                </p>
+              ) : (
             <div className="space-y-8">
               {folderGroups.map(({ folder, sessions: groupSessions }) => (
                 <section key={folder}>
@@ -329,7 +428,9 @@ export default function DashboardPage() {
                     {folder}
                   </h2>
                   <ul className="space-y-2.5">
-                    {groupSessions.map(({ id, data }) => (
+                    {groupSessions.map(({ id, data }) => {
+                      const kind = inferSavedSessionKind(data);
+                      return (
                       <li
                         key={id}
                         className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/50 px-4 py-3 shadow-md shadow-black/25 ring-1 ring-white/[0.03]"
@@ -379,10 +480,17 @@ export default function DashboardPage() {
                           </>
                         ) : (
                           <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-white">
-                                {data.name}
-                              </p>
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex flex-wrap items-center gap-2">
+                                <p className="truncate text-sm font-medium text-white">
+                                  {data.name}
+                                </p>
+                                <span
+                                  className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${sessionKindBadgeClasses(kind)}`}
+                                >
+                                  {sessionKindLabel(kind)}
+                                </span>
+                              </div>
                               <p className="text-xs text-zinc-400">
                                 {data.updatedAt
                                   ? data.updatedAt.toDate().toLocaleString()
@@ -409,6 +517,13 @@ export default function DashboardPage() {
                               </button>
                               <button
                                 type="button"
+                                onClick={() => void handleDeleteSession(id)}
+                                className="rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 transition hover:border-rose-400/50 hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => loadSavedIntoRoom(id, data)}
                                 className="rounded-lg border border-blue-500/35 bg-blue-600/25 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
                               >
@@ -418,11 +533,14 @@ export default function DashboardPage() {
                           </div>
                         )}
                       </li>
-                    ))}
+                    );
+                    })}
                   </ul>
                 </section>
               ))}
-            </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

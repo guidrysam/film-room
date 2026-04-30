@@ -1,6 +1,7 @@
 import {
   collection,
   collectionGroup,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -49,6 +50,10 @@ export type SavedSessionDoc = {
   manualSyncAt?: number;
   /** When set, loading this template restores room `sourceType: "live"` (authoritative live intent). */
   sourceType?: "live";
+  /** Optional dashboard kind; when absent, use `inferSavedSessionKind`. */
+  sessionType?: "clip" | "sync" | "live_sync";
+  /** Optional stable folder id for future grouping (v1 unused in UI). */
+  folderId?: string | null;
   ownerUserId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
@@ -59,6 +64,57 @@ export type SavedSessionDoc = {
 
 function sessionsCol(ownerUserId: string) {
   return collection(firestore, "users", ownerUserId, "savedSessions");
+}
+
+export type SavedSessionKind = "clip" | "sync" | "live_sync";
+
+/**
+ * Classify a saved template for filters and badges. `sourceType: "live"` wins over optional `sessionType`.
+ * When both are absent, infers from angles + sync fields (no migration required).
+ */
+export function inferSavedSessionKind(data: SavedSessionDoc): SavedSessionKind {
+  if (data.sourceType === "live") return "live_sync";
+  const stored = data.sessionType;
+  if (stored === "clip" || stored === "sync") return stored;
+  /* Ignore orphan `sessionType: "live_sync"` without `sourceType: "live"` — infer from structure. */
+  const multi = (data.angles?.length ?? 0) > 1;
+  const hasSyncMeta =
+    (typeof data.syncAnchorTime === "number" &&
+      Number.isFinite(data.syncAnchorTime) &&
+      data.syncAnchorTime > 0) ||
+    data.manualSyncLocked === true;
+  if (multi || hasSyncMeta) return "sync";
+  return "clip";
+}
+
+export type SavedSessionFilterTab = "all" | "clip" | "sync" | "live_sync";
+
+export function savedSessionMatchesFilter(
+  data: SavedSessionDoc,
+  tab: SavedSessionFilterTab,
+): boolean {
+  if (tab === "all") return true;
+  if (tab === "live_sync") return data.sourceType === "live";
+  if (data.sourceType === "live") return false;
+  const isSync =
+    (data.angles?.length ?? 0) > 1 ||
+    (typeof data.syncAnchorTime === "number" &&
+      Number.isFinite(data.syncAnchorTime) &&
+      data.syncAnchorTime > 0) ||
+    data.manualSyncLocked === true;
+  if (tab === "sync") return isSync;
+  return !isSync;
+}
+
+/**
+ * Deletes a Firestore template at `users/{ownerUserId}/savedSessions/{sessionId}` only.
+ * Does not touch Realtime Database rooms.
+ */
+export async function deleteSavedSession(
+  ownerUserId: string,
+  sessionId: string,
+): Promise<void> {
+  await deleteDoc(doc(sessionsCol(ownerUserId), sessionId));
 }
 
 function generateShareId(): string {
@@ -166,6 +222,20 @@ function parseSavedSessionFields(
   const sourceTypeRaw = v.sourceType;
   const sourceType =
     sourceTypeRaw === "live" ? ("live" as const) : undefined;
+  const sessionTypeRaw = v.sessionType;
+  const sessionType =
+    sessionTypeRaw === "clip" ||
+    sessionTypeRaw === "sync" ||
+    sessionTypeRaw === "live_sync"
+      ? sessionTypeRaw
+      : undefined;
+  const folderIdRaw = v.folderId;
+  const folderId =
+    folderIdRaw === null
+      ? null
+      : typeof folderIdRaw === "string" && folderIdRaw.trim() !== ""
+        ? folderIdRaw.trim()
+        : undefined;
   const playerViewValid =
     !playerViewAngleId ||
     (angles.length > 0 && angles.some((a) => a.id === playerViewAngleId));
@@ -185,6 +255,8 @@ function parseSavedSessionFields(
       : {}),
     ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
     ...(sourceType ? { sourceType } : {}),
+    ...(sessionType ? { sessionType } : {}),
+    ...(folderId !== undefined ? { folderId } : {}),
     ownerUserId:
       typeof v.ownerUserId === "string" ? v.ownerUserId : ownerUserId,
     createdAt: v.createdAt instanceof Timestamp ? v.createdAt : undefined,
@@ -236,6 +308,8 @@ export async function saveSessionTemplate(
     playerViewAngleId?: string;
     manualSyncAt?: number;
     sourceType?: "live";
+    sessionType?: "clip" | "sync" | "live_sync";
+    folderId?: string | null;
   },
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId));
@@ -280,6 +354,12 @@ export async function saveSessionTemplate(
       ? { manualSyncAt: data.manualSyncAt }
       : {}),
     ...(data.sourceType === "live" ? { sourceType: "live" } : {}),
+    ...(data.sessionType === "clip" ||
+    data.sessionType === "sync" ||
+    data.sessionType === "live_sync"
+      ? { sessionType: data.sessionType }
+      : {}),
+    ...(data.folderId !== undefined ? { folderId: data.folderId } : {}),
   });
   return ref.id;
 }
@@ -335,6 +415,8 @@ export async function listSavedSessions(
         ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
         ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
         ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
+        ...(v.sessionType ? { sessionType: v.sessionType } : {}),
+        ...(v.folderId !== undefined ? { folderId: v.folderId } : {}),
         ownerUserId: v.ownerUserId,
         createdAt: v.createdAt ?? null,
         updatedAt: v.updatedAt ?? null,
@@ -377,6 +459,8 @@ export async function getSavedSession(
     ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
     ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
     ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
+    ...(v.sessionType ? { sessionType: v.sessionType } : {}),
+    ...(v.folderId !== undefined ? { folderId: v.folderId } : {}),
     ownerUserId: v.ownerUserId,
     createdAt: v.createdAt ?? null,
     updatedAt: v.updatedAt ?? null,
@@ -546,6 +630,8 @@ export async function getSavedSessionByShareId(
       ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
       ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
       ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
+      ...(v.sessionType ? { sessionType: v.sessionType } : {}),
+      ...(v.folderId !== undefined ? { folderId: v.folderId } : {}),
       ownerUserId: v.ownerUserId,
       createdAt: v.createdAt ?? null,
       updatedAt: v.updatedAt ?? null,
@@ -606,5 +692,11 @@ export async function duplicateSessionToMyLibrary(
       ? { manualSyncAt: source.manualSyncAt }
       : {}),
     ...(source.sourceType === "live" ? { sourceType: "live" as const } : {}),
+    ...(source.sessionType === "clip" ||
+    source.sessionType === "sync" ||
+    source.sessionType === "live_sync"
+      ? { sessionType: source.sessionType }
+      : {}),
+    ...(source.folderId !== undefined ? { folderId: source.folderId } : {}),
   });
 }
