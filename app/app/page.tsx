@@ -217,9 +217,11 @@ export default function DashboardPage() {
     if (!videoId) return;
     const roomId = Math.random().toString(36).substring(2, 8);
     markRoomHost(roomId);
-    router.push(
-      `/room/${roomId}?video=${encodeURIComponent(videoId)}&loadSaved=${encodeURIComponent(savedId)}`,
-    );
+    const qs = new URLSearchParams();
+    qs.set("video", videoId);
+    qs.set("loadSaved", savedId);
+    if (template.sourceType === "live") qs.set("view", "sync");
+    router.push(`/room/${roomId}?${qs.toString()}`);
   };
 
   if (loading) {

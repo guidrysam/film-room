@@ -47,6 +47,8 @@ export type SavedSessionDoc = {
   manualSyncLocked?: boolean;
   playerViewAngleId?: string;
   manualSyncAt?: number;
+  /** When set, loading this template restores room `sourceType: "live"` (authoritative live intent). */
+  sourceType?: "live";
   ownerUserId: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
@@ -161,6 +163,9 @@ function parseSavedSessionFields(
     typeof manualSyncAtRaw === "number" && Number.isFinite(manualSyncAtRaw)
       ? manualSyncAtRaw
       : undefined;
+  const sourceTypeRaw = v.sourceType;
+  const sourceType =
+    sourceTypeRaw === "live" ? ("live" as const) : undefined;
   const playerViewValid =
     !playerViewAngleId ||
     (angles.length > 0 && angles.some((a) => a.id === playerViewAngleId));
@@ -179,6 +184,7 @@ function parseSavedSessionFields(
       ? { playerViewAngleId }
       : {}),
     ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
+    ...(sourceType ? { sourceType } : {}),
     ownerUserId:
       typeof v.ownerUserId === "string" ? v.ownerUserId : ownerUserId,
     createdAt: v.createdAt instanceof Timestamp ? v.createdAt : undefined,
@@ -229,6 +235,7 @@ export async function saveSessionTemplate(
     manualSyncLocked?: boolean;
     playerViewAngleId?: string;
     manualSyncAt?: number;
+    sourceType?: "live";
   },
 ): Promise<string> {
   const ref = doc(sessionsCol(ownerUserId));
@@ -272,6 +279,7 @@ export async function saveSessionTemplate(
     Number.isFinite(data.manualSyncAt)
       ? { manualSyncAt: data.manualSyncAt }
       : {}),
+    ...(data.sourceType === "live" ? { sourceType: "live" } : {}),
   });
   return ref.id;
 }
@@ -326,6 +334,7 @@ export async function listSavedSessions(
         ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
         ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
         ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
+        ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
         ownerUserId: v.ownerUserId,
         createdAt: v.createdAt ?? null,
         updatedAt: v.updatedAt ?? null,
@@ -367,6 +376,7 @@ export async function getSavedSession(
     ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
     ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
     ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
+    ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
     ownerUserId: v.ownerUserId,
     createdAt: v.createdAt ?? null,
     updatedAt: v.updatedAt ?? null,
@@ -535,6 +545,7 @@ export async function getSavedSessionByShareId(
       ...(v.manualSyncLocked ? { manualSyncLocked: true } : {}),
       ...(v.playerViewAngleId ? { playerViewAngleId: v.playerViewAngleId } : {}),
       ...(v.manualSyncAt !== undefined ? { manualSyncAt: v.manualSyncAt } : {}),
+      ...(v.sourceType === "live" ? { sourceType: "live" as const } : {}),
       ownerUserId: v.ownerUserId,
       createdAt: v.createdAt ?? null,
       updatedAt: v.updatedAt ?? null,
@@ -594,5 +605,6 @@ export async function duplicateSessionToMyLibrary(
     ...(typeof source.manualSyncAt === "number"
       ? { manualSyncAt: source.manualSyncAt }
       : {}),
+    ...(source.sourceType === "live" ? { sourceType: "live" as const } : {}),
   });
 }

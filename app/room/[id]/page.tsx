@@ -216,7 +216,7 @@ type RoomState = {
   manualSyncLocked?: boolean;
   /** Epoch ms when manual sync lock was set (optional UX / debugging). */
   manualSyncAt?: number;
-  /** Live stream session (multi-angle YouTube live); Sync View shows LIVE controls. */
+  /** Live stream session intent (Stream Room, API at create, or restored from a saved template). Authoritative for LIVE UI — not inferred from watch URLs after load. */
   sourceType?: "live";
 };
 
@@ -715,6 +715,7 @@ async function inferRoomLiveFromAngles(
 ): Promise<
   { ok: true; isLive: boolean } | { ok: false; reason: string }
 > {
+  /* Saved / Stream Room live sessions: `sourceType` wins over per-angle YouTube `isLive` (ended VOD URLs allowed). */
   if (cur.sourceType === "live") return { ok: true, isLive: true };
   const ids = [...new Set(cur.angles.map((a) => a.videoId))];
   let sawLive = false;
@@ -1392,7 +1393,7 @@ function RoomContent() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   /** First RTDB snapshot received for this `roomRef` (distinguish loading vs missing room). */
   const [roomHydrated, setRoomHydrated] = useState(false);
-  /** Room is a live session (`sourceType` from Stream Room or API detection at create) — not player heuristics. */
+  /** Room is a live session (`sourceType` from Stream Room, API at create, saved template, or RTDB) — not inferred from URLs after load. */
   const isLiveRoom = roomState?.sourceType === "live";
   const activeYouTubeVideoId = useMemo(() => {
     const fromState = roomState?.videoId?.trim();
@@ -2023,6 +2024,9 @@ function RoomContent() {
               ...(typeof template.manualSyncAt === "number"
                 ? { manualSyncAt: template.manualSyncAt }
                 : {}),
+              ...(template.sourceType === "live"
+                ? { sourceType: "live" as const }
+                : {}),
               isPlaying: false,
               currentTime: 0,
               playbackRate: DEFAULT_PLAYBACK_RATE,
@@ -2031,9 +2035,10 @@ function RoomContent() {
               action: "init",
               actionId: 1,
             });
-            router.replace(
-              `/room/${roomId}?video=${encodeURIComponent(activeId)}`,
-            );
+            const loadQs = new URLSearchParams();
+            loadQs.set("video", activeId);
+            if (template.sourceType === "live") loadQs.set("view", "sync");
+            router.replace(`/room/${roomId}?${loadQs.toString()}`);
             return;
           }
         } catch {
@@ -4049,13 +4054,15 @@ function RoomContent() {
         window.alert(existing.reason);
         return;
       }
-      if (cur.sourceType === "live" && !incoming.isLive) {
-        window.alert(MIXED_LIVE_ARCHIVE_MSG);
-        return;
-      }
-      if (existing.isLive !== incoming.isLive) {
-        window.alert(MIXED_LIVE_ARCHIVE_MSG);
-        return;
+      if (cur.sourceType !== "live") {
+        if (existing.isLive && !incoming.isLive) {
+          window.alert(MIXED_LIVE_ARCHIVE_MSG);
+          return;
+        }
+        if (existing.isLive !== incoming.isLive) {
+          window.alert(MIXED_LIVE_ARCHIVE_MSG);
+          return;
+        }
       }
       const nextAngles: VideoAngle[] = [
         ...cur.angles.map((a) => ({ ...a })),
@@ -5550,6 +5557,9 @@ function RoomContent() {
           : {}),
         ...(typeof roomState.manualSyncAt === "number"
           ? { manualSyncAt: roomState.manualSyncAt }
+          : {}),
+        ...(roomState.sourceType === "live"
+          ? { sourceType: "live" as const }
           : {}),
       });
 
