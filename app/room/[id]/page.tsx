@@ -4709,10 +4709,41 @@ function RoomContent() {
     if (!isHost) return;
     if (isManualSyncModeRef.current) return;
     hostLastPlayGestureAtRef.current = Date.now();
-    syncLog("host pressed Play");
     const pr = clearFfIfActive();
     void (async () => {
+      const snap0 = roomStateRef.current;
+      const activeAngleId =
+        snap0?.currentAngleId ?? snap0?.angles[0]?.id ?? "";
       const player = getPlayer();
+      let stKick: number | undefined;
+      try {
+        stKick = await readYoutubePlayerState(player);
+      } catch {
+        stKick = undefined;
+      }
+      syncLog("transport play clicked", {
+        activeAngleId,
+        playerState:
+          stKick === undefined ? undefined : youtubeStateLabel(stKick),
+        hasPlayer: !!player,
+      });
+      if (
+        player &&
+        (stKick === undefined ||
+          stKick === YT_UNSTARTED ||
+          stKick === YT_CUED ||
+          stKick === YT_PAUSED ||
+          stKick === YT_BUFFERING)
+      ) {
+        try {
+          player.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+        syncLog("youtube playVideo called", { activeAngleId });
+      }
+
+      syncLog("host pressed Play");
       const fb = roomStateRef.current?.currentTime ?? 0;
       const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
       const tRaw = await readYoutubeCurrentTime(player, fb);
@@ -4737,15 +4768,24 @@ function RoomContent() {
       if (
         snap &&
         isSyncLayoutMode(roomViewModeRef.current) &&
-        snap.angles.length > 1
+        snap.angles.length > 0
       ) {
         for (const a of snap.angles) {
           const p = syncPlayerRefs.current[a.id];
           if (!p) continue;
           try {
             const st = await readYoutubePlayerState(p);
-            if (st === YT_UNSTARTED) {
-              applySyncStateToAnglePlayer(a.id, "play-after-unstarted");
+            if (
+              st === YT_UNSTARTED ||
+              st === YT_CUED ||
+              st === YT_PAUSED ||
+              st === YT_BUFFERING ||
+              st === undefined
+            ) {
+              applySyncStateToAnglePlayer(
+                a.id,
+                "play-after-cued-or-waiting",
+              );
             }
           } catch {
             /* YouTube API */
@@ -4844,6 +4884,15 @@ function RoomContent() {
       const edge = await readLiveEdgeTime(player, fb);
       const syncAnchorTime = snap?.syncAnchorTime ?? 0;
       const clamped = Math.max(syncAnchorTime, edge - LIVE_EDGE_CLAMP_PAD_S);
+      try {
+        (
+          player as YouTubePlayer & {
+            seekTo?: (s: number, allowSeekAhead: boolean) => void;
+          }
+        ).seekTo?.(clamped, true);
+      } catch {
+        /* YouTube API */
+      }
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -4866,6 +4915,10 @@ function RoomContent() {
           if (!p) continue;
           await livePlayRequestedWithRetry(p, a.id, "transport-live");
         }
+      } else if (snap?.sourceType === "live" && player) {
+        const aid =
+          snap?.currentAngleId ?? snap?.angles[0]?.id ?? "primary";
+        await livePlayRequestedWithRetry(player, aid, "transport-live-clip");
       }
     })();
   };
