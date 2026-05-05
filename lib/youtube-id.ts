@@ -91,6 +91,16 @@ export function isYoutubeWatchVideoUrl(raw: string): boolean {
   }
 }
 
+/**
+ * True for channel `@handle/live`, `…/channel/UC…/live`, or any URL path containing `/live`
+ * (including `youtube.com/live/VIDEO_ID`). Used to avoid treating YouTube Data API lag as
+ * “offline” for persistent live entry points.
+ */
+export function isPersistentYouTubeLiveUrl(url: string): boolean {
+  const u = url.trim();
+  return u.includes("/live") || (u.includes("/@") && u.endsWith("/live"));
+}
+
 export type PersistentLiveUrlTarget =
   | { kind: "video"; videoId: string }
   | { kind: "channel_live"; channelId: string }

@@ -918,6 +918,7 @@ function metaUpcomingBroadcast(
 function youtubePlayerStateLabelForDebug(
   st: number | undefined,
   meta: YoutubeVideoMetaBrief | undefined,
+  opts?: { relaxApiMismatchForLiveSession?: boolean },
 ): string {
   const raw = typeof st === "number" ? youtubeStateLabel(st) : "?";
   if (st === YT_UNSTARTED && metaStrictBroadcastLive(meta)) {
@@ -929,6 +930,14 @@ function youtubePlayerStateLabelForDebug(
     metaUpcomingBroadcast(meta)
   ) {
     return `WAITING / UPCOMING · iframe ${raw}`;
+  }
+  if (
+    opts?.relaxApiMismatchForLiveSession &&
+    st === YT_UNSTARTED &&
+    !metaStrictBroadcastLive(meta) &&
+    !metaUpcomingBroadcast(meta)
+  ) {
+    return `Waiting for live signal from YouTube · iframe ${raw}`;
   }
   return raw;
 }
@@ -1433,12 +1442,15 @@ function SyncAngleDebugStrip({
   videoId,
   syncPlayerRefs,
   ytMeta,
+  relaxApiMismatchForLiveSession,
 }: {
   angleId: string;
   angleName: string;
   videoId: string;
   syncPlayerRefs: React.MutableRefObject<Record<string, YouTubePlayer | null>>;
   ytMeta: YoutubeVideoMetaBrief | undefined;
+  /** Stream Room live: do not imply “not live” when Data API lags behind a persistent /live feed. */
+  relaxApiMismatchForLiveSession?: boolean;
 }) {
   const [line, setLine] = useState("ready: … · state: —");
   useEffect(() => {
@@ -1451,7 +1463,9 @@ function SyncAngleDebugStrip({
       void readYoutubePlayerState(p)
         .then((st) => {
           setLine(
-            `ready: yes · state: ${youtubePlayerStateLabelForDebug(st, ytMeta)}`,
+            `ready: yes · state: ${youtubePlayerStateLabelForDebug(st, ytMeta, {
+              relaxApiMismatchForLiveSession,
+            })}`,
           );
         })
         .catch(() => {
@@ -1459,7 +1473,7 @@ function SyncAngleDebugStrip({
         });
     }, 1000);
     return () => window.clearInterval(id);
-  }, [angleId, videoId, syncPlayerRefs, ytMeta]);
+  }, [angleId, videoId, syncPlayerRefs, ytMeta, relaxApiMismatchForLiveSession]);
   return (
     <div className="pointer-events-none absolute left-1 bottom-1 right-1 z-[40] max-h-[42%] overflow-hidden rounded border border-amber-500/40 bg-black/88 px-1.5 py-1 text-[8px] leading-snug text-amber-100/95">
       <div className="truncate font-semibold text-white">{angleName}</div>
@@ -6703,6 +6717,9 @@ function RoomContent() {
                                 safeDecodeVideoId(angle.videoId)
                               ]
                             }
+                            relaxApiMismatchForLiveSession={
+                              s.sourceType === "live"
+                            }
                           />
                           {roomId && coachViewMode === "single" && isFeatured ? (
                             <TelestratorOverlay
@@ -6855,6 +6872,9 @@ function RoomContent() {
                                 safeDecodeVideoId(a.videoId)
                               ]
                             }
+                            relaxApiMismatchForLiveSession={
+                              s.sourceType === "live"
+                            }
                           />
                           {showPerAngleLiveTiles ? (
                             <button
@@ -6937,6 +6957,9 @@ function RoomContent() {
                       ytDebugMetaByVideoId[
                         safeDecodeVideoId(activeAngle.videoId)
                       ]
+                    }
+                    relaxApiMismatchForLiveSession={
+                      s.sourceType === "live"
                     }
                   />
                 )}

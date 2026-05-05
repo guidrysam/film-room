@@ -10,6 +10,7 @@ import { db } from "@/lib/firebase";
 import { markRoomHost } from "@/lib/room-host";
 import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
+  isPersistentYouTubeLiveUrl,
   isYoutubeWatchVideoUrl,
   parsePersistentLiveUrlTarget,
 } from "@/lib/youtube-id";
@@ -19,6 +20,7 @@ type AngleStatus =
   | "checking"
   | "ready"
   | "live_ready"
+  | "waiting_for_signal"
   | "waiting_offline"
   | "stream_ended"
   | "invalid_url"
@@ -61,6 +63,20 @@ type StreamAngleRow = {
   /** When /live URL resolves but no broadcast id yet. */
   urlResolveNote?: string | null;
 };
+
+function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
+  if (
+    a.status === "invalid_url" ||
+    a.status === "not_embeddable" ||
+    a.status === "stream_ended"
+  ) {
+    return false;
+  }
+  if (Boolean(a.videoId)) return true;
+  if (a.status !== "waiting_for_signal") return false;
+  const t = parsePersistentLiveUrlTarget(a.url.trim());
+  return Boolean(t && (t.kind === "channel_live" || t.kind === "handle_live"));
+}
 
 type SavedSetupV1 = {
   v: 1;
@@ -212,6 +228,8 @@ function pillClasses(status: AngleStatus): string {
       return "border-red-400/35 bg-red-500/15 text-red-100";
     case "checking":
       return "border-blue-400/30 bg-blue-500/15 text-blue-200";
+    case "waiting_for_signal":
+      return "border-sky-400/35 bg-sky-500/15 text-sky-100";
     case "waiting_offline":
       return "border-amber-400/30 bg-amber-500/15 text-amber-200";
     case "stream_ended":
@@ -234,6 +252,8 @@ function pillLabel(status: AngleStatus): string {
       return "Ready";
     case "live_ready":
       return "Live · Ready";
+    case "waiting_for_signal":
+      return "Waiting for live signal";
     case "invalid_url":
       return "Invalid URL";
     case "not_embeddable":
@@ -280,7 +300,9 @@ type MetaApiJson = {
 function computeStreamAngleStatus(
   embed: "ready" | "offline_or_not_started",
   metaJson: MetaApiJson | null,
+  opts?: { persistentLiveUrl?: boolean },
 ): AngleStatus {
+  const persist = opts?.persistentLiveUrl === true;
   const metaOk =
     metaJson &&
     metaJson.ok === true &&
@@ -289,6 +311,11 @@ function computeStreamAngleStatus(
   const m = metaOk ? metaJson.meta! : null;
 
   if (!m) {
+    if (persist) {
+      return embed === "offline_or_not_started"
+        ? "waiting_for_signal"
+        : "live_ready";
+    }
     return embed === "offline_or_not_started" ? "waiting_offline" : "ready";
   }
 
@@ -302,10 +329,10 @@ function computeStreamAngleStatus(
     m.streamPhase === "upcoming" ||
     m.liveBroadcastContent === "upcoming"
   ) {
-    return "waiting_offline";
+    return persist ? "waiting_for_signal" : "waiting_offline";
   }
   if (embed === "offline_or_not_started") {
-    return "waiting_offline";
+    return persist ? "waiting_for_signal" : "waiting_offline";
   }
   return "ready";
 }
@@ -361,7 +388,9 @@ function StreamAngleValidationPipeline({
       channelCustomUrl: m?.channelCustomUrl,
     };
 
-    const finalStatus = computeStreamAngleStatus(emb, meta);
+    const finalStatus = computeStreamAngleStatus(emb, meta, {
+      persistentLiveUrl: isPersistentYouTubeLiveUrl(sourceUrl),
+    });
 
     const pastBroadcastWarning =
       meta.ok === true &&
@@ -807,13 +836,11 @@ export default function StreamRoomPage() {
             applyIfUrl((a) => ({
               ...a,
               videoId: null,
-              status: "waiting_offline",
+              status: "waiting_for_signal",
               debug: null,
               pastBroadcastWarning: false,
               persistentLiveHint: hintUrl,
-              urlResolveNote:
-                data.message ??
-                "No active or upcoming broadcast — keep this URL and start when live.",
+              urlResolveNote: "Waiting for live signal from YouTube…",
             }));
             return;
           }
@@ -849,13 +876,7 @@ export default function StreamRoomPage() {
   }, [angles]);
 
   const launchableAngles = useMemo(
-    () =>
-      angles.filter(
-        (a) =>
-          Boolean(a.videoId) &&
-          a.status !== "invalid_url" &&
-          a.status !== "not_embeddable",
-      ),
+    () => angles.filter(isLaunchableStreamAngle),
     [angles],
   );
 
@@ -863,47 +884,105 @@ export default function StreamRoomPage() {
 
   const startLiveSession = useCallback(async () => {
     if (!startEnabled) return;
-    const valid = launchableAngles;
-    const primary = valid[0]!;
+    const candidates = angles.filter(isLaunchableStreamAngle);
+    if (candidates.length === 0) return;
+
     const roomId = Math.random().toString(36).substring(2, 8);
     markRoomHost(roomId);
     setStarting(true);
 
-    const payload = {
-      roomViewMode: "sync",
-      sourceType: "live",
-      manualSyncLocked: true,
-      syncAnchorTime: 0,
-      playerViewAngleId: primary.id,
-      currentAngleId: primary.id,
-      videoId: primary.videoId,
-      clips: [{ videoId: primary.videoId }],
-      currentClipIndex: 0,
-      chapters: [],
-      isPlaying: false,
-      currentTime: 0,
-      playbackRate: 1,
-      playbackCommand: null,
-      angles: valid.map((a) => ({
-        id: a.id,
-        name: a.name.trim() || "Angle",
-        videoId: a.videoId!,
-        offsetFromGameTime: 0,
-      })),
-      updatedAt: serverTimestamp(),
-      action: "init",
-      actionId: 1,
-    };
-
+    const resolved: Array<{ id: string; name: string; videoId: string }> = [];
     try {
+      for (const a of candidates) {
+        if (a.videoId && /^[a-zA-Z0-9_-]{11}$/.test(a.videoId)) {
+          resolved.push({
+            id: a.id,
+            name: a.name.trim() || "Angle",
+            videoId: a.videoId,
+          });
+          continue;
+        }
+        const target = parsePersistentLiveUrlTarget(a.url.trim());
+        if (!target || target.kind === "video") {
+          throw new Error("Unexpected angle without video id.");
+        }
+        const q =
+          target.kind === "channel_live"
+            ? `channelId=${encodeURIComponent(target.channelId)}`
+            : `handle=${encodeURIComponent(target.handle)}`;
+        let res: Response;
+        try {
+          res = await fetch(`/api/youtube-resolve-live?${q}`);
+        } catch {
+          throw new Error("Could not reach resolve-live API.");
+        }
+        let data: { ok?: boolean; videoId?: string | null; error?: string } =
+          {};
+        try {
+          data = (await res.json()) as typeof data;
+        } catch {
+          data = { ok: false };
+        }
+        if (!res.ok || data.ok === false) {
+          const msg =
+            typeof data.error === "string" && data.error.trim() !== ""
+              ? data.error
+              : "Could not resolve /live URL.";
+          throw new Error(msg);
+        }
+        const vid =
+          typeof data.videoId === "string" ? data.videoId.trim() : "";
+        if (!/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+          throw new Error(
+            "Waiting for live signal from YouTube — no broadcast id yet. Try again shortly.",
+          );
+        }
+        resolved.push({
+          id: a.id,
+          name: a.name.trim() || "Angle",
+          videoId: vid,
+        });
+      }
+
+      const primary = resolved[0]!;
+      const payload = {
+        roomViewMode: "sync",
+        sourceType: "live",
+        manualSyncLocked: true,
+        syncAnchorTime: 0,
+        playerViewAngleId: primary.id,
+        currentAngleId: primary.id,
+        videoId: primary.videoId,
+        clips: [{ videoId: primary.videoId }],
+        currentClipIndex: 0,
+        chapters: [],
+        isPlaying: false,
+        currentTime: 0,
+        playbackRate: 1,
+        playbackCommand: null,
+        angles: resolved.map((row) => ({
+          id: row.id,
+          name: row.name,
+          videoId: row.videoId,
+          offsetFromGameTime: 0,
+        })),
+        updatedAt: serverTimestamp(),
+        action: "init",
+        actionId: 1,
+      };
+
       await set(ref(db, `rooms/${roomId}`), payload);
       router.push(`/room/${roomId}?view=sync`);
     } catch (err) {
       console.error("[Stream Room] create room failed", err);
-      alert("Could not start live session. Check Firebase permissions.");
+      window.alert(
+        err instanceof Error
+          ? err.message
+          : "Could not start live session. Check Firebase permissions.",
+      );
       setStarting(false);
     }
-  }, [launchableAngles, router, startEnabled]);
+  }, [angles, router, startEnabled]);
 
   const saveCameraPreset = useCallback(() => {
     if (!ytCreateResult) return;
@@ -1587,6 +1666,12 @@ export default function StreamRoomPage() {
                   Some angles are waiting, offline, or the last broadcast ended.
                   Persistent /live URLs stay valid — you can still start, then use
                   Live / Go Live in the room when the feed is up.
+                </span>
+              ) : angles.some((a) => a.status === "waiting_for_signal") ? (
+                <span className="text-sky-200/95">
+                  Channel / @handle /live angles may show “waiting for signal” while
+                  YouTube catches up — you can still start; playback in the room is
+                  not blocked by that label.
                 </span>
               ) : (
                 <span>
