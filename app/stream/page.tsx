@@ -98,7 +98,11 @@ function optionalTrimString(v: unknown): string | undefined {
   return t ? t : undefined;
 }
 
-function liveViewUrlFromPreset(cam: YouTubeCameraPreset): string | null {
+/**
+ * Persistent /live URL only — never `watch?v=` (used for angles + Load into Angle).
+ * Priority: stored persistent → channel UC…/live → @handle/live.
+ */
+function persistentLiveViewUrlFromPreset(cam: YouTubeCameraPreset): string | null {
   const p = cam.persistentLiveUrl?.trim();
   if (p) return p;
   const c = cam.channelId?.trim();
@@ -106,9 +110,23 @@ function liveViewUrlFromPreset(cam: YouTubeCameraPreset): string | null {
     return `https://www.youtube.com/channel/${c}/live`;
   const h = cam.channelHandle?.trim();
   if (h) return `https://www.youtube.com/@${h.replace(/^@/, "")}/live`;
-  const lw = cam.lastWatchUrl?.trim();
-  if (lw) return lw;
   return null;
+}
+
+/** If preset lacks `persistentLiveUrl` but channel fields imply one, return preset + flag to persist. */
+function augmentPresetPersistentForStorage(cam: YouTubeCameraPreset): {
+  preset: YouTubeCameraPreset;
+  didAddPersistent: boolean;
+} {
+  if (cam.persistentLiveUrl?.trim()) {
+    return { preset: cam, didAddPersistent: false };
+  }
+  const derived = persistentLiveViewUrlFromPreset(cam);
+  if (!derived) return { preset: cam, didAddPersistent: false };
+  return {
+    preset: { ...cam, persistentLiveUrl: derived },
+    didAddPersistent: true,
+  };
 }
 
 function pickAngleIndexForPresetLoad(rows: StreamAngleRow[]): number {
@@ -142,10 +160,10 @@ function parseCamerasFromStorage(raw: string | null): YouTubeCameraPreset[] {
       const channelHandle = optionalTrimString(o.channelHandle);
       let persistentLiveUrl = optionalTrimString(o.persistentLiveUrl);
       if (!persistentLiveUrl) {
-        if (channelHandle) {
-          persistentLiveUrl = `https://www.youtube.com/@${channelHandle.replace(/^@/, "")}/live`;
-        } else if (channelId && CHANNEL_ID_PRESET_RE.test(channelId)) {
+        if (channelId && CHANNEL_ID_PRESET_RE.test(channelId)) {
           persistentLiveUrl = `https://www.youtube.com/channel/${channelId}/live`;
+        } else if (channelHandle) {
+          persistentLiveUrl = `https://www.youtube.com/@${channelHandle.replace(/^@/, "")}/live`;
         }
       }
       const lastWatchUrl = optionalTrimString(o.lastWatchUrl);
@@ -890,6 +908,16 @@ export default function StreamRoomPage() {
   const saveCameraPreset = useCallback(() => {
     if (!ytCreateResult) return;
     const nameTrim = cameraPresetName.trim() || "Practice Cam";
+    let persistentUrl = ytCreateResult.persistentLiveUrl?.trim();
+    if (!persistentUrl) {
+      const cid = ytCreateResult.channelId?.trim();
+      if (cid && CHANNEL_ID_PRESET_RE.test(cid)) {
+        persistentUrl = `https://www.youtube.com/channel/${cid}/live`;
+      } else if (ytCreateResult.channelHandle?.trim()) {
+        const h = ytCreateResult.channelHandle.trim().replace(/^@/, "");
+        persistentUrl = `https://www.youtube.com/@${h}/live`;
+      }
+    }
     const preset: YouTubeCameraPreset = {
       id: newId("cam"),
       name: nameTrim,
@@ -903,9 +931,7 @@ export default function StreamRoomPage() {
       ...(ytCreateResult.channelHandle?.trim()
         ? { channelHandle: ytCreateResult.channelHandle.trim().replace(/^@/, "") }
         : {}),
-      ...(ytCreateResult.persistentLiveUrl?.trim()
-        ? { persistentLiveUrl: ytCreateResult.persistentLiveUrl.trim() }
-        : {}),
+      ...(persistentUrl ? { persistentLiveUrl: persistentUrl } : {}),
       ...(ytCreateResult.lastWatchUrl?.trim() || ytCreateResult.watchUrl?.trim()
         ? {
             lastWatchUrl: (
@@ -924,14 +950,14 @@ export default function StreamRoomPage() {
     });
   }, [ytCreateResult, cameraPresetName]);
 
-  const fillFirstAngleWithWatchUrl = useCallback((watchUrl: string) => {
+  const fillFirstAngleWithUrl = useCallback((url: string) => {
     setAngles((prev) => {
       if (prev.length === 0) return prev;
       return prev.map((a, i) =>
         i === 0
           ? {
               ...a,
-              url: watchUrl,
+              url,
               videoId: null,
               status: "idle",
               debug: null,
@@ -945,10 +971,21 @@ export default function StreamRoomPage() {
   }, []);
 
   const loadCameraPresetIntoAngle = useCallback((cam: YouTubeCameraPreset) => {
-    const url = liveViewUrlFromPreset(cam);
+    const { preset: augmented, didAddPersistent } =
+      augmentPresetPersistentForStorage(cam);
+    if (didAddPersistent) {
+      setSavedCameras((prev) => {
+        const next = prev.map((c) => (c.id === augmented.id ? augmented : c));
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    }
+    const url = persistentLiveViewUrlFromPreset(augmented);
     if (!url) {
       window.alert(
-        "No live view URL for this preset. Create the camera again to capture a channel /live link, or use Start Session with Camera once to store a watch URL.",
+        "This camera preset does not have a persistent live URL. Recreate the camera preset or use Start Session with Camera to generate one.",
       );
       return;
     }
@@ -959,7 +996,7 @@ export default function StreamRoomPage() {
         i === idx
           ? {
               ...a,
-              name: cam.name.trim() || a.name,
+              name: augmented.name.trim() || a.name,
               url: url,
               videoId: null,
               status: "idle",
@@ -971,7 +1008,7 @@ export default function StreamRoomPage() {
           : a,
       );
     });
-  }, []);
+  }, [setSavedCameras]);
 
   const startSessionWithCamera = useCallback(
     async (cam: YouTubeCameraPreset) => {
@@ -1016,16 +1053,45 @@ export default function StreamRoomPage() {
               : "";
           throw new Error(`${msg}${extra}`);
         }
-        const ok = data as { ok?: boolean; watchUrl?: string };
+        const ok = data as {
+          ok?: boolean;
+          watchUrl?: string;
+          channelId?: string;
+          channelHandle?: string;
+          persistentLiveUrl?: string;
+        };
         if (ok.ok !== true || typeof ok.watchUrl !== "string") {
           throw new Error("Invalid response from create-broadcast-from-stream.");
         }
         const watch = ok.watchUrl.trim();
-        fillFirstAngleWithWatchUrl(watch);
-        setSavedCameras((prev) => {
-          const next = prev.map((c) =>
-            c.id === cam.id ? { ...c, lastWatchUrl: watch } : c,
+        const merged: YouTubeCameraPreset = {
+          ...cam,
+          ...(typeof ok.channelId === "string" &&
+          CHANNEL_ID_PRESET_RE.test(ok.channelId.trim())
+            ? { channelId: ok.channelId.trim() }
+            : {}),
+          ...(typeof ok.channelHandle === "string" && ok.channelHandle.trim() !== ""
+            ? { channelHandle: ok.channelHandle.trim().replace(/^@/, "") }
+            : {}),
+          ...(typeof ok.persistentLiveUrl === "string" &&
+          ok.persistentLiveUrl.trim() !== ""
+            ? { persistentLiveUrl: ok.persistentLiveUrl.trim() }
+            : {}),
+          lastWatchUrl: watch,
+        };
+        const { preset: mergedWithDerived, didAddPersistent } =
+          augmentPresetPersistentForStorage(merged);
+        const storedPreset = didAddPersistent ? mergedWithDerived : merged;
+        const angleUrl = persistentLiveViewUrlFromPreset(storedPreset);
+        if (angleUrl) {
+          fillFirstAngleWithUrl(angleUrl);
+        } else {
+          window.alert(
+            "This camera preset does not have a persistent live URL. The new broadcast was saved as Last archive URL only. Recreate the camera preset or add channel / @handle metadata so a /live URL can be used for angles.",
           );
+        }
+        setSavedCameras((prev) => {
+          const next = prev.map((c) => (c.id === cam.id ? storedPreset : c));
           if (typeof window !== "undefined") {
             window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
           }
@@ -1041,7 +1107,7 @@ export default function StreamRoomPage() {
         setSessionFromCameraLoadingId(null);
       }
     },
-    [sessionFromCameraLoadingId, fillFirstAngleWithWatchUrl],
+    [sessionFromCameraLoadingId, fillFirstAngleWithUrl],
   );
 
   const createYouTubeStream = useCallback(async () => {
@@ -1308,8 +1374,8 @@ export default function StreamRoomPage() {
                   Save camera preset
                 </button>
                 <span className="text-xs text-zinc-500">
-                  Saves stream id, RTMP, channel /live URL when available, and last watch
-                  URL in {CAMERAS_STORAGE_KEY}.
+                  Saves stream id, RTMP, persistent /live URL when available, and last
+                  archive watch URL (reference only) in {CAMERAS_STORAGE_KEY}.
                 </span>
               </div>
             </div>
@@ -1321,7 +1387,9 @@ export default function StreamRoomPage() {
                 Saved cameras
               </h3>
               <ul className="mt-3 space-y-3">
-                {savedCamerasSorted.map((cam) => (
+                {savedCamerasSorted.map((cam) => {
+                  const liveUrlDisplay = persistentLiveViewUrlFromPreset(cam);
+                  return (
                   <li
                     key={cam.id}
                     className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
@@ -1332,9 +1400,18 @@ export default function StreamRoomPage() {
                         <p className="mt-1 text-xs text-zinc-500">
                           RTMP/key already configured on phone
                         </p>
-                        {cam.persistentLiveUrl ? (
-                          <p className="mt-1 break-all text-[11px] text-zinc-400">
-                            Live view link: {cam.persistentLiveUrl}
+                        {liveUrlDisplay ? (
+                          <p className="mt-1 break-all text-[11px] text-emerald-200/90">
+                            Live view (/live): {liveUrlDisplay}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-amber-200/85">
+                            No /live URL yet — add channel metadata or recreate the preset.
+                          </p>
+                        )}
+                        {cam.lastWatchUrl ? (
+                          <p className="mt-1 break-all text-[11px] text-zinc-500">
+                            Last archive URL: {cam.lastWatchUrl}
                           </p>
                         ) : null}
                       </div>
@@ -1375,7 +1452,8 @@ export default function StreamRoomPage() {
                       </div>
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           ) : null}

@@ -391,10 +391,10 @@ export async function POST(request: Request) {
   }
 
   let persistentLiveUrl: string | undefined;
-  if (channelHandle) {
-    persistentLiveUrl = `https://www.youtube.com/@${channelHandle}/live`;
-  } else if (channelId) {
+  if (channelId) {
     persistentLiveUrl = `https://www.youtube.com/channel/${channelId}/live`;
+  } else if (channelHandle) {
+    persistentLiveUrl = `https://www.youtube.com/@${channelHandle}/live`;
   }
 
   return NextResponse.json({
