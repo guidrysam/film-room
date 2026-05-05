@@ -676,10 +676,19 @@ const MIXED_LIVE_ARCHIVE_MSG =
 const LIVE_VIA_STREAM_ROOM_MSG =
   "Live streams must be started from Stream Room.";
 
-async function fetchYoutubeIsLive(
+/** Subset of `/api/youtube-video-meta` used for live vs iframe-state reconciliation. */
+type YoutubeVideoMetaBrief = {
+  isLive?: boolean;
+  liveBroadcastContent?: string;
+  streamPhase?: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
+};
+
+async function fetchYoutubeVideoMeta(
   videoId: string,
 ): Promise<
-  { ok: true; isLive: boolean } | { ok: false; reason: string }
+  { ok: true; meta: YoutubeVideoMetaBrief } | { ok: false; reason: string }
 > {
   try {
     const res = await fetch(
@@ -687,7 +696,7 @@ async function fetchYoutubeIsLive(
     );
     let data: {
       ok?: boolean;
-      meta?: { isLive?: boolean };
+      meta?: YoutubeVideoMetaBrief;
       error?: string;
     } = {};
     try {
@@ -695,7 +704,12 @@ async function fetchYoutubeIsLive(
     } catch {
       return { ok: false, reason: "Could not read YouTube metadata." };
     }
-    if (!res.ok || data.ok !== true || !data.meta) {
+    if (
+      !res.ok ||
+      data.ok !== true ||
+      !data.meta ||
+      typeof data.meta !== "object"
+    ) {
       const err =
         typeof data.error === "string" && data.error.trim() !== ""
           ? data.error
@@ -704,10 +718,20 @@ async function fetchYoutubeIsLive(
             : "YouTube metadata unavailable.";
       return { ok: false, reason: err };
     }
-    return { ok: true, isLive: Boolean(data.meta.isLive) };
+    return { ok: true, meta: data.meta };
   } catch {
     return { ok: false, reason: "Network error fetching YouTube metadata." };
   }
+}
+
+async function fetchYoutubeIsLive(
+  videoId: string,
+): Promise<
+  { ok: true; isLive: boolean } | { ok: false; reason: string }
+> {
+  const r = await fetchYoutubeVideoMeta(videoId);
+  if (!r.ok) return r;
+  return { ok: true, isLive: Boolean(r.meta.isLive) };
 }
 
 async function inferRoomLiveFromAngles(
@@ -867,6 +891,56 @@ function youtubeStateLabel(data: number): string {
     default:
       return String(data);
   }
+}
+
+/** True live for UI: Data API says broadcast is live, not merely "live context" (e.g. upcoming). */
+function metaStrictBroadcastLive(
+  meta: YoutubeVideoMetaBrief | undefined,
+): boolean {
+  if (!meta) return false;
+  return (
+    meta.streamPhase === "active" ||
+    meta.liveBroadcastContent === "live"
+  );
+}
+
+function metaUpcomingBroadcast(
+  meta: YoutubeVideoMetaBrief | undefined,
+): boolean {
+  if (!meta) return false;
+  return (
+    meta.streamPhase === "upcoming" ||
+    meta.liveBroadcastContent === "upcoming"
+  );
+}
+
+function youtubePlayerStateLabelForDebug(
+  st: number | undefined,
+  meta: YoutubeVideoMetaBrief | undefined,
+): string {
+  const raw = typeof st === "number" ? youtubeStateLabel(st) : "?";
+  if (st === YT_UNSTARTED && metaStrictBroadcastLive(meta)) {
+    return `LIVE (Data API) · iframe ${raw}`;
+  }
+  if (
+    st === YT_UNSTARTED &&
+    !metaStrictBroadcastLive(meta) &&
+    metaUpcomingBroadcast(meta)
+  ) {
+    return `WAITING / UPCOMING · iframe ${raw}`;
+  }
+  return raw;
+}
+
+function formatYtApiDebugLine(meta: YoutubeVideoMetaBrief | undefined): string {
+  if (!meta) return "api: (no meta yet)";
+  const lbc = meta.liveBroadcastContent ?? "—";
+  const ph = meta.streamPhase ?? "—";
+  const ast = meta.actualStartTime ?? "—";
+  const aet = meta.actualEndTime ?? "—";
+  const broadIsLive =
+    meta.isLive === undefined ? "—" : meta.isLive ? "true" : "false";
+  return `api lbc=${lbc} phase=${ph} start=${ast} end=${aet} broadIsLive=${broadIsLive}`;
 }
 
 // (Archive hard-lock) No background playback heartbeats.
@@ -1268,17 +1342,19 @@ async function applyViewerImmediatePlaybackCommand(
   });
 }
 
-/** Temporary Sync View debug: name, video id, ready + YT state (poll). */
+/** Temporary Sync View debug: name, video id, ready + YT iframe state (poll) + Data API meta. */
 function SyncAngleDebugStrip({
   angleId,
   angleName,
   videoId,
   syncPlayerRefs,
+  ytMeta,
 }: {
   angleId: string;
   angleName: string;
   videoId: string;
   syncPlayerRefs: React.MutableRefObject<Record<string, YouTubePlayer | null>>;
+  ytMeta: YoutubeVideoMetaBrief | undefined;
 }) {
   const [line, setLine] = useState("ready: … · state: —");
   useEffect(() => {
@@ -1291,9 +1367,7 @@ function SyncAngleDebugStrip({
       void readYoutubePlayerState(p)
         .then((st) => {
           setLine(
-            `ready: yes · state: ${
-              typeof st === "number" ? youtubeStateLabel(st) : "?"
-            }`,
+            `ready: yes · state: ${youtubePlayerStateLabelForDebug(st, ytMeta)}`,
           );
         })
         .catch(() => {
@@ -1301,12 +1375,13 @@ function SyncAngleDebugStrip({
         });
     }, 1000);
     return () => window.clearInterval(id);
-  }, [angleId, videoId, syncPlayerRefs]);
+  }, [angleId, videoId, syncPlayerRefs, ytMeta]);
   return (
     <div className="pointer-events-none absolute left-1 bottom-1 right-1 z-[40] max-h-[42%] overflow-hidden rounded border border-amber-500/40 bg-black/88 px-1.5 py-1 text-[8px] leading-snug text-amber-100/95">
       <div className="truncate font-semibold text-white">{angleName}</div>
       <div className="truncate font-mono text-zinc-300">{videoId || "—"}</div>
       <div className="text-zinc-200">{line}</div>
+      <div className="truncate text-zinc-400">{formatYtApiDebugLine(ytMeta)}</div>
     </div>
   );
 }
@@ -1406,6 +1481,43 @@ function RoomContent() {
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
   /** Sync View: internal YouTube API player per angle.id (host + viewer). */
   const syncPlayerRefs = useRef<Record<string, YouTubePlayer | null>>({});
+  /** Data API fields for reconciling iframe UNSTARTED vs true live (key = 11-char video id). */
+  const [ytDebugMetaByVideoId, setYtDebugMetaByVideoId] = useState<
+    Record<string, YoutubeVideoMetaBrief>
+  >({});
+  const angleVideoMetaSig = useMemo(() => {
+    const ang = roomState?.angles;
+    if (!ang?.length) return "";
+    return ang
+      .map((a) => `${a.id}:${safeDecodeVideoId(a.videoId)}`)
+      .sort()
+      .join("|");
+  }, [roomState?.angles]);
+
+  useEffect(() => {
+    if (!angleVideoMetaSig) return;
+    let cancelled = false;
+    const vids = new Set<string>();
+    for (const seg of angleVideoMetaSig.split("|")) {
+      const i = seg.lastIndexOf(":");
+      if (i < 0) continue;
+      const vid = seg.slice(i + 1).trim();
+      if (/^[a-zA-Z0-9_-]{11}$/.test(vid)) vids.add(vid);
+    }
+    void (async () => {
+      await Promise.all(
+        [...vids].map(async (vid) => {
+          const r = await fetchYoutubeVideoMeta(vid);
+          if (cancelled || !r.ok) return;
+          setYtDebugMetaByVideoId((prev) => ({ ...prev, [vid]: r.meta }));
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [angleVideoMetaSig]);
+
   const lastAppliedKey = useRef<string>("");
   /** Monotonic generation for viewer/host apply — newer room snapshots invalidate in-flight async work. */
   const applyRoomGenRef = useRef(0);
@@ -6338,6 +6450,11 @@ function RoomContent() {
                             angleName={angle.name}
                             videoId={safeDecodeVideoId(angle.videoId)}
                             syncPlayerRefs={syncPlayerRefs}
+                            ytMeta={
+                              ytDebugMetaByVideoId[
+                                safeDecodeVideoId(angle.videoId)
+                              ]
+                            }
                           />
                           {roomId && coachViewMode === "single" && isFeatured ? (
                             <TelestratorOverlay
@@ -6485,6 +6602,11 @@ function RoomContent() {
                             angleName={a.name}
                             videoId={safeDecodeVideoId(a.videoId)}
                             syncPlayerRefs={syncPlayerRefs}
+                            ytMeta={
+                              ytDebugMetaByVideoId[
+                                safeDecodeVideoId(a.videoId)
+                              ]
+                            }
                           />
                           {showPerAngleLiveTiles ? (
                             <button
@@ -6563,6 +6685,11 @@ function RoomContent() {
                     angleName={activeAngle.name}
                     videoId={safeDecodeVideoId(activeAngle.videoId)}
                     syncPlayerRefs={syncPlayerRefs}
+                    ytMeta={
+                      ytDebugMetaByVideoId[
+                        safeDecodeVideoId(activeAngle.videoId)
+                      ]
+                    }
                   />
                 )}
               </div>

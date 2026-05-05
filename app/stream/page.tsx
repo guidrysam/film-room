@@ -30,9 +30,12 @@ type StreamAngleDebug = {
   embedResult: "ready" | "offline_or_not_started" | "error";
   metaResponse: unknown;
   computed: {
-    isLive?: boolean;
+    /** API `isLive` (includes upcoming / chat / viewers); not used for strict LIVE UI. */
+    broadIsLive?: boolean;
     liveBroadcastContent?: string;
     streamPhase?: string;
+    actualStartTime?: string;
+    actualEndTime?: string;
     uploadStatus?: string;
     privacyStatus?: string;
     publishedAt?: string;
@@ -244,6 +247,8 @@ type MetaApiJson = {
     isLive?: boolean;
     liveBroadcastContent?: string;
     streamPhase?: string;
+    actualStartTime?: string;
+    actualEndTime?: string;
     uploadStatus?: string;
     privacyStatus?: string;
     publishedAt?: string;
@@ -269,17 +274,21 @@ function computeStreamAngleStatus(
     return embed === "offline_or_not_started" ? "waiting_offline" : "ready";
   }
 
-  const phase = m.streamPhase;
-  if (phase === "active") {
-    return "live_ready";
-  }
-  if (phase === "ended") {
+  if (m.streamPhase === "ended") {
     return "stream_ended";
   }
-  if (phase === "upcoming" || embed === "offline_or_not_started") {
+  if (m.streamPhase === "active" || m.liveBroadcastContent === "live") {
+    return "live_ready";
+  }
+  if (
+    m.streamPhase === "upcoming" ||
+    m.liveBroadcastContent === "upcoming"
+  ) {
     return "waiting_offline";
   }
-  /* vod / none: embed offline already mapped above */
+  if (embed === "offline_or_not_started") {
+    return "waiting_offline";
+  }
   return "ready";
 }
 
@@ -321,9 +330,11 @@ function StreamAngleValidationPipeline({
 
     const m = meta.ok === true ? meta.meta : undefined;
     const computed = {
-      isLive: m?.isLive,
+      broadIsLive: m?.isLive,
       liveBroadcastContent: m?.liveBroadcastContent,
       streamPhase: m?.streamPhase,
+      actualStartTime: m?.actualStartTime,
+      actualEndTime: m?.actualEndTime,
       uploadStatus: m?.uploadStatus,
       privacyStatus: m?.privacyStatus,
       publishedAt: m?.publishedAt,
@@ -368,8 +379,9 @@ function StreamAngleValidationPipeline({
       videoId,
       embed: emb,
       meta: metaResponse,
-      isLive: computed.isLive,
+      broadIsLive: computed.broadIsLive,
       liveBroadcastContent: computed.liveBroadcastContent,
+      streamPhase: computed.streamPhase,
       uploadStatus: computed.uploadStatus,
       privacyStatus: computed.privacyStatus,
       publishedAt: computed.publishedAt,
@@ -1464,10 +1476,12 @@ export default function StreamRoomPage() {
                             videoId: a.debug.videoId,
                             embedResult: a.debug.embedResult,
                             metaResponse: a.debug.metaResponse,
-                            isLive: a.debug.computed.isLive,
                             liveBroadcastContent:
                               a.debug.computed.liveBroadcastContent,
                             streamPhase: a.debug.computed.streamPhase,
+                            actualStartTime: a.debug.computed.actualStartTime,
+                            actualEndTime: a.debug.computed.actualEndTime,
+                            broadIsLive: a.debug.computed.broadIsLive,
                             uploadStatus: a.debug.computed.uploadStatus,
                             privacyStatus: a.debug.computed.privacyStatus,
                             publishedAt: a.debug.computed.publishedAt,

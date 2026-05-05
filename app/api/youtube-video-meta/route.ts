@@ -204,29 +204,33 @@ export async function GET(request: Request) {
     concurrentViewers > 0 &&
     !hasEnded;
 
-  const looksLikeActiveBroadcast =
-    liveBroadcastContent === "live" ||
-    inProgressWindow ||
-    hasLiveChatWhileNotEnded ||
-    hasPositiveViewersWhileNotEnded;
-
+  /**
+   * Phase is driven first by `snippet.liveBroadcastContent` and `actualEndTime` so an
+   * in-progress broadcast is "active" even when `actualStartTime` is missing/delayed.
+   */
   let streamPhase: YouTubeStreamPhase;
   if (hasEnded) {
     streamPhase = "ended";
-  } else if (looksLikeActiveBroadcast) {
+  } else if (liveBroadcastContent === "live") {
     streamPhase = "active";
-  } else if (liveBroadcastContent === "upcoming" || (hasScheduledStart && !hasActualStart)) {
+  } else if (liveBroadcastContent === "upcoming") {
+    streamPhase = "upcoming";
+  } else if (hasScheduledStart && !hasActualStart && !hasEnded) {
+    /* Scheduled webcast not yet marked `upcoming` on snippet */
     streamPhase = "upcoming";
   } else {
     streamPhase = "vod";
   }
 
-  const isLive =
-    liveBroadcastContent === "live" ||
+  const broaderLiveContext =
     liveBroadcastContent === "upcoming" ||
     inProgressWindow ||
     hasLiveChatWhileNotEnded ||
     hasPositiveViewersWhileNotEnded;
+
+  const isLive =
+    !hasEnded &&
+    (liveBroadcastContent === "live" || broaderLiveContext);
 
   const snippetChannelIdRaw = item.snippet?.channelId;
   const snippetChannelId =
