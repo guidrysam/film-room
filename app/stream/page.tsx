@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ref, serverTimestamp, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { markRoomHost } from "@/lib/room-host";
+import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
   isYoutubeWatchVideoUrl,
   parsePersistentLiveUrlTarget,
@@ -415,6 +416,16 @@ export default function StreamRoomPage() {
   const router = useRouter();
   const [angles, setAngles] = useState<StreamAngleRow[]>(() => defaultRows());
   const [starting, setStarting] = useState(false);
+  const [creatingYt, setCreatingYt] = useState(false);
+  const [ytCreateResult, setYtCreateResult] = useState<{
+    watchUrl: string;
+    embedUrl: string;
+    ingestionAddress: string;
+    streamName: string;
+    broadcastId: string;
+    streamId: string;
+  } | null>(null);
+  const [ytCreateError, setYtCreateError] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState(false);
   const [loadableSetup, setLoadableSetup] = useState(false);
 
@@ -722,6 +733,82 @@ export default function StreamRoomPage() {
     }
   }, [launchableAngles, router, startEnabled]);
 
+  const createYouTubeStream = useCallback(async () => {
+    if (creatingYt) return;
+    setCreatingYt(true);
+    setYtCreateResult(null);
+    setYtCreateError(null);
+    try {
+      const { accessToken } = await getYouTubeOAuthAccessToken();
+      const res = await fetch("/api/youtube/create-live-stream", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Practice Stream",
+          description: "Created by Film Room",
+          privacyStatus: "unlisted",
+        }),
+      });
+      let data: unknown = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        const e = data as { error?: unknown; reason?: unknown; status?: unknown };
+        const msg =
+          typeof e?.error === "string" && e.error.trim() !== ""
+            ? e.error.trim()
+            : `YouTube create-live-stream failed (HTTP ${res.status}).`;
+        const extra =
+          typeof e?.reason === "string" && e.reason.trim() !== ""
+            ? ` (${e.reason.trim()})`
+            : "";
+        throw new Error(`${msg}${extra}`);
+      }
+      const ok = data as {
+        ok?: boolean;
+        watchUrl?: string;
+        embedUrl?: string;
+        ingestionAddress?: string;
+        streamName?: string;
+        broadcastId?: string;
+        streamId?: string;
+      };
+      if (ok.ok !== true) {
+        throw new Error("YouTube create-live-stream returned ok=false.");
+      }
+      if (
+        typeof ok.watchUrl !== "string" ||
+        typeof ok.embedUrl !== "string" ||
+        typeof ok.broadcastId !== "string" ||
+        typeof ok.streamId !== "string"
+      ) {
+        throw new Error("YouTube create-live-stream response missing fields.");
+      }
+      setYtCreateResult({
+        watchUrl: ok.watchUrl,
+        embedUrl: ok.embedUrl,
+        ingestionAddress: typeof ok.ingestionAddress === "string" ? ok.ingestionAddress : "",
+        streamName: typeof ok.streamName === "string" ? ok.streamName : "",
+        broadcastId: ok.broadcastId,
+        streamId: ok.streamId,
+      });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "Could not create YouTube live stream.";
+      setYtCreateError(msg);
+    } finally {
+      setCreatingYt(false);
+    }
+  }, [creatingYt]);
+
   return (
     <div className="min-h-screen px-4 py-14 text-white">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-8">
@@ -765,6 +852,75 @@ export default function StreamRoomPage() {
               ) : null}
             </div>
           </div>
+        </div>
+
+        <div className={panelClass}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-white">YouTube Live (automation)</h2>
+              <p className="text-xs text-zinc-400">
+                Create a YouTube Live broadcast + RTMP ingest. This does not start a Film Room session yet.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void createYouTubeStream()}
+                className={ghostBtn}
+                disabled={creatingYt}
+              >
+                {creatingYt ? "Creating…" : "Create YouTube Stream"}
+              </button>
+            </div>
+          </div>
+          {ytCreateError ? (
+            <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              {ytCreateError}
+            </div>
+          ) : null}
+          {ytCreateResult ? (
+            <div className="mt-4 grid gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm">
+              <div className="grid gap-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                  Watch URL
+                </div>
+                <a
+                  href={ytCreateResult.watchUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="break-all text-blue-200 hover:text-blue-100"
+                >
+                  {ytCreateResult.watchUrl}
+                </a>
+              </div>
+              <div className="grid gap-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                  Embed URL
+                </div>
+                <div className="break-all text-zinc-200">{ytCreateResult.embedUrl}</div>
+              </div>
+              <div className="grid gap-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                  RTMP server URL
+                </div>
+                <div className="break-all text-zinc-200">
+                  {ytCreateResult.ingestionAddress || "—"}
+                </div>
+              </div>
+              <div className="grid gap-1">
+                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                  Stream key
+                </div>
+                <div className="break-all font-mono text-zinc-200">
+                  {ytCreateResult.streamName || "—"}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 text-xs text-zinc-400 sm:grid-cols-2">
+                <div className="break-all">broadcastId: {ytCreateResult.broadcastId}</div>
+                <div className="break-all">streamId: {ytCreateResult.streamId}</div>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className={panelClass}>
