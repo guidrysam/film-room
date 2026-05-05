@@ -118,6 +118,26 @@ async function ytPostJson<T>(args: {
   return { ok: true, data: data as T };
 }
 
+const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
+
+async function ytGetJson<T>(args: {
+  url: string;
+  token: string;
+}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: unknown }> {
+  const res = await fetch(args.url, {
+    headers: { Authorization: `Bearer ${args.token}` },
+    cache: "no-store",
+  });
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) return { ok: false, status: res.status, error: data };
+  return { ok: true, data: data as T };
+}
+
 export async function POST(request: Request) {
   const token = bearerTokenFromRequest(request);
   if (!token) {
@@ -179,8 +199,12 @@ export async function POST(request: Request) {
     },
   };
 
-  type LiveBroadcastInsertResponse = { id?: string };
+  type LiveBroadcastInsertResponse = {
+    id?: string;
+    snippet?: { channelId?: string };
+  };
   let broadcastId: string;
+  let insertSnippetChannelId: string | undefined;
   try {
     const b = await ytPostJson<LiveBroadcastInsertResponse>({
       url: broadcastUrl,
@@ -202,6 +226,10 @@ export async function POST(request: Request) {
       );
     }
     broadcastId = id.trim();
+    const chRaw = b.data?.snippet?.channelId;
+    if (typeof chRaw === "string" && CHANNEL_ID_RE.test(chRaw.trim())) {
+      insertSnippetChannelId = chRaw.trim();
+    }
   } catch (err) {
     return NextResponse.json(
       {
@@ -326,6 +354,49 @@ export async function POST(request: Request) {
   const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
 
+  let channelId = insertSnippetChannelId;
+  if (!channelId) {
+    const list = await ytGetJson<{
+      items?: Array<{ snippet?: { channelId?: string } }>;
+    }>({
+      url:
+        "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
+        `?part=snippet&id=${encodeURIComponent(broadcastId)}`,
+      token,
+    });
+    if (list.ok) {
+      const raw = list.data?.items?.[0]?.snippet?.channelId;
+      if (typeof raw === "string" && CHANNEL_ID_RE.test(raw.trim())) {
+        channelId = raw.trim();
+      }
+    }
+  }
+
+  let channelHandle: string | undefined;
+  if (channelId) {
+    const ch = await ytGetJson<{
+      items?: Array<{ snippet?: { customUrl?: string } }>;
+    }>({
+      url:
+        "https://www.googleapis.com/youtube/v3/channels" +
+        `?part=snippet&id=${encodeURIComponent(channelId)}`,
+      token,
+    });
+    if (ch.ok) {
+      const cu = ch.data?.items?.[0]?.snippet?.customUrl;
+      if (typeof cu === "string" && cu.trim() !== "") {
+        channelHandle = cu.trim().replace(/^@/, "");
+      }
+    }
+  }
+
+  let persistentLiveUrl: string | undefined;
+  if (channelHandle) {
+    persistentLiveUrl = `https://www.youtube.com/@${channelHandle}/live`;
+  } else if (channelId) {
+    persistentLiveUrl = `https://www.youtube.com/channel/${channelId}/live`;
+  }
+
   return NextResponse.json({
     ok: true,
     broadcastId,
@@ -335,6 +406,10 @@ export async function POST(request: Request) {
     embedUrl,
     ingestionAddress,
     streamName,
+    ...(channelId ? { channelId } : {}),
+    ...(channelHandle ? { channelHandle } : {}),
+    ...(persistentLiveUrl ? { persistentLiveUrl } : {}),
+    lastWatchUrl: watchUrl,
   });
 }
 
