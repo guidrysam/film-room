@@ -158,6 +158,7 @@ const YOUTUBE_PLAYER_OPTS_BASE = {
     rel: 0,
     modestbranding: 1,
     playsinline: 1,
+    enablejsapi: 1,
   },
 } as const;
 
@@ -961,7 +962,70 @@ async function readYoutubePlayerState(
   }
 }
 
-/** After seek on live, kick playback; retry once if still UNSTARTED/CUED. */
+type ForceYouTubePlayOpts = {
+  /** When false, skip delayed `unMute` (stacked PiP / secondaries stay muted until layout unmutes). */
+  delayedUnmute?: boolean;
+};
+
+/**
+ * Mute + staggered `playVideo` + delayed optional `unMute` — improves autoplay policy on live/sync.
+ */
+function forceYouTubePlay(
+  player: YouTubePlayer | null | undefined,
+  reason: string,
+  activeAngleId?: string,
+  opts?: ForceYouTubePlayOpts,
+): void {
+  if (!player) return;
+  const delayedUnmute = opts?.delayedUnmute !== false;
+  try {
+    try {
+      player.mute?.();
+    } catch {
+      /* YouTube API */
+    }
+    player.playVideo?.();
+    window.setTimeout(() => {
+      try {
+        player.playVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+    }, 250);
+    window.setTimeout(() => {
+      try {
+        player.playVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+    }, 750);
+    window.setTimeout(() => {
+      try {
+        player.playVideo?.();
+      } catch {
+        /* YouTube API */
+      }
+    }, 1500);
+    if (delayedUnmute) {
+      window.setTimeout(() => {
+        try {
+          player.unMute?.();
+        } catch {
+          /* YouTube API */
+        }
+      }, 1200);
+    }
+    syncLog("force youtube play requested", { reason, activeAngleId });
+  } catch (error) {
+    syncLog("force youtube play failed", {
+      reason,
+      activeAngleId,
+      error: String(error),
+    });
+  }
+}
+
+/** After seek on live, kick playback with muted autoplay pattern (stack unmutes top angle). */
 async function livePlayRequestedWithRetry(
   player: YouTubePlayer,
   angleId: string,
@@ -979,32 +1043,13 @@ async function livePlayRequestedWithRetry(
     stateBefore:
       stBefore === undefined ? undefined : youtubeStateLabel(stBefore),
   });
-  try {
-    player.playVideo?.();
-  } catch {
-    /* YouTube API */
-  }
-
-  await new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 250);
+  forceYouTubePlay(player, `livePlayRequestedWithRetry:${context}`, angleId, {
+    delayedUnmute: false,
   });
 
-  let stMid: number | undefined;
-  try {
-    stMid = await readYoutubePlayerState(player);
-  } catch {
-    stMid = undefined;
-  }
-
-  if (stMid !== YT_UNSTARTED && stMid !== YT_CUED) {
-    return;
-  }
-
-  try {
-    player.playVideo?.();
-  } catch {
-    /* YouTube API */
-  }
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 400);
+  });
 
   let stAfter: number | undefined;
   try {
@@ -1017,7 +1062,7 @@ async function livePlayRequestedWithRetry(
     angleId,
     context,
     stateBefore:
-      stMid === undefined ? undefined : youtubeStateLabel(stMid),
+      stBefore === undefined ? undefined : youtubeStateLabel(stBefore),
     stateAfter:
       stAfter === undefined ? undefined : youtubeStateLabel(stAfter),
   });
@@ -1030,15 +1075,31 @@ async function livePlayRequestedWithRetry(
 async function applyPlaybackIfNeeded(
   player: YouTubePlayer,
   shouldPlay: boolean,
+  opts?: { liveHostKick?: boolean },
 ): Promise<void> {
   const st = await readYoutubePlayerState(player);
   if (st === undefined) {
-    if (shouldPlay) player.playVideo();
-    else player.pauseVideo();
+    if (shouldPlay) {
+      if (opts?.liveHostKick) {
+        forceYouTubePlay(player, "applyPlaybackIfNeeded:live-host", undefined, {
+          delayedUnmute: true,
+        });
+      } else {
+        player.playVideo();
+      }
+    } else {
+      player.pauseVideo();
+    }
     return;
   }
   if (shouldPlay) {
     if (st === YT_PLAYING || st === YT_BUFFERING) return;
+    if (opts?.liveHostKick) {
+      forceYouTubePlay(player, "applyPlaybackIfNeeded:live-host", undefined, {
+        delayedUnmute: true,
+      });
+      return;
+    }
     player.playVideo();
     return;
   }
@@ -1055,6 +1116,7 @@ async function ensureViewerPlaybackIntent(
   player: YouTubePlayer,
   shouldPlay: boolean,
   unlockedRef: { current: boolean },
+  opts?: { liveViewerKick?: boolean },
 ): Promise<void> {
   if (!shouldPlay) {
     await applyPlaybackIfNeeded(player, false);
@@ -1065,10 +1127,22 @@ async function ensureViewerPlaybackIntent(
   }
   const st = await readYoutubePlayerState(player);
   if (st === undefined) {
-    player.playVideo();
+    if (opts?.liveViewerKick) {
+      forceYouTubePlay(player, "ensureViewerPlaybackIntent:live", undefined, {
+        delayedUnmute: false,
+      });
+    } else {
+      player.playVideo();
+    }
     return;
   }
   if (st === YT_PLAYING) {
+    return;
+  }
+  if (opts?.liveViewerKick) {
+    forceYouTubePlay(player, "ensureViewerPlaybackIntent:live", undefined, {
+      delayedUnmute: false,
+    });
     return;
   }
   player.playVideo();
@@ -1228,6 +1302,7 @@ async function viewerApplyInitialJoin(
     player,
     state.isPlaying,
     viewerPlaybackUnlockedRef,
+    state.sourceType === "live" ? { liveViewerKick: true } : undefined,
   );
 }
 
@@ -1262,8 +1337,12 @@ async function applyViewerImmediatePlaybackCommand(
   await safeSetPlaybackRate(player, cmd.playbackRate);
   lastViewerSyncRateRef.current = cmd.playbackRate;
 
+  const viewerLiveKick = roomSnapshot.sourceType === "live";
+
   if (cmd.type === "play") {
-    await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+    await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef, {
+      liveViewerKick: viewerLiveKick,
+    });
     retryTargetCommandIdRef.current = cmd.commandId;
     playRetryTimerRef.current = window.setTimeout(() => {
       playRetryTimerRef.current = null;
@@ -1276,7 +1355,9 @@ async function applyViewerImmediatePlaybackCommand(
         }
         syncLog("viewer play retry", { commandId: cmd.commandId, stBefore: st });
         try {
-          await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+          await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef, {
+            liveViewerKick: viewerLiveKick,
+          });
         } catch {
           /* ignore */
         }
@@ -1319,7 +1400,9 @@ async function applyViewerImmediatePlaybackCommand(
   } else if (cmd.type === "resync") {
     /* Authoritative snap: no play/pause retry timers (unlike play/pause). */
     if (roomSnapshot.isPlaying) {
-      await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef);
+      await ensureViewerPlaybackIntent(player, true, viewerPlaybackUnlockedRef, {
+        liveViewerKick: viewerLiveKick,
+      });
     } else {
       await applyPlaybackIfNeeded(player, false);
     }
@@ -1328,6 +1411,7 @@ async function applyViewerImmediatePlaybackCommand(
       player,
       roomSnapshot.isPlaying,
       viewerPlaybackUnlockedRef,
+      viewerLiveKick ? { liveViewerKick: true } : undefined,
     );
   }
 
@@ -1429,28 +1513,6 @@ function RoomContent() {
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
 
-  /**
-   * Host: minimal native chrome + no iframe fullscreen (app controls drawing / layout).
-   * Viewer: keep defaults so playback unlock and scrubbing stay familiar.
-   */
-  const youtubePlayerOpts = useMemo(
-    () => ({
-      width: YOUTUBE_PLAYER_OPTS_BASE.width,
-      height: YOUTUBE_PLAYER_OPTS_BASE.height,
-      playerVars: {
-        ...YOUTUBE_PLAYER_OPTS_BASE.playerVars,
-        fs: isHost ? 0 : 1,
-        ...(isHost
-          ? {
-              controls: 0,
-              disablekb: 1,
-            }
-          : {}),
-      },
-    }),
-    [isHost],
-  );
-
   const handleReturnHome = useCallback(() => {
     if (
       isHost &&
@@ -1470,6 +1532,36 @@ function RoomContent() {
   const [roomHydrated, setRoomHydrated] = useState(false);
   /** Room is a live session (`sourceType` from Stream Room, API at create, saved template, or RTDB) — not inferred from URLs after load. */
   const isLiveRoom = roomState?.sourceType === "live";
+
+  /**
+   * Host: minimal native chrome + no iframe fullscreen (app controls drawing / layout).
+   * Viewer: keep defaults so playback unlock and scrubbing stay familiar.
+   * Live sessions: suggest muted autoplay-friendly embed params (host still unmutes after play).
+   */
+  const youtubePlayerOpts = useMemo(
+    () => ({
+      width: YOUTUBE_PLAYER_OPTS_BASE.width,
+      height: YOUTUBE_PLAYER_OPTS_BASE.height,
+      playerVars: {
+        ...YOUTUBE_PLAYER_OPTS_BASE.playerVars,
+        ...(isLiveRoom
+          ? {
+              autoplay: 1,
+              mute: 1,
+            }
+          : {}),
+        fs: isHost ? 0 : 1,
+        ...(isHost
+          ? {
+              controls: 0,
+              disablekb: 1,
+            }
+          : {}),
+      },
+    }),
+    [isHost, isLiveRoom],
+  );
+
   const activeYouTubeVideoId = useMemo(() => {
     const fromState = roomState?.videoId?.trim();
     if (fromState) return fromState;
@@ -1830,16 +1922,23 @@ function RoomContent() {
     if (!rs || rs.angles.length < 2) return;
     if (!rs.isPlaying) return;
     if (!viewerPlaybackUnlockedRef.current) return;
+    const topId = resolveViewerStackTopAngleId(rs);
     for (const a of rs.angles) {
       const p = syncPlayerRefs.current[a.id];
       if (!p) continue;
       const st = await readYoutubePlayerState(p);
       syncLog("viewer ensure playing", a.id, st);
       if (st !== YT_PLAYING) {
-        try {
-          p.playVideo?.();
-        } catch {
-          /* YouTube API */
+        if (rs.sourceType === "live") {
+          forceYouTubePlay(p, "ensureSelectedViewerStackPlayerPlaying", a.id, {
+            delayedUnmute: a.id === topId,
+          });
+        } else {
+          try {
+            p.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
         }
       }
     }
@@ -2304,7 +2403,11 @@ function RoomContent() {
         const playbackIntentChanged =
           prev === null || prev.isPlaying !== state.isPlaying;
         if (playbackIntentChanged || didSeek) {
-          await applyPlaybackIfNeeded(player, state.isPlaying);
+          await applyPlaybackIfNeeded(
+            player,
+            state.isPlaying,
+            state.sourceType === "live" ? { liveHostKick: true } : undefined,
+          );
         }
         if (stale()) return;
 
@@ -2457,7 +2560,9 @@ function RoomContent() {
           const p = syncPlayerRefs.current[a.id];
           if (!p) continue;
           if (roomState.isPlaying) {
-            await ensureViewerPlaybackIntent(p, true, viewerPlaybackUnlockedRef);
+            await ensureViewerPlaybackIntent(p, true, viewerPlaybackUnlockedRef, {
+              liveViewerKick: roomState.sourceType === "live",
+            });
           } else {
             await applyPlaybackIfNeeded(p, false);
           }
@@ -2622,10 +2727,19 @@ function RoomContent() {
         }
         if (isHostRef.current) {
           if (isPlaying) {
-            try {
-              player.playVideo?.();
-            } catch {
-              /* YouTube API */
+            if (rs.sourceType === "live") {
+              forceYouTubePlay(
+                player,
+                `applySyncStateToAnglePlayer:${reason}`,
+                angleId,
+                { delayedUnmute: angleId === audibleId },
+              );
+            } else {
+              try {
+                player.playVideo?.();
+              } catch {
+                /* YouTube API */
+              }
             }
           } else {
             try {
@@ -2639,6 +2753,7 @@ function RoomContent() {
             player,
             isPlaying,
             viewerPlaybackUnlockedRef,
+            rs.sourceType === "live" ? { liveViewerKick: true } : undefined,
           );
         }
       })();
@@ -2814,10 +2929,19 @@ function RoomContent() {
           continue;
         }
         if (s.isPlaying) {
-          try {
-            secondary.playVideo?.();
-          } catch {
-            /* YouTube API */
+          if (s.sourceType === "live") {
+            forceYouTubePlay(
+              secondary,
+              "syncSecondaryPlayersOnce:secondary",
+              a.id,
+              { delayedUnmute: false },
+            );
+          } else {
+            try {
+              secondary.playVideo?.();
+            } catch {
+              /* YouTube API */
+            }
           }
         } else {
           try {
@@ -2989,10 +3113,19 @@ function RoomContent() {
             if (stMid === YT_BUFFERING || stMid === YT_UNSTARTED) continue;
             if (opts.isPlaying) {
               if (!youtubeStateImpliesPlaying(stMid)) {
-                try {
-                  player.playVideo?.();
-                } catch {
-                  /* YouTube API */
+                if (s2.sourceType === "live") {
+                  forceYouTubePlay(
+                    player,
+                    `applyHostMultiViewSecondaryDirect:${opts.reason}`,
+                    a.id,
+                    { delayedUnmute: false },
+                  );
+                } else {
+                  try {
+                    player.playVideo?.();
+                  } catch {
+                    /* YouTube API */
+                  }
                 }
               }
             } else if (stMid !== YT_PAUSED) {
@@ -4358,11 +4491,19 @@ function RoomContent() {
           window.setTimeout(() => {
             const p2 = getPlayer();
             if (!p2) return;
+            const angleSwitchLive =
+              roomStateRef.current?.sourceType === "live";
             void (async () => {
-              try {
-                p2.playVideo();
-              } catch {
-                /* YouTube API */
+              if (angleSwitchLive) {
+                forceYouTubePlay(p2, "angle-switch-post-load", nextAngle.id, {
+                  delayedUnmute: true,
+                });
+              } else {
+                try {
+                  p2.playVideo();
+                } catch {
+                  /* YouTube API */
+                }
               }
               window.setTimeout(() => {
                 const p3 = getPlayer();
@@ -4371,10 +4512,16 @@ function RoomContent() {
                   const st3 = await readYoutubePlayerState(p3);
                   syncLog("angle switch play retry state", { state: st3 });
                   if (youtubeStateImpliesPlaying(st3)) return;
-                  try {
-                    p3.playVideo();
-                  } catch {
-                    /* YouTube API */
+                  if (angleSwitchLive) {
+                    forceYouTubePlay(p3, "angle-switch-play-retry", nextAngle.id, {
+                      delayedUnmute: true,
+                    });
+                  } else {
+                    try {
+                      p3.playVideo();
+                    } catch {
+                      /* YouTube API */
+                    }
                   }
                 })();
               }, 300);
@@ -4422,7 +4569,12 @@ function RoomContent() {
   );
 
   const hostLoadVideoAndPlay = useCallback(
-    (videoId: string, startSeconds: number, logPrefix: string) => {
+    (
+      videoId: string,
+      startSeconds: number,
+      logPrefix: string,
+      opts?: { liveHostKick?: boolean },
+    ) => {
       const lp = getPlayer() as YouTubePlayer & {
         loadVideoById?: (args: { videoId: string; startSeconds?: number }) => void;
       };
@@ -4445,6 +4597,12 @@ function RoomContent() {
       window.setTimeout(() => {
         const p2 = getPlayer();
         if (!p2) return;
+        if (opts?.liveHostKick) {
+          forceYouTubePlay(p2, `${logPrefix} post-load`, undefined, {
+            delayedUnmute: true,
+          });
+          return;
+        }
         void (async () => {
           try {
             p2.playVideo();
@@ -4697,7 +4855,9 @@ function RoomContent() {
         /* RTDB */
       });
 
-      hostLoadVideoAndPlay(newVideoId, startSeconds, "reconnect live");
+      hostLoadVideoAndPlay(newVideoId, startSeconds, "reconnect live", {
+        liveHostKick: true,
+      });
     })();
   }, [isHost, roomId, clearFfIfActive, hostLoadVideoAndPlay]);
 
@@ -4735,10 +4895,16 @@ function RoomContent() {
           stKick === YT_PAUSED ||
           stKick === YT_BUFFERING)
       ) {
-        try {
-          player.playVideo?.();
-        } catch {
-          /* YouTube API */
+        if (snap0?.sourceType === "live") {
+          forceYouTubePlay(player, "handlePlay-initial-kick", activeAngleId, {
+            delayedUnmute: true,
+          });
+        } else {
+          try {
+            player.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
         }
         syncLog("youtube playVideo called", { activeAngleId });
       }
@@ -5038,15 +5204,30 @@ function RoomContent() {
       }
 
       if (wasPlaying) {
-        try {
-          activePlayer.playVideo?.();
-        } catch {
-          /* YouTube API */
-        }
-        try {
-          pipPlayer.playVideo?.();
-        } catch {
-          /* YouTube API */
+        if (s.sourceType === "live") {
+          forceYouTubePlay(
+            activePlayer,
+            "handleFocusPipSwap:active",
+            nextActiveAngle.id,
+            { delayedUnmute: false },
+          );
+          forceYouTubePlay(
+            pipPlayer,
+            "handleFocusPipSwap:pip",
+            nextPipAngle.id,
+            { delayedUnmute: false },
+          );
+        } else {
+          try {
+            activePlayer.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+          try {
+            pipPlayer.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
         }
       } else {
         try {
@@ -5400,6 +5581,7 @@ function RoomContent() {
                   pl,
                   true,
                   viewerPlaybackUnlockedRef,
+                  s.sourceType === "live" ? { liveViewerKick: true } : undefined,
                 );
               } else {
                 await applyPlaybackIfNeeded(pl, false);
@@ -5450,6 +5632,7 @@ function RoomContent() {
       window.setTimeout(() => {
         const pp = getPlayer();
         if (!pp) return;
+        const pendingLive = s.sourceType === "live";
         void (async () => {
           try {
             pp.seekTo?.(pending.seekTime, true);
@@ -5458,10 +5641,16 @@ function RoomContent() {
           }
           const st = await readYoutubePlayerState(pp);
           if (!youtubeStateImpliesPlaying(st)) {
-            try {
-              pp.playVideo();
-            } catch {
-              /* YouTube autoplay / readiness */
+            if (pendingLive) {
+              forceYouTubePlay(pp, "angle-switch-autoplay", s.currentAngleId, {
+                delayedUnmute: true,
+              });
+            } else {
+              try {
+                pp.playVideo();
+              } catch {
+                /* YouTube autoplay / readiness */
+              }
             }
           }
           window.setTimeout(() => {
@@ -5470,10 +5659,16 @@ function RoomContent() {
             void (async () => {
               const st2 = await readYoutubePlayerState(p2);
               if (youtubeStateImpliesPlaying(st2)) return;
-              try {
-                p2.playVideo();
-              } catch {
-                /* YouTube autoplay / readiness */
+              if (pendingLive) {
+                forceYouTubePlay(p2, "angle-switch-autoplay-retry", s.currentAngleId, {
+                  delayedUnmute: true,
+                });
+              } else {
+                try {
+                  p2.playVideo();
+                } catch {
+                  /* YouTube autoplay / readiness */
+                }
               }
             })();
           }, 250);
