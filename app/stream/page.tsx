@@ -67,6 +67,58 @@ type SavedSetupV1 = {
 
 const STORAGE_KEY = "filmroom.streamSetup.v1";
 
+const CAMERAS_STORAGE_KEY = "filmRoomYouTubeCameras";
+
+/**
+ * Saved YouTube RTMP camera preset (localStorage only).
+ * Broadcast/watch URL is created per session via create-broadcast-from-stream.
+ */
+type YouTubeCameraPreset = {
+  id: string;
+  name: string;
+  streamId: string;
+  ingestionAddress: string;
+  streamName: string;
+  /** For ordering saved list (optional on legacy rows). */
+  createdAt: string;
+};
+
+function parseCamerasFromStorage(raw: string | null): YouTubeCameraPreset[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: YouTubeCameraPreset[] = [];
+    for (const row of parsed) {
+      if (!row || typeof row !== "object") continue;
+      const o = row as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim() : "";
+      const name = typeof o.name === "string" ? o.name.trim() : "";
+      const streamId = typeof o.streamId === "string" ? o.streamId.trim() : "";
+      if (!id || !name || !streamId) continue;
+      const ingestionAddress =
+        typeof o.ingestionAddress === "string" ? o.ingestionAddress : "";
+      const streamName =
+        typeof o.streamName === "string" ? o.streamName : "";
+      const createdAt =
+        typeof o.createdAt === "string" && o.createdAt.trim() !== ""
+          ? o.createdAt.trim()
+          : new Date(0).toISOString();
+      out.push({
+        id,
+        name,
+        streamId,
+        ingestionAddress,
+        streamName,
+        createdAt,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 const panelClass =
   "rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm";
 
@@ -424,8 +476,15 @@ export default function StreamRoomPage() {
     streamName: string;
     broadcastId: string;
     streamId: string;
+    videoId: string;
   } | null>(null);
   const [ytCreateError, setYtCreateError] = useState<string | null>(null);
+  const [cameraPresetName, setCameraPresetName] = useState("Practice Cam");
+  const [savedCameras, setSavedCameras] = useState<YouTubeCameraPreset[]>([]);
+  const [sessionFromCameraLoadingId, setSessionFromCameraLoadingId] = useState<
+    string | null
+  >(null);
+  const [cameraCopyToast, setCameraCopyToast] = useState<string | null>(null);
   const [saveToast, setSaveToast] = useState(false);
   const [loadableSetup, setLoadableSetup] = useState(false);
 
@@ -436,6 +495,37 @@ export default function StreamRoomPage() {
       setLoadableSetup(Boolean(raw && safeParseSavedSetup(raw)));
     }, 0);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setSavedCameras(
+      parseCamerasFromStorage(window.localStorage.getItem(CAMERAS_STORAGE_KEY)),
+    );
+  }, []);
+
+  const copyText = useCallback(async (label: string, text: string) => {
+    const t = text.trim();
+    if (!t) {
+      window.alert("Nothing to copy.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(t);
+      setCameraCopyToast(`Copied ${label}`);
+      window.setTimeout(() => setCameraCopyToast(null), 2000);
+    } catch {
+      window.alert("Could not copy to clipboard.");
+    }
+  }, []);
+
+  const savedCamerasSorted = useMemo(
+    () =>
+      [...savedCameras].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      ),
+    [savedCameras],
+  );
 
   const saveSetup = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -733,6 +823,107 @@ export default function StreamRoomPage() {
     }
   }, [launchableAngles, router, startEnabled]);
 
+  const saveCameraPreset = useCallback(() => {
+    if (!ytCreateResult) return;
+    const nameTrim = cameraPresetName.trim() || "Practice Cam";
+    const preset: YouTubeCameraPreset = {
+      id: newId("cam"),
+      name: nameTrim,
+      streamId: ytCreateResult.streamId,
+      ingestionAddress: ytCreateResult.ingestionAddress,
+      streamName: ytCreateResult.streamName,
+      createdAt: new Date().toISOString(),
+    };
+    setSavedCameras((prev) => {
+      const next = [preset, ...prev];
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [ytCreateResult, cameraPresetName]);
+
+  const fillFirstAngleWithWatchUrl = useCallback((watchUrl: string) => {
+    setAngles((prev) => {
+      if (prev.length === 0) return prev;
+      return prev.map((a, i) =>
+        i === 0
+          ? {
+              ...a,
+              url: watchUrl,
+              videoId: null,
+              status: "idle",
+              debug: null,
+              pastBroadcastWarning: false,
+              persistentLiveHint: null,
+              urlResolveNote: null,
+            }
+          : a,
+      );
+    });
+  }, []);
+
+  const startSessionWithCamera = useCallback(
+    async (cam: YouTubeCameraPreset) => {
+      if (!cam.streamId.trim()) {
+        window.alert(
+          "This preset has no stream id. Create a camera stream again and save the preset.",
+        );
+        return;
+      }
+      if (sessionFromCameraLoadingId) return;
+      setSessionFromCameraLoadingId(cam.id);
+      try {
+        const { accessToken } = await getYouTubeOAuthAccessToken();
+        const res = await fetch("/api/youtube/create-broadcast-from-stream", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            streamId: cam.streamId,
+            title: "Practice Session",
+            description: "Film Room session",
+            privacyStatus: "unlisted",
+          }),
+        });
+        let data: unknown = null;
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+        if (!res.ok) {
+          const e = data as { error?: unknown; reason?: unknown };
+          const msg =
+            typeof e?.error === "string" && e.error.trim() !== ""
+              ? e.error.trim()
+              : `create-broadcast-from-stream failed (HTTP ${res.status}).`;
+          const extra =
+            typeof e?.reason === "string" && e.reason.trim() !== ""
+              ? ` (${e.reason.trim()})`
+              : "";
+          throw new Error(`${msg}${extra}`);
+        }
+        const ok = data as { ok?: boolean; watchUrl?: string };
+        if (ok.ok !== true || typeof ok.watchUrl !== "string") {
+          throw new Error("Invalid response from create-broadcast-from-stream.");
+        }
+        fillFirstAngleWithWatchUrl(ok.watchUrl.trim());
+      } catch (err) {
+        window.alert(
+          err instanceof Error && err.message.trim()
+            ? err.message
+            : "Could not start session with camera.",
+        );
+      } finally {
+        setSessionFromCameraLoadingId(null);
+      }
+    },
+    [sessionFromCameraLoadingId, fillFirstAngleWithWatchUrl],
+  );
+
   const createYouTubeStream = useCallback(async () => {
     if (creatingYt) return;
     setCreatingYt(true);
@@ -778,6 +969,7 @@ export default function StreamRoomPage() {
         streamName?: string;
         broadcastId?: string;
         streamId?: string;
+        videoId?: string;
       };
       if (ok.ok !== true) {
         throw new Error("YouTube create-live-stream returned ok=false.");
@@ -790,6 +982,10 @@ export default function StreamRoomPage() {
       ) {
         throw new Error("YouTube create-live-stream response missing fields.");
       }
+      const videoId =
+        typeof ok.videoId === "string" && ok.videoId.trim() !== ""
+          ? ok.videoId.trim()
+          : ok.broadcastId.trim();
       setYtCreateResult({
         watchUrl: ok.watchUrl,
         embedUrl: ok.embedUrl,
@@ -797,6 +993,7 @@ export default function StreamRoomPage() {
         streamName: typeof ok.streamName === "string" ? ok.streamName : "",
         broadcastId: ok.broadcastId,
         streamId: ok.streamId,
+        videoId,
       });
     } catch (err) {
       const msg =
@@ -855,70 +1052,179 @@ export default function StreamRoomPage() {
         </div>
 
         <div className={panelClass}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-white">YouTube Live (automation)</h2>
-              <p className="text-xs text-zinc-400">
-                Create a YouTube Live broadcast + RTMP ingest. This does not start a Film Room session yet.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void createYouTubeStream()}
-                className={ghostBtn}
-                disabled={creatingYt}
-              >
-                {creatingYt ? "Creating…" : "Create YouTube Stream"}
-              </button>
-            </div>
+          <h2 className="text-sm font-semibold text-white">Camera Setup</h2>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+            Open Larix Broadcaster, Streamlabs, or another RTMP camera app. Paste the
+            RTMP Server URL and Stream Key once and save the preset — your phone stays
+            configured. Each practice, use <strong className="text-zinc-200">Start Session with Camera</strong>{" "}
+            to create a <em>new</em> YouTube broadcast bound to the same RTMP stream, then
+            start your Film Room when ready.
+          </p>
+          <p className="mt-2 text-xs text-zinc-500">
+            Creating a stream signs you in with Google (YouTube scope) and does not start
+            a Film Room session.
+          </p>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <label className="block min-w-[200px] flex-1 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+              Camera name (saved preset)
+              <input
+                type="text"
+                value={cameraPresetName}
+                onChange={(e) => setCameraPresetName(e.target.value)}
+                placeholder="Practice Cam"
+                className={`${inputClass} mt-1 normal-case tracking-normal`}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void createYouTubeStream()}
+              className={ghostBtn}
+              disabled={creatingYt}
+            >
+              {creatingYt ? "Creating…" : "Create / Reuse YouTube Camera Stream"}
+            </button>
           </div>
+
+          {cameraCopyToast ? (
+            <p className="mt-2 text-xs text-emerald-200">{cameraCopyToast}</p>
+          ) : null}
+
           {ytCreateError ? (
             <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {ytCreateError}
             </div>
           ) : null}
+
           {ytCreateResult ? (
-            <div className="mt-4 grid gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm">
-              <div className="grid gap-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
-                  Watch URL
+            <div className="mt-4 space-y-4">
+              <div className="grid gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                      RTMP Server URL
+                    </div>
+                    <div className="mt-1 break-all font-mono text-zinc-200">
+                      {ytCreateResult.ingestionAddress || "—"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${ghostBtn} shrink-0`}
+                    onClick={() =>
+                      void copyText("RTMP Server", ytCreateResult.ingestionAddress)
+                    }
+                  >
+                    Copy RTMP Server
+                  </button>
                 </div>
-                <a
-                  href={ytCreateResult.watchUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="break-all text-blue-200 hover:text-blue-100"
-                >
-                  {ytCreateResult.watchUrl}
-                </a>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                      Stream Key
+                    </div>
+                    <div className="mt-1 break-all font-mono text-zinc-200">
+                      {ytCreateResult.streamName || "—"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${ghostBtn} shrink-0`}
+                    onClick={() =>
+                      void copyText("Stream Key", ytCreateResult.streamName)
+                    }
+                  >
+                    Copy Stream Key
+                  </button>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                      Watch URL
+                    </div>
+                    <a
+                      href={ytCreateResult.watchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block break-all text-blue-200 hover:text-blue-100"
+                    >
+                      {ytCreateResult.watchUrl}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    className={`${ghostBtn} shrink-0`}
+                    onClick={() => void copyText("Watch URL", ytCreateResult.watchUrl)}
+                  >
+                    Copy Watch URL
+                  </button>
+                </div>
               </div>
-              <div className="grid gap-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
-                  Embed URL
-                </div>
-                <div className="break-all text-zinc-200">{ytCreateResult.embedUrl}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={saveCameraPreset} className={ghostBtn}>
+                  Save camera preset
+                </button>
+                <span className="text-xs text-zinc-500">
+                  Saves stream id + RTMP details only (no watch URL) in{" "}
+                  {CAMERAS_STORAGE_KEY}.
+                </span>
               </div>
-              <div className="grid gap-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
-                  RTMP server URL
-                </div>
-                <div className="break-all text-zinc-200">
-                  {ytCreateResult.ingestionAddress || "—"}
-                </div>
-              </div>
-              <div className="grid gap-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
-                  Stream key
-                </div>
-                <div className="break-all font-mono text-zinc-200">
-                  {ytCreateResult.streamName || "—"}
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 text-xs text-zinc-400 sm:grid-cols-2">
-                <div className="break-all">broadcastId: {ytCreateResult.broadcastId}</div>
-                <div className="break-all">streamId: {ytCreateResult.streamId}</div>
-              </div>
+            </div>
+          ) : null}
+
+          {savedCamerasSorted.length > 0 ? (
+            <div className="mt-6 border-t border-white/[0.06] pt-6">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Saved cameras
+              </h3>
+              <ul className="mt-3 space-y-3">
+                {savedCamerasSorted.map((cam) => (
+                  <li
+                    key={cam.id}
+                    className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-white">{cam.name}</p>
+                        <p className="mt-1 break-all font-mono text-[11px] text-zinc-400">
+                          streamId: {cam.streamId}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          Watch URL is created fresh each time you start a session.
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className={ghostBtn}
+                          onClick={() =>
+                            void copyText("RTMP Server", cam.ingestionAddress)
+                          }
+                        >
+                          Copy RTMP Server
+                        </button>
+                        <button
+                          type="button"
+                          className={ghostBtn}
+                          onClick={() => void copyText("Stream Key", cam.streamName)}
+                        >
+                          Copy Stream Key
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl border border-blue-500/35 bg-blue-600/25 px-3 py-2 text-xs font-semibold text-white transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={sessionFromCameraLoadingId !== null}
+                          onClick={() => void startSessionWithCamera(cam)}
+                        >
+                          {sessionFromCameraLoadingId === cam.id
+                            ? "Creating session…"
+                            : "Start Session with Camera"}
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : null}
         </div>

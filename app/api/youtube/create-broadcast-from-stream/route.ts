@@ -31,7 +31,6 @@ function ytErrorMessage(
 ): {
   message: string;
   reason?: string;
-  statusText?: string;
 } {
   const parsed = body as YouTubeApiErrorResponse;
   const first = Array.isArray(parsed?.error?.errors)
@@ -50,7 +49,6 @@ function ytErrorMessage(
         ? first.message.trim()
         : `YouTube API request failed (HTTP ${status}).`;
 
-  // Friendly mapping for common failure cases.
   if (
     status === 401 ||
     reason === "authError" ||
@@ -138,25 +136,35 @@ export async function POST(request: Request) {
     payload = null;
   }
   const p = (payload ?? {}) as {
+    streamId?: unknown;
     title?: unknown;
     description?: unknown;
     privacyStatus?: unknown;
   };
+  const streamIdRaw = typeof p.streamId === "string" ? p.streamId.trim() : "";
+  if (!streamIdRaw) {
+    return NextResponse.json(
+      { ok: false, error: "Missing or invalid streamId." },
+      { status: 400 },
+    );
+  }
+  const streamId = streamIdRaw;
+
   const title =
     typeof p.title === "string" && p.title.trim() !== ""
       ? p.title.trim()
-      : "Practice Stream";
+      : "Practice Session";
   const description =
     typeof p.description === "string" ? p.description.trim() : "";
   const privacyStatus =
-    p.privacyStatus === "private" || p.privacyStatus === "public" || p.privacyStatus === "unlisted"
+    p.privacyStatus === "private" ||
+    p.privacyStatus === "public" ||
+    p.privacyStatus === "unlisted"
       ? (p.privacyStatus as "private" | "public" | "unlisted")
       : ("unlisted" as const);
 
-  // Smallest workable default: schedule immediately.
   const scheduledStartTime = new Date(Date.now() + 60_000).toISOString();
 
-  // 1) liveBroadcasts.insert (creates “event/page”)
   const broadcastUrl =
     "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
     "?part=snippet,status,contentDetails";
@@ -172,9 +180,6 @@ export async function POST(request: Request) {
     },
     contentDetails: {
       enableDvr: true,
-      // These flags are supported for many channels; if unsupported YouTube may ignore them.
-      enableAutoStart: true,
-      enableAutoStop: true,
       latencyPreference: "low",
     },
   };
@@ -206,87 +211,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: err instanceof Error ? err.message : "YouTube broadcast request failed.",
+        error:
+          err instanceof Error ? err.message : "YouTube broadcast request failed.",
       },
       { status: 502 },
     );
   }
 
-  // 2) liveStreams.insert (creates RTMP ingest)
-  const streamUrl =
-    "https://www.googleapis.com/youtube/v3/liveStreams" +
-    "?part=snippet,cdn,contentDetails,status";
-  const streamBody = {
-    snippet: {
-      title,
-      description,
-    },
-    cdn: {
-      ingestionType: "rtmp",
-      resolution: "1080p",
-      frameRate: "30fps",
-    },
-    contentDetails: {
-      /** Same RTMP ingest can be bound to new broadcasts each session. */
-      isReusable: true,
-    },
-  };
-
-  type LiveStreamInsertResponse = {
-    id?: string;
-    cdn?: {
-      ingestionInfo?: {
-        ingestionAddress?: string;
-        streamName?: string;
-      };
-    };
-  };
-  let streamId: string;
-  let ingestionAddress = "";
-  let streamName = "";
-  try {
-    const s = await ytPostJson<LiveStreamInsertResponse>({
-      url: streamUrl,
-      token,
-      body: streamBody,
-    });
-    if (!s.ok) {
-      const info = ytErrorMessage(s.status, s.error);
-      return NextResponse.json(
-        {
-          ok: false,
-          error: info.message,
-          reason: info.reason,
-          status: s.status,
-          broadcastId,
-        },
-        { status: 502 },
-      );
-    }
-    const id = s.data?.id;
-    if (typeof id !== "string" || id.trim() === "") {
-      return NextResponse.json(
-        { ok: false, error: "YouTube returned no stream id.", broadcastId },
-        { status: 502 },
-      );
-    }
-    streamId = id.trim();
-    const addr = s.data?.cdn?.ingestionInfo?.ingestionAddress;
-    const name = s.data?.cdn?.ingestionInfo?.streamName;
-    ingestionAddress = typeof addr === "string" ? addr.trim() : "";
-    streamName = typeof name === "string" ? name.trim() : "";
-  } catch (err) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : "YouTube stream request failed.",
-        broadcastId,
-      },
-      { status: 502 },
-    );
-  }
-
-  // 3) liveBroadcasts.bind (connects ingest → watch page)
   const bindUrl =
     "https://www.googleapis.com/youtube/v3/liveBroadcasts/bind" +
     `?part=id,contentDetails&id=${encodeURIComponent(broadcastId)}` +
@@ -323,18 +254,15 @@ export async function POST(request: Request) {
     );
   }
 
+  const videoId = broadcastId;
   const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
 
   return NextResponse.json({
     ok: true,
     broadcastId,
-    streamId,
-    videoId: broadcastId,
+    videoId,
     watchUrl,
     embedUrl,
-    ingestionAddress,
-    streamName,
   });
 }
-
