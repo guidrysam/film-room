@@ -282,6 +282,139 @@ export async function POST(request: Request) {
     );
   }
 
+  type BroadcastGetResponse = {
+    items?: Array<{
+      contentDetails?: { boundStreamId?: string };
+      status?: { privacyStatus?: string };
+      snippet?: { channelId?: string };
+    }>;
+  };
+
+  const broadcastGetUrl =
+    "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
+    `?part=contentDetails,status,snippet&id=${encodeURIComponent(broadcastId)}`;
+
+  const broadcastGet = await ytGetJson<BroadcastGetResponse>({
+    url: broadcastGetUrl,
+    token,
+  });
+  if (!broadcastGet.ok) {
+    const info = ytErrorMessage(broadcastGet.status, broadcastGet.error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: info.message,
+        reason: info.reason,
+        broadcastId,
+        requestedStreamId: streamId,
+      },
+      { status: 502 },
+    );
+  }
+
+  const boundStreamIdRaw =
+    broadcastGet.data?.items?.[0]?.contentDetails?.boundStreamId;
+  const boundStreamId =
+    typeof boundStreamIdRaw === "string" ? boundStreamIdRaw.trim() : "";
+  const boundMatchesRequested =
+    boundStreamId !== "" && boundStreamId === streamId;
+
+  if (!boundMatchesRequested) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Broadcast was not bound to requested reusable stream",
+        requestedStreamId: streamId,
+        boundStreamId: boundStreamId || undefined,
+        broadcastId,
+      },
+      { status: 502 },
+    );
+  }
+
+  type LiveStreamsListResponse = {
+    items?: Array<{
+      id?: string;
+      snippet?: { title?: string };
+      cdn?: {
+        ingestionInfo?: {
+          ingestionAddress?: string;
+          streamName?: string;
+        };
+      };
+      status?: {
+        streamStatus?: string;
+        lifeCycleStatus?: string;
+      };
+    }>;
+  };
+
+  const liveStreamsUrl =
+    "https://www.googleapis.com/youtube/v3/liveStreams" +
+    `?part=cdn,status,snippet&id=${encodeURIComponent(streamId)}`;
+
+  const ls = await ytGetJson<LiveStreamsListResponse>({
+    url: liveStreamsUrl,
+    token,
+  });
+  if (!ls.ok) {
+    const info = ytErrorMessage(ls.status, ls.error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: info.message,
+        reason: info.reason,
+        broadcastId,
+        requestedStreamId: streamId,
+      },
+      { status: 502 },
+    );
+  }
+
+  const streamItem = ls.data?.items?.[0];
+  if (!streamItem?.id) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Reusable stream not found. Recreate camera preset.",
+        broadcastId,
+        requestedStreamId: streamId,
+      },
+      { status: 502 },
+    );
+  }
+
+  const addr = streamItem.cdn?.ingestionInfo?.ingestionAddress;
+  const streamKey = streamItem.cdn?.ingestionInfo?.streamName;
+  const ingestionAddress = typeof addr === "string" ? addr.trim() : "";
+  const streamName = typeof streamKey === "string" ? streamKey.trim() : "";
+
+  if (!ingestionAddress || !streamName) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Reusable stream is missing RTMP ingest info. Recreate camera preset.",
+        broadcastId,
+        requestedStreamId: streamId,
+      },
+      { status: 502 },
+    );
+  }
+
+  const streamTitle =
+    typeof streamItem.snippet?.title === "string"
+      ? streamItem.snippet.title.trim()
+      : "";
+  const streamStatus =
+    (typeof streamItem.status?.streamStatus === "string"
+      ? streamItem.status.streamStatus.trim()
+      : "") ||
+    (typeof streamItem.status?.lifeCycleStatus === "string"
+      ? streamItem.status.lifeCycleStatus.trim()
+      : "") ||
+    "";
+
   const videoId = broadcastId;
   const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
@@ -335,6 +468,13 @@ export async function POST(request: Request) {
     videoId,
     watchUrl,
     embedUrl,
+    streamId,
+    boundStreamId,
+    boundMatchesRequested,
+    ingestionAddress,
+    streamName,
+    streamTitle,
+    streamStatus,
     lastWatchUrl: watchUrl,
     ...(channelId ? { channelId } : {}),
     ...(channelHandle ? { channelHandle } : {}),

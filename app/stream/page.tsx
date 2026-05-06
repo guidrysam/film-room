@@ -151,6 +151,25 @@ function pickAngleIndexForPresetLoad(rows: StreamAngleRow[]): number {
   return 0;
 }
 
+function isCameraPresetIncomplete(cam: YouTubeCameraPreset): boolean {
+  return (
+    !cam.streamId?.trim() ||
+    !cam.ingestionAddress?.trim() ||
+    !cam.streamName?.trim()
+  );
+}
+
+type CameraSessionVerify = {
+  broadcastId: string;
+  requestedStreamId: string;
+  boundStreamId: string;
+  boundMatchesRequested: boolean;
+  ingestionAddress: string;
+  streamName: string;
+  streamTitle: string;
+  streamStatus: string;
+};
+
 function parseCamerasFromStorage(raw: string | null): YouTubeCameraPreset[] {
   if (!raw) return [];
   try {
@@ -593,6 +612,11 @@ export default function StreamRoomPage() {
   const [cameraPresetName, setCameraPresetName] = useState("Practice Cam");
   const [savedCameras, setSavedCameras] = useState<YouTubeCameraPreset[]>([]);
   const [sessionFromCameraLoadingId, setSessionFromCameraLoadingId] = useState<
+    string | null
+  >(null);
+  const [cameraSessionVerify, setCameraSessionVerify] =
+    useState<CameraSessionVerify | null>(null);
+  const [verifyCameraLoadingId, setVerifyCameraLoadingId] = useState<
     string | null
   >(null);
   const [cameraCopyToast, setCameraCopyToast] = useState<string | null>(null);
@@ -1111,6 +1135,65 @@ export default function StreamRoomPage() {
     });
   }, [setSavedCameras]);
 
+  const verifyCameraStream = useCallback(async (cam: YouTubeCameraPreset) => {
+    if (!cam.streamId.trim()) {
+      window.alert("This preset has no stream id.");
+      return;
+    }
+    if (verifyCameraLoadingId !== null) return;
+    setVerifyCameraLoadingId(cam.id);
+    try {
+      const { accessToken } = await getYouTubeOAuthAccessToken();
+      const res = await fetch("/api/youtube/verify-live-stream", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ streamId: cam.streamId.trim() }),
+      });
+      let data: unknown = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      const body = data as { ok?: boolean; error?: string };
+      if (!res.ok || body.ok !== true) {
+        window.alert(
+          typeof body.error === "string" && body.error.trim() !== ""
+            ? body.error.trim()
+            : `Verify failed (HTTP ${res.status}).`,
+        );
+        return;
+      }
+      const ok = data as {
+        streamId?: string;
+        ingestionAddress?: string;
+        streamName?: string;
+        streamTitle?: string;
+        streamStatus?: string;
+      };
+      window.alert(
+        [
+          `Stream ID: ${ok.streamId ?? ""}`,
+          `Title: ${ok.streamTitle ?? ""}`,
+          `Status: ${ok.streamStatus ?? ""}`,
+          `RTMP server: ${ok.ingestionAddress ?? ""}`,
+          `Stream key: ${ok.streamName ?? ""}`,
+        ].join("\n"),
+      );
+    } catch (err) {
+      window.alert(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "Could not verify stream.",
+      );
+    } finally {
+      setVerifyCameraLoadingId(null);
+    }
+  }, [verifyCameraLoadingId]);
+
   const startSessionWithCamera = useCallback(
     async (cam: YouTubeCameraPreset) => {
       if (!cam.streamId.trim()) {
@@ -1121,6 +1204,7 @@ export default function StreamRoomPage() {
       }
       if (sessionFromCameraLoadingId) return;
       setSessionFromCameraLoadingId(cam.id);
+      setCameraSessionVerify(null);
       try {
         const { accessToken } = await getYouTubeOAuthAccessToken();
         const res = await fetch("/api/youtube/create-broadcast-from-stream", {
@@ -1142,31 +1226,73 @@ export default function StreamRoomPage() {
         } catch {
           data = null;
         }
+        const body = data as { error?: string; boundStreamId?: string };
         if (!res.ok) {
-          const e = data as { error?: unknown; reason?: unknown };
           const msg =
-            typeof e?.error === "string" && e.error.trim() !== ""
-              ? e.error.trim()
+            typeof body.error === "string" && body.error.trim() !== ""
+              ? body.error.trim()
               : `create-broadcast-from-stream failed (HTTP ${res.status}).`;
-          const extra =
-            typeof e?.reason === "string" && e.reason.trim() !== ""
-              ? ` (${e.reason.trim()})`
-              : "";
-          throw new Error(`${msg}${extra}`);
+          if (
+            msg === "Broadcast was not bound to requested reusable stream" ||
+            msg.includes("not bound to requested")
+          ) {
+            window.alert(
+              "YouTube did not bind this broadcast to the saved camera stream. Recreate the camera preset.",
+            );
+          } else {
+            window.alert(msg);
+          }
+          return;
         }
         const ok = data as {
           ok?: boolean;
           watchUrl?: string;
+          broadcastId?: string;
+          streamId?: string;
+          boundStreamId?: string;
+          boundMatchesRequested?: boolean;
+          ingestionAddress?: string;
+          streamName?: string;
+          streamTitle?: string;
+          streamStatus?: string;
           channelId?: string;
           channelHandle?: string;
           persistentLiveUrl?: string;
         };
-        if (ok.ok !== true || typeof ok.watchUrl !== "string") {
-          throw new Error("Invalid response from create-broadcast-from-stream.");
+        if (
+          ok.ok !== true ||
+          typeof ok.watchUrl !== "string" ||
+          ok.boundMatchesRequested !== true ||
+          typeof ok.ingestionAddress !== "string" ||
+          typeof ok.streamName !== "string" ||
+          typeof ok.broadcastId !== "string" ||
+          typeof ok.boundStreamId !== "string" ||
+          typeof ok.streamId !== "string"
+        ) {
+          window.alert(
+            ok.boundMatchesRequested === false
+              ? "YouTube did not bind this broadcast to the saved camera stream. Recreate the camera preset."
+              : "Invalid response from create-broadcast-from-stream.",
+          );
+          return;
         }
+        setCameraSessionVerify({
+          broadcastId: ok.broadcastId,
+          requestedStreamId: ok.streamId,
+          boundStreamId: ok.boundStreamId,
+          boundMatchesRequested: ok.boundMatchesRequested,
+          ingestionAddress: ok.ingestionAddress.trim(),
+          streamName: ok.streamName.trim(),
+          streamTitle:
+            typeof ok.streamTitle === "string" ? ok.streamTitle.trim() : "",
+          streamStatus:
+            typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
+        });
         const watch = ok.watchUrl.trim();
         const merged: YouTubeCameraPreset = {
           ...cam,
+          ingestionAddress: ok.ingestionAddress.trim(),
+          streamName: ok.streamName.trim(),
           ...(typeof ok.channelId === "string" &&
           CHANNEL_ID_PRESET_RE.test(ok.channelId.trim())
             ? { channelId: ok.channelId.trim() }
@@ -1482,6 +1608,66 @@ export default function StreamRoomPage() {
             </div>
           ) : null}
 
+          {cameraSessionVerify ? (
+            <div className="mt-6 rounded-2xl border border-blue-500/35 bg-blue-950/30 px-4 py-4 shadow-lg shadow-blue-950/30 ring-1 ring-blue-500/15">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-200/95">
+                Latest broadcast — binding verified
+              </h3>
+              <dl className="mt-3 grid gap-2 text-[11px] leading-snug text-zinc-200 sm:grid-cols-2">
+                <div>
+                  <dt className="text-zinc-500">Broadcast ID</dt>
+                  <dd className="break-all font-mono">{cameraSessionVerify.broadcastId}</dd>
+                </div>
+                <div>
+                  <dt className="text-zinc-500">Requested stream ID</dt>
+                  <dd className="break-all font-mono">
+                    {cameraSessionVerify.requestedStreamId}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-zinc-500">Bound stream ID</dt>
+                  <dd className="break-all font-mono">
+                    {cameraSessionVerify.boundStreamId}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-zinc-500">Bound match</dt>
+                  <dd className="font-semibold text-emerald-200">
+                    {cameraSessionVerify.boundMatchesRequested ? "Yes" : "No"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-zinc-500">RTMP server</dt>
+                  <dd className="break-all font-mono">{cameraSessionVerify.ingestionAddress}</dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-zinc-500">Stream key</dt>
+                  <dd className="break-all font-mono">{cameraSessionVerify.streamName}</dd>
+                </div>
+                {(cameraSessionVerify.streamTitle ||
+                  cameraSessionVerify.streamStatus) ? (
+                  <div className="sm:col-span-2 flex flex-wrap gap-x-4 gap-y-1">
+                    {cameraSessionVerify.streamTitle ? (
+                      <span className="text-zinc-400">
+                        Title:{" "}
+                        <span className="text-zinc-200">{cameraSessionVerify.streamTitle}</span>
+                      </span>
+                    ) : null}
+                    {cameraSessionVerify.streamStatus ? (
+                      <span className="text-zinc-400">
+                        Stream status:{" "}
+                        <span className="text-zinc-200">{cameraSessionVerify.streamStatus}</span>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </dl>
+              <p className="mt-3 rounded-lg border border-blue-400/25 bg-blue-950/50 px-3 py-2 text-[11px] text-blue-100/95">
+                This is the exact key your phone must stream to.
+              </p>
+            </div>
+          ) : null}
+
           {savedCamerasSorted.length > 0 ? (
             <div className="mt-6 border-t border-white/[0.06] pt-6">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -1490,6 +1676,7 @@ export default function StreamRoomPage() {
               <ul className="mt-3 space-y-3">
                 {savedCamerasSorted.map((cam) => {
                   const liveUrlDisplay = persistentLiveViewUrlFromPreset(cam);
+                  const presetIncomplete = isCameraPresetIncomplete(cam);
                   return (
                   <li
                     key={cam.id}
@@ -1501,6 +1688,11 @@ export default function StreamRoomPage() {
                         <p className="mt-1 text-xs text-zinc-500">
                           RTMP/key already configured on phone
                         </p>
+                        {presetIncomplete ? (
+                          <p className="mt-2 rounded-lg border border-amber-500/35 bg-amber-950/35 px-2.5 py-1.5 text-[11px] text-amber-100/95">
+                            Camera preset is incomplete — recreate it.
+                          </p>
+                        ) : null}
                         {liveUrlDisplay ? (
                           <p className="mt-1 break-all text-[11px] text-emerald-200/90">
                             Live view (/live): {liveUrlDisplay}
@@ -1536,6 +1728,24 @@ export default function StreamRoomPage() {
                         <button
                           type="button"
                           className={ghostBtn}
+                          disabled={
+                            verifyCameraLoadingId !== null ||
+                            !cam.streamId.trim()
+                          }
+                          title={
+                            !cam.streamId.trim()
+                              ? "Save a stream id on this preset first."
+                              : undefined
+                          }
+                          onClick={() => void verifyCameraStream(cam)}
+                        >
+                          {verifyCameraLoadingId === cam.id
+                            ? "Verifying…"
+                            : "Verify Camera Stream"}
+                        </button>
+                        <button
+                          type="button"
+                          className={ghostBtn}
                           onClick={() => loadCameraPresetIntoAngle(cam)}
                         >
                           Load into Angle
@@ -1543,7 +1753,15 @@ export default function StreamRoomPage() {
                         <button
                           type="button"
                           className="rounded-xl border border-blue-500/35 bg-blue-600/25 px-3 py-2 text-xs font-semibold text-white transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={sessionFromCameraLoadingId !== null}
+                          disabled={
+                            sessionFromCameraLoadingId !== null ||
+                            presetIncomplete
+                          }
+                          title={
+                            presetIncomplete
+                              ? "Fix incomplete preset (missing stream id, RTMP server, or stream key)."
+                              : undefined
+                          }
                           onClick={() => void startSessionWithCamera(cam)}
                         >
                           {sessionFromCameraLoadingId === cam.id
