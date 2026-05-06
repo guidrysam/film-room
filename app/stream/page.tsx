@@ -4,12 +4,20 @@ import YouTube from "react-youtube";
 import type { YouTubePlayer } from "react-youtube";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from "react";
 import { ref, serverTimestamp, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { markRoomHost } from "@/lib/room-host";
 import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
+  isPersistentChannelOrHandleLiveUrl,
   isPersistentYouTubeLiveUrl,
   isYoutubeWatchVideoUrl,
   parsePersistentLiveUrlTarget,
@@ -592,7 +600,31 @@ function safeParseSavedSetup(raw: string): SavedSetupV1 | null {
 
 export default function StreamRoomPage() {
   const router = useRouter();
-  const [angles, setAngles] = useState<StreamAngleRow[]>(() => defaultRows());
+  const [angles, setAnglesState] = useState<StreamAngleRow[]>(() => defaultRows());
+
+  const setAngles = useCallback((update: SetStateAction<StreamAngleRow[]>) => {
+    setAnglesState((prev) => {
+      const next =
+        typeof update === "function"
+          ? (update as (p: StreamAngleRow[]) => StreamAngleRow[])(prev)
+          : update;
+      const byId = new Map(prev.map((r) => [r.id, r]));
+      for (const row of next) {
+        const old = byId.get(row.id);
+        if (old !== undefined && old.url !== row.url) {
+          console.log("ANGLE_URL_WRITE", {
+            angleId: row.id,
+            before: old.url,
+            after: row.url,
+            lengthBefore: old.url.length,
+            lengthAfter: row.url.length,
+            stack: new Error().stack,
+          });
+        }
+      }
+      return next;
+    });
+  }, []);
   const [starting, setStarting] = useState(false);
   const [creatingYt, setCreatingYt] = useState(false);
   const [ytCreateResult, setYtCreateResult] = useState<{
@@ -692,15 +724,37 @@ export default function StreamRoomPage() {
         status: "idle",
       })),
     );
-  }, []);
+  }, [setAngles]);
 
   const setAngleField = useCallback(
     (id: string, patch: Partial<Pick<StreamAngleRow, "name" | "url">>) => {
       setAngles((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+        prev.map((a) => {
+          if (a.id !== id) return a;
+          if (patch.url !== undefined) {
+            const incoming = patch.url;
+            if (incoming.trim() === "") {
+              return { ...a, ...patch };
+            }
+            const prevUrl = a.url;
+            if (
+              isPersistentChannelOrHandleLiveUrl(prevUrl) &&
+              incoming !== prevUrl &&
+              prevUrl.startsWith(incoming.trim()) &&
+              incoming.trim().length < prevUrl.trim().length
+            ) {
+              console.warn("FILM_ROOM blocked persistent /live URL truncation", {
+                prevUrl,
+                rejected: incoming,
+              });
+              return { ...a, ...patch, url: prevUrl };
+            }
+          }
+          return { ...a, ...patch };
+        }),
       );
     },
-    [],
+    [setAngles],
   );
 
   const addAngle = useCallback(() => {
@@ -714,11 +768,11 @@ export default function StreamRoomPage() {
         status: "idle",
       },
     ]);
-  }, []);
+  }, [setAngles]);
 
   const removeAngle = useCallback((id: string) => {
     setAngles((prev) => prev.filter((a) => a.id !== id));
-  }, []);
+  }, [setAngles]);
 
   const handleStreamAngleSettled = useCallback(
     (
@@ -735,7 +789,7 @@ export default function StreamRoomPage() {
         prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
       );
     },
-    [],
+    [setAngles],
   );
 
   // Debounced URL → videoId (watch, /live/, or channel/@ persistent URLs) + checking.
@@ -758,6 +812,7 @@ export default function StreamRoomPage() {
           if (!trimmed) {
             applyIfUrl((a) => ({
               ...a,
+              url: a.url,
               videoId: null,
               status: "idle",
               debug: null,
@@ -772,6 +827,7 @@ export default function StreamRoomPage() {
           if (!target) {
             applyIfUrl((a) => ({
               ...a,
+              url: a.url,
               videoId: null,
               status: "invalid_url",
               debug: null,
@@ -792,6 +848,7 @@ export default function StreamRoomPage() {
                 if (a.videoId === vid && a.status !== "invalid_url") return a;
                 return {
                   ...a,
+                  url: a.url,
                   videoId: vid,
                   status: "checking",
                   debug: null,
@@ -816,6 +873,7 @@ export default function StreamRoomPage() {
           } catch {
             applyIfUrl((a) => ({
               ...a,
+              url: a.url,
               videoId: null,
               status: "invalid_url",
               debug: null,
@@ -840,6 +898,7 @@ export default function StreamRoomPage() {
           if (!res.ok || data.ok === false) {
             applyIfUrl((a) => ({
               ...a,
+              url: a.url,
               videoId: null,
               status: "invalid_url",
               debug: null,
@@ -859,6 +918,7 @@ export default function StreamRoomPage() {
                 : `https://www.youtube.com/@${target.handle}/live`;
             applyIfUrl((a) => ({
               ...a,
+              url: a.url,
               videoId: null,
               status: "waiting_for_signal",
               debug: null,
@@ -878,6 +938,7 @@ export default function StreamRoomPage() {
                 return a;
               return {
                 ...a,
+                url: a.url,
                 videoId: data.videoId!,
                 status: "checking",
                 debug: null,
@@ -897,7 +958,7 @@ export default function StreamRoomPage() {
     return () => {
       for (const t of timers) window.clearTimeout(t);
     };
-  }, [angles]);
+  }, [angles, setAngles]);
 
   const launchableAngles = useMemo(
     () => angles.filter(isLaunchableStreamAngle),
@@ -1078,7 +1139,7 @@ export default function StreamRoomPage() {
           : a,
       );
     });
-  }, []);
+  }, [setAngles]);
 
   const loadCameraPresetIntoAngle = useCallback((cam: YouTubeCameraPreset) => {
     const { preset: augmented, didAddPersistent } =
@@ -1133,7 +1194,7 @@ export default function StreamRoomPage() {
           : a,
       );
     });
-  }, [setSavedCameras]);
+  }, [setSavedCameras, setAngles]);
 
   const verifyCameraStream = useCallback(async (cam: YouTubeCameraPreset) => {
     if (!cam.streamId.trim()) {
@@ -1807,6 +1868,15 @@ export default function StreamRoomPage() {
                   <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
                     YouTube URL
                   </label>
+                  {typeof window !== "undefined"
+                    ? (() => {
+                        console.log("ANGLE_RENDER_VALUE", {
+                          angleId: a.id,
+                          url: a.url,
+                        });
+                        return null;
+                      })()
+                    : null}
                   <input
                     value={a.url}
                     onChange={(e) => setAngleField(a.id, { url: e.target.value })}

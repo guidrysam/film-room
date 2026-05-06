@@ -112,6 +112,15 @@ export function isPersistentYouTubeLiveUrl(url: string): boolean {
   return u.includes("/live") || (u.includes("/@") && u.endsWith("/live"));
 }
 
+/** Canonical persistent live entry points only (not e.g. `youtube.com/live/VIDEO_ID`). */
+export function isPersistentChannelOrHandleLiveUrl(url: string): boolean {
+  const u = url.trim();
+  return (
+    (u.includes("/channel/") && u.endsWith("/live")) ||
+    (u.includes("/@") && u.endsWith("/live"))
+  );
+}
+
 export type PersistentLiveUrlTarget =
   | { kind: "video"; videoId: string }
   | { kind: "channel_live"; channelId: string }
