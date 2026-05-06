@@ -1184,13 +1184,16 @@ export default function StreamRoomPage() {
       });
       setAngles((prev) => {
         if (prev.length === 0) return prev;
+        const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+        const t = parsePersistentLiveUrlTarget(finalUrl);
+        const derivedVid = t && t.kind === "video" ? t.videoId : null;
         return prev.map((a, i) =>
-          i === 0
+          i === idx
             ? {
                 ...a,
                 url: finalUrl,
-                videoId: null,
-                status: "idle",
+                videoId: derivedVid,
+                status: derivedVid ? "checking" : "idle",
                 debug: null,
                 pastBroadcastWarning: false,
                 persistentLiveHint: null,
@@ -1403,7 +1406,45 @@ export default function StreamRoomPage() {
           streamStatus:
             typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
         });
-        const watch = ok.watchUrl.trim();
+        const watchUrl = ok.watchUrl.trim();
+        console.log("START_SESSION_WATCH_URL", {
+          watchUrl,
+          broadcastId: ok.broadcastId,
+          streamId: ok.streamId,
+        });
+
+        // Immediately populate the angle with the fresh session watch URL (never /live, never lastWatchUrl).
+        setAngles((prev) => {
+          if (prev.length === 0) return prev;
+          const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+          const t = parsePersistentLiveUrlTarget(watchUrl);
+          const derivedVid = t && t.kind === "video" ? t.videoId : null;
+          return prev.map((a, i) =>
+            i === idx
+              ? {
+                  ...a,
+                  name: cam.name.trim() || a.name,
+                  url: watchUrl,
+                  videoId: derivedVid,
+                  status: derivedVid ? "checking" : "idle",
+                  debug: null,
+                  pastBroadcastWarning: false,
+                  persistentLiveHint: null,
+                  urlResolveNote: null,
+                  appCreatedLive: true,
+                  source: "youtube_api_broadcast",
+                  createdBroadcastId: ok.broadcastId,
+                }
+              : a,
+          );
+        });
+
+        // Keep helper call for centralized logging/behavior.
+        fillFirstAngleWithUrl(watchUrl, {
+          appCreatedLive: true,
+          source: "youtube_api_broadcast",
+          createdBroadcastId: ok.broadcastId,
+        });
         const merged: YouTubeCameraPreset = {
           ...cam,
           ingestionAddress: ok.ingestionAddress.trim(),
@@ -1419,16 +1460,11 @@ export default function StreamRoomPage() {
           ok.persistentLiveUrl.trim() !== ""
             ? { persistentLiveUrl: ok.persistentLiveUrl.trim() }
             : {}),
-          lastWatchUrl: watch,
+          lastWatchUrl: watchUrl,
         };
         const { preset: mergedWithDerived, didAddPersistent } =
           augmentPresetPersistentForStorage(merged);
         const storedPreset = didAddPersistent ? mergedWithDerived : merged;
-        fillFirstAngleWithUrl(watch, {
-          appCreatedLive: true,
-          source: "youtube_api_broadcast",
-          createdBroadcastId: ok.broadcastId,
-        });
         setSavedCameras((prev) => {
           const next = prev.map((c) => (c.id === cam.id ? storedPreset : c));
           if (typeof window !== "undefined") {
