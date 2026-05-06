@@ -11,6 +11,8 @@ function normalizeVideoId(segment: string | null | undefined): string | null {
 /**
  * Parses common YouTube URL shapes and returns a clean 11-character video id, or null.
  *
+ * `…/channel/<UC…>/live` and `…/@handle/live` always return null (not video URLs).
+ *
  * Accepted examples (query/hash ignored except `v` on /watch):
  * - https://www.youtube.com/watch?v=VIDEO_ID&t=123&feature=share
  * - https://youtube.com/live/VIDEO_ID?si=abc
@@ -50,6 +52,15 @@ export function extractYouTubeVideoId(raw: string): string | null {
   if (!isYoutube) return null;
 
   const { pathname, searchParams } = url;
+  const normPath = pathname.replace(/\/+$/, "") || "/";
+
+  // Persistent channel or @handle live URLs must never be parsed as /live/<videoId>.
+  if (/^\/channel\/[^/]+\/live$/i.test(normPath)) {
+    return null;
+  }
+  if (/^\/@[^/]+\/live$/i.test(normPath)) {
+    return null;
+  }
 
   if (pathname === "/watch" || pathname.startsWith("/watch/")) {
     return normalizeVideoId(searchParams.get("v"));
@@ -115,38 +126,43 @@ const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
 export function parsePersistentLiveUrlTarget(
   raw: string,
 ): PersistentLiveUrlTarget | null {
-  const vid = extractYouTubeVideoId(raw);
-  if (vid) return { kind: "video", videoId: vid };
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
 
   let url: URL;
   try {
-    const trimmed = raw.trim();
     const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
     url = new URL(withScheme);
   } catch {
-    return null;
+    const vidOnly = extractYouTubeVideoId(trimmed);
+    return vidOnly ? { kind: "video", videoId: vidOnly } : null;
   }
 
   const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-  if (host !== "youtube.com" && host !== "m.youtube.com") return null;
 
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  if (host === "youtube.com" || host === "m.youtube.com") {
+    const path = url.pathname.replace(/\/+$/, "") || "/";
 
-  const chLive = /^\/channel\/([^/]+)\/live$/i.exec(path);
-  if (chLive) {
-    const id = decodeURIComponent(chLive[1]!);
-    if (CHANNEL_ID_RE.test(id)) {
-      return { kind: "channel_live", channelId: id };
+    // Resolve persistent live URLs before any /live/<videoId> or watch?v= extraction.
+    const chLive = /^\/channel\/([^/]+)\/live$/i.exec(path);
+    if (chLive) {
+      const id = decodeURIComponent(chLive[1]!);
+      if (CHANNEL_ID_RE.test(id)) {
+        return { kind: "channel_live", channelId: id };
+      }
+      return null;
+    }
+
+    const atLive = /^\/@([^/]+)\/live$/i.exec(path);
+    if (atLive) {
+      const h = decodeURIComponent(atLive[1]!);
+      if (h.trim() !== "") {
+        return { kind: "handle_live", handle: h };
+      }
+      return null;
     }
   }
 
-  const atLive = /^\/@([^/]+)\/live$/i.exec(path);
-  if (atLive) {
-    const h = decodeURIComponent(atLive[1]!);
-    if (h.trim() !== "") {
-      return { kind: "handle_live", handle: h };
-    }
-  }
-
-  return null;
+  const vid = extractYouTubeVideoId(trimmed);
+  return vid ? { kind: "video", videoId: vid } : null;
 }

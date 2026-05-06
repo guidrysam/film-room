@@ -1030,13 +1030,20 @@ export default function StreamRoomPage() {
   }, [ytCreateResult, cameraPresetName]);
 
   const fillFirstAngleWithUrl = useCallback((url: string) => {
+    const finalUrl = url.trim();
+    console.log("FILM_ROOM_LOAD_LIVE_URL", {
+      source: "fillFirstAngleWithUrl",
+      inputUrl: url,
+      finalUrl,
+      length: finalUrl.length,
+    });
     setAngles((prev) => {
       if (prev.length === 0) return prev;
       return prev.map((a, i) =>
         i === 0
           ? {
               ...a,
-              url,
+              url: finalUrl,
               videoId: null,
               status: "idle",
               debug: null,
@@ -1068,6 +1075,21 @@ export default function StreamRoomPage() {
       );
       return;
     }
+    const inputUrl =
+      augmented.persistentLiveUrl?.trim() ??
+      (augmented.channelId?.trim() &&
+      CHANNEL_ID_PRESET_RE.test(augmented.channelId.trim())
+        ? `https://www.youtube.com/channel/${augmented.channelId.trim()}/live`
+        : augmented.channelHandle?.trim()
+          ? `https://www.youtube.com/@${augmented.channelHandle.replace(/^@/, "")}/live`
+          : "");
+    const finalUrl = url.trim();
+    console.log("FILM_ROOM_LOAD_LIVE_URL", {
+      source: "loadCameraPresetIntoAngle",
+      inputUrl: inputUrl || finalUrl,
+      finalUrl,
+      length: finalUrl.length,
+    });
     setAngles((prev) => {
       if (prev.length === 0) return prev;
       const idx = pickAngleIndexForPresetLoad(prev);
@@ -1076,7 +1098,7 @@ export default function StreamRoomPage() {
           ? {
               ...a,
               name: augmented.name.trim() || a.name,
-              url: url,
+              url: finalUrl,
               videoId: null,
               status: "idle",
               debug: null,
