@@ -721,6 +721,10 @@ export default function StreamRoomPage() {
     finalAngleUrl: string;
     resolverChannelId: string;
     resolverHandle: string;
+    foundExistingBroadcast?: boolean;
+    foundBroadcastId?: string;
+    foundStatus?: string;
+    usedExistingBroadcast?: boolean;
     attempts: Array<{
       attempt: number;
       at: string;
@@ -1381,6 +1385,132 @@ export default function StreamRoomPage() {
       });
       try {
         const { accessToken } = await getYouTubeOAuthAccessToken();
+
+        // Priority 1: reuse an existing active/upcoming broadcast already bound to this reusable stream.
+        try {
+          const existingRes = await fetch("/api/youtube/find-broadcast-for-stream", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ streamId: cam.streamId.trim() }),
+          });
+          const existingJson = (await existingRes.json()) as {
+            ok?: boolean;
+            found?: boolean;
+            broadcastId?: string;
+            videoId?: string;
+            watchUrl?: string;
+            standardWatchUrl?: string;
+            status?: string;
+            lifeCycleStatus?: string;
+            boundStreamId?: string;
+            error?: string;
+          };
+          if (existingRes.ok && existingJson.ok === true && existingJson.found === true) {
+            const foundStatus = typeof existingJson.status === "string" ? existingJson.status : "";
+            const broadcastId =
+              typeof existingJson.broadcastId === "string" ? existingJson.broadcastId : "";
+            const vid = typeof existingJson.videoId === "string" ? existingJson.videoId : "";
+            const finalUrl =
+              vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)
+                ? `https://youtube.com/live/${vid}`
+                : typeof existingJson.watchUrl === "string"
+                  ? existingJson.watchUrl
+                  : "";
+
+            setCameraActiveResolveDebug({
+              createdBroadcastId: broadcastId || "",
+              okVideoId: vid || null,
+              okWatchUrl:
+                typeof existingJson.standardWatchUrl === "string"
+                  ? existingJson.standardWatchUrl
+                  : "",
+              okEmbedUrl: null,
+              resolvedActiveVideoId: vid || null,
+              finalAngleUrl: finalUrl,
+              resolverChannelId: cam.channelId?.trim() ?? "",
+              resolverHandle: cam.channelHandle?.trim() ?? "",
+              attempts: [],
+              foundExistingBroadcast: true,
+              foundBroadcastId: broadcastId || undefined,
+              foundStatus,
+              usedExistingBroadcast: true,
+            });
+
+            if (foundStatus === "active") {
+              setCameraActiveLinkStatus({
+                kind: "success",
+                message: "Using currently live broadcast.",
+              });
+              setAngles((prev) => {
+                if (prev.length === 0) return prev;
+                const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+                const t = parsePersistentLiveUrlTarget(finalUrl);
+                const derivedVid = t && t.kind === "video" ? t.videoId : null;
+                return prev.map((a, i) =>
+                  i === idx
+                    ? {
+                        ...a,
+                        name: cam.name.trim() || a.name,
+                        url: finalUrl,
+                        videoId: derivedVid ?? (vid || null),
+                        status: derivedVid || vid ? "checking" : "idle",
+                        debug: null,
+                        pastBroadcastWarning: false,
+                        persistentLiveHint: null,
+                        urlResolveNote: null,
+                        appCreatedLive: true,
+                        source: "youtube_api_broadcast",
+                        createdBroadcastId: broadcastId || undefined,
+                      }
+                    : a,
+                );
+              });
+              return;
+            }
+
+            if (foundStatus === "upcoming") {
+              setCameraActiveLinkStatus({
+                kind: "warning",
+                message: "Found upcoming broadcast; waiting for stream.",
+              });
+              setAngles((prev) => {
+                if (prev.length === 0) return prev;
+                const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+                const t = parsePersistentLiveUrlTarget(finalUrl);
+                const derivedVid = t && t.kind === "video" ? t.videoId : null;
+                return prev.map((a, i) =>
+                  i === idx
+                    ? {
+                        ...a,
+                        name: cam.name.trim() || a.name,
+                        url: finalUrl,
+                        videoId: derivedVid ?? (vid || null),
+                        status: derivedVid || vid ? "checking" : "idle",
+                        debug: null,
+                        pastBroadcastWarning: false,
+                        persistentLiveHint: null,
+                        urlResolveNote: "Upcoming broadcast found — waiting for stream.",
+                        appCreatedLive: true,
+                        source: "youtube_api_broadcast",
+                        createdBroadcastId: broadcastId || undefined,
+                      }
+                    : a,
+                );
+              });
+
+              const createAnyway = window.confirm(
+                "Found upcoming broadcast already bound to this stream. Create a new broadcast anyway?",
+              );
+              if (!createAnyway) return;
+            }
+          }
+        } catch {
+          // ignore and proceed to create-broadcast-from-stream
+        }
+
         const res = await fetch("/api/youtube/create-broadcast-from-stream", {
           method: "POST",
           headers: {
