@@ -46,52 +46,87 @@ type LiveBroadcastListResponse = {
   }>;
 };
 
+function normLifeCycle(ls: string): string {
+  return ls.trim().toLowerCase();
+}
+
+/** Locally filtered states we consider (no broadcastStatus API param). */
+const FILTER_LIFECYCLES = new Set(["live", "livestarting", "ready", "testing"]);
+
 /**
- * Daily-use "live now": bound to this stream AND lifecycle indicates the broadcast is live.
- * YouTube uses lifeCycleStatus `live` / `liveStarting` for an actual live signal.
- * We do not treat `ready` / `testing` / `created` as live even if listed under broadcastStatus=active.
+ * Selection priority (lower = preferred): live > liveStarting > testing > ready
  */
-function isAcceptableLiveBroadcast(lifeCycleStatus: string): boolean {
-  const s = lifeCycleStatus.trim().toLowerCase();
-  /** `live` / `liveStarting`: streaming; `active` included per API variance */
-  return s === "live" || s === "livestarting" || s === "active";
+function selectionPriorityRank(lifeCycleStatus: string): number | null {
+  const s = normLifeCycle(lifeCycleStatus);
+  if (!FILTER_LIFECYCLES.has(s)) return null;
+  if (s === "live") return 0;
+  if (s === "livestarting") return 1;
+  if (s === "testing") return 2;
+  if (s === "ready") return 3;
+  return null;
 }
 
-function countBoundToStream(
-  list: LiveBroadcastListResponse,
+type BoundRow = {
+  broadcastId: string;
+  boundStreamId: string;
+  lifeCycleStatus: string;
+};
+
+function collectBoundRows(
+  data: LiveBroadcastListResponse,
   streamId: string,
-): number {
-  const items = Array.isArray(list.items) ? list.items : [];
-  let n = 0;
+): BoundRow[] {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const out: BoundRow[] = [];
   for (const it of items) {
+    const boundRaw = it.contentDetails?.boundStreamId;
     const bound =
-      typeof it.contentDetails?.boundStreamId === "string"
-        ? it.contentDetails.boundStreamId.trim()
-        : "";
-    if (bound === streamId) n += 1;
-  }
-  return n;
-}
-
-function pickLiveBoundBroadcast(
-  list: LiveBroadcastListResponse,
-  streamId: string,
-): { broadcastId: string; boundStreamId: string; lifeCycleStatus: string } | null {
-  const items = Array.isArray(list.items) ? list.items : [];
-  for (const it of items) {
-    const boundStreamIdRaw = it.contentDetails?.boundStreamId;
-    const boundStreamId =
-      typeof boundStreamIdRaw === "string" ? boundStreamIdRaw.trim() : "";
-    if (!boundStreamId || boundStreamId !== streamId) continue;
+      typeof boundRaw === "string" ? boundRaw.trim() : "";
+    if (!bound || bound !== streamId) continue;
     const idRaw = it.id;
     const broadcastId = typeof idRaw === "string" ? idRaw.trim() : "";
     if (!broadcastId) continue;
     const lsRaw = it.status?.lifeCycleStatus;
     const lifeCycleStatus = typeof lsRaw === "string" ? lsRaw.trim() : "";
-    if (!isAcceptableLiveBroadcast(lifeCycleStatus)) continue;
-    return { broadcastId, boundStreamId, lifeCycleStatus };
+    if (!lifeCycleStatus || selectionPriorityRank(lifeCycleStatus) === null) continue;
+    out.push({ broadcastId, boundStreamId: bound, lifeCycleStatus });
   }
-  return null;
+  return out;
+}
+
+function partitionActiveUpcoming(rows: BoundRow[]): {
+  activeBoundBroadcasts: BoundRow[];
+  upcomingBoundBroadcasts: BoundRow[];
+} {
+  const active: BoundRow[] = [];
+  const upcoming: BoundRow[] = [];
+  for (const r of rows) {
+    const n = normLifeCycle(r.lifeCycleStatus);
+    if (n === "live" || n === "livestarting") {
+      active.push(r);
+    } else if (n === "ready" || n === "testing") {
+      upcoming.push(r);
+    }
+  }
+  return {
+    activeBoundBroadcasts: active,
+    upcomingBoundBroadcasts: upcoming,
+  };
+}
+
+function pickPreferredBroadcast(rows: BoundRow[]): BoundRow | null {
+  if (rows.length === 0) return null;
+  let best = rows[0]!;
+  let bestRank = selectionPriorityRank(best.lifeCycleStatus) ?? 999;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i]!;
+    const rank = selectionPriorityRank(r.lifeCycleStatus) ?? 999;
+    if (rank < bestRank) {
+      best = r;
+      bestRank = rank;
+    }
+  }
+  return best;
 }
 
 export async function POST(request: Request) {
@@ -124,62 +159,52 @@ export async function POST(request: Request) {
   }
   const streamId = streamIdRaw;
 
-  async function listByStatus(
-    broadcastStatus: "active" | "upcoming",
-  ): Promise<
-    | { ok: true; data: LiveBroadcastListResponse }
-    | {
-        ok: false;
-        status: number;
-        statusText: string;
-        error: unknown;
-        endpoint: string;
-      }
-  > {
-    const url =
-      "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
-      `?part=snippet,contentDetails,status&broadcastStatus=${broadcastStatus}` +
-      "&mine=true&maxResults=50";
-    const r = await ytGetJson<LiveBroadcastListResponse>({ url, token: authToken });
-    if (!r.ok)
-      return {
-        ok: false,
-        status: r.status,
-        statusText: r.statusText,
-        error: r.error,
-        endpoint: url,
-      };
-    return { ok: true, data: r.data };
-  }
+  /** Do not use broadcastStatus — it is incompatible with mine=true per YouTube API. */
+  const listUrl =
+    "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
+    "?part=snippet,contentDetails,status&mine=true&maxResults=50";
 
-  const active = await listByStatus("active");
-  if (!active.ok) {
+  const listed = await ytGetJson<LiveBroadcastListResponse>({
+    url: listUrl,
+    token: authToken,
+  });
+  if (!listed.ok) {
     return youtubeApiErrorNextResponse({
       route: ROUTE,
-      endpoint: active.endpoint,
-      httpStatus: active.status,
-      httpStatusText: active.statusText,
-      rawBody: active.error,
+      endpoint: listUrl,
+      httpStatus: listed.status,
+      httpStatusText: listed.statusText,
+      rawBody: listed.error,
     });
   }
 
-  const upcoming = await listByStatus("upcoming");
-  if (!upcoming.ok) {
-    return youtubeApiErrorNextResponse({
-      route: ROUTE,
-      endpoint: upcoming.endpoint,
-      httpStatus: upcoming.status,
-      httpStatusText: upcoming.statusText,
-      rawBody: upcoming.error,
+  const relevantRows = collectBoundRows(listed.data, streamId);
+  const { activeBoundBroadcasts, upcomingBoundBroadcasts } =
+    partitionActiveUpcoming(relevantRows);
+
+  const foundActiveBoundCount = activeBoundBroadcasts.length;
+  const foundUpcomingBoundCount = upcomingBoundBroadcasts.length;
+
+  const preferred = pickPreferredBroadcast(relevantRows);
+
+  if (!preferred) {
+    return NextResponse.json({
+      ok: true,
+      noCreateAttempted: true,
+      foundActiveBoundCount,
+      foundUpcomingBoundCount,
+      foundAcceptableLive: false,
+      foundOnlyUpcomingBound: false,
+      selectedBroadcastId: null,
+      selectedVideoId: null,
     });
   }
 
-  const foundActiveBoundCount = countBoundToStream(active.data, streamId);
-  const foundUpcomingBoundCount = countBoundToStream(upcoming.data, streamId);
-  const liveMatch = pickLiveBoundBroadcast(active.data, streamId);
+  const n = normLifeCycle(preferred.lifeCycleStatus);
+  const isLiveOrStarting = n === "live" || n === "livestarting";
 
-  if (liveMatch) {
-    const { broadcastId, boundStreamId, lifeCycleStatus } = liveMatch;
+  if (isLiveOrStarting) {
+    const { broadcastId, boundStreamId, lifeCycleStatus } = preferred;
     return NextResponse.json({
       ok: true,
       noCreateAttempted: true,
@@ -191,7 +216,6 @@ export async function POST(request: Request) {
       videoId: broadcastId,
       watchUrl: `https://youtube.com/live/${broadcastId}`,
       standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
-      broadcastStatusFilter: "active",
       lifeCycleStatus,
       boundStreamId,
       selectedBroadcastId: broadcastId,
@@ -205,7 +229,7 @@ export async function POST(request: Request) {
     foundActiveBoundCount,
     foundUpcomingBoundCount,
     foundAcceptableLive: false,
-    foundOnlyUpcomingBound: foundUpcomingBoundCount > 0,
+    foundOnlyUpcomingBound: true,
     selectedBroadcastId: null,
     selectedVideoId: null,
   });
