@@ -77,7 +77,8 @@ function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
 
 type SavedSetupV1 = {
   v: 1;
-  angles: Array<{ id: string; name: string; url: string }>;
+  /** Angle names/ids only — YouTube URLs are not persisted (avoid stale watch links). */
+  angles: Array<{ id: string; name: string; url?: string }>;
   playerViewAngleId?: string;
 };
 
@@ -116,10 +117,10 @@ function optionalTrimString(v: unknown): string | undefined {
 }
 
 /**
- * Persistent /live URL only — never `watch?v=` (used for angles + Load into Angle).
+ * Reference-only channel /live URL for display (never applied as an angle playback URL).
  * Priority: stored persistent → channel UC…/live → @handle/live.
  */
-function persistentLiveViewUrlFromPreset(cam: YouTubeCameraPreset): string | null {
+function referenceChannelLiveUrlFromPreset(cam: YouTubeCameraPreset): string | null {
   const p = cam.persistentLiveUrl?.trim();
   if (p) return p;
   const c = cam.channelId?.trim();
@@ -303,8 +304,11 @@ function safeParseSavedSetup(raw: string): SavedSetupV1 | null {
         const row = a as { id?: unknown; name?: unknown; url?: unknown };
         if (typeof row.id !== "string") return null;
         if (typeof row.name !== "string") return null;
-        if (typeof row.url !== "string") return null;
-        return { id: row.id, name: row.name, url: row.url };
+        return {
+          id: row.id,
+          name: row.name,
+          ...(typeof row.url === "string" ? { url: row.url } : {}),
+        };
       })
       .filter(Boolean) as SavedSetupV1["angles"];
     if (angles.length === 0) return null;
@@ -444,7 +448,10 @@ export default function StreamRoomPage() {
     if (typeof window === "undefined") return;
     const payload: SavedSetupV1 = {
       v: 1,
-      angles: angles.map((a) => ({ id: a.id, name: a.name.trim() || "Angle", url: a.url })),
+      angles: angles.map((a) => ({
+        id: a.id,
+        name: a.name.trim() || "Angle",
+      })),
       playerViewAngleId:
         angles.find((a) => a.videoId && a.status !== "invalid_url" && a.status !== "not_embeddable")
           ?.id ?? angles[0]?.id,
@@ -465,9 +472,16 @@ export default function StreamRoomPage() {
       parsed.angles.map((a) => ({
         id: a.id,
         name: a.name,
-        url: a.url,
+        url: "",
         videoId: null,
         status: "idle",
+        debug: null,
+        pastBroadcastWarning: false,
+        persistentLiveHint: null,
+        urlResolveNote: null,
+        appCreatedLive: undefined,
+        source: undefined,
+        createdBroadcastId: undefined,
       })),
     );
   }, [setAngles]);
@@ -1067,6 +1081,12 @@ export default function StreamRoomPage() {
             source: "youtube_api_broadcast",
             createdBroadcastId: broadcastId,
           });
+          console.log("GET_WATCH_LINK_APPLIED", {
+            streamId: cam.streamId.trim(),
+            broadcastId,
+            videoId: vid,
+            finalUrl,
+          });
           return;
         }
 
@@ -1260,7 +1280,9 @@ export default function StreamRoomPage() {
             <div className="space-y-1">
               <h2 className="text-sm font-semibold text-white">Saved setup</h2>
               <p className="text-xs text-zinc-400">
-                Save angle names and URLs locally for quick reuse.
+                Save angle names locally. YouTube URLs are not restored — use{" "}
+                <strong className="text-zinc-300">Get Watch Link</strong> or paste a live URL so
+                playback is never stale.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1293,8 +1315,13 @@ export default function StreamRoomPage() {
           <p className="mt-2 text-sm leading-relaxed text-zinc-300">
             <strong className="text-zinc-200">Daily use mode:</strong> start streaming on your
             phone, then click <strong className="text-zinc-200">Get Watch Link</strong>. Film Room
-            does a single lookup to find the current active/upcoming broadcast for that preset’s
-            saved <code className="text-zinc-200">streamId</code>, then auto-adds it as an angle.
+            looks up the current <strong className="text-zinc-200">live</strong> broadcast bound to
+            that preset’s <code className="text-zinc-200">streamId</code> and adds it as an angle.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+            Saved presets store your reusable stream key configuration only. Use{" "}
+            <strong className="text-zinc-200">Get Watch Link</strong> to load the currently
+            live broadcast into Stream Room.
           </p>
           <p className="mt-2 text-xs text-zinc-500">
             Creating a stream signs you in with Google (YouTube scope) and does not start
@@ -1407,8 +1434,8 @@ export default function StreamRoomPage() {
                   Save camera preset
                 </button>
                 <span className="text-xs text-zinc-500">
-                  Saves stream id, RTMP, persistent /live URL when available, and last
-                  archive watch URL (reference only) in {CAMERAS_STORAGE_KEY}.
+                  Saves stream id, RTMP, optional channel reference URLs — never auto-loads
+                  playback into angles (use Get Watch Link). Stored in {CAMERAS_STORAGE_KEY}.
                 </span>
               </div>
             </div>
@@ -1524,13 +1551,14 @@ export default function StreamRoomPage() {
                 Saved cameras
               </h3>
               <p className="mt-2 text-xs text-zinc-400">
-                If you already configured your phone/camera, use the saved camera below.
-                You only need to create a new stream when adding a new camera or
-                replacing a stream key.
+                Saved presets store your reusable stream key configuration only. Use{" "}
+                <strong className="text-zinc-200">Get Watch Link</strong> to load the
+                currently live broadcast into Stream Room. Create a new stream only when
+                adding a camera or replacing a key.
               </p>
               <ul className="mt-3 space-y-3">
                 {savedCamerasSorted.map((cam) => {
-                  const liveUrlDisplay = persistentLiveViewUrlFromPreset(cam);
+                  const liveUrlDisplay = referenceChannelLiveUrlFromPreset(cam);
                   const presetIncomplete = isCameraPresetIncomplete(cam);
                   return (
                   <li
@@ -1557,16 +1585,17 @@ export default function StreamRoomPage() {
                         ) : null}
                         {liveUrlDisplay ? (
                           <p className="mt-1 break-all text-[11px] text-emerald-200/90">
-                            Live view (/live): {liveUrlDisplay}
+                            Reference — channel /live (not loaded into Film Room):{" "}
+                            {liveUrlDisplay}
                           </p>
                         ) : (
                           <p className="mt-1 text-[11px] text-amber-200/85">
-                            No /live URL yet — add channel metadata or recreate the preset.
+                            No channel /live reference stored — optional metadata only.
                           </p>
                         )}
                         {cam.lastWatchUrl ? (
                           <p className="mt-1 break-all text-[11px] text-zinc-500">
-                            Last archive URL: {cam.lastWatchUrl}
+                            Last archive URL (reference only, not playback): {cam.lastWatchUrl}
                           </p>
                         ) : null}
                         {cam.lastVerifiedAt ? (
