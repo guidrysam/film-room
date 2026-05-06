@@ -679,6 +679,9 @@ export default function StreamRoomPage() {
   const [sessionFromCameraLoadingId, setSessionFromCameraLoadingId] = useState<
     string | null
   >(null);
+  const [cameraActiveLinkStatus, setCameraActiveLinkStatus] = useState<
+    { kind: "resolving" | "success" | "warning"; message: string } | null
+  >(null);
   const [cameraSessionVerify, setCameraSessionVerify] =
     useState<CameraSessionVerify | null>(null);
   const [verifyCameraLoadingId, setVerifyCameraLoadingId] = useState<
@@ -1323,6 +1326,10 @@ export default function StreamRoomPage() {
       if (sessionFromCameraLoadingId) return;
       setSessionFromCameraLoadingId(cam.id);
       setCameraSessionVerify(null);
+      setCameraActiveLinkStatus({
+        kind: "resolving",
+        message: "Finding active YouTube live link…",
+      });
       try {
         const { accessToken } = await getYouTubeOAuthAccessToken();
         const res = await fetch("/api/youtube/create-broadcast-from-stream", {
@@ -1395,6 +1402,11 @@ export default function StreamRoomPage() {
           );
           return;
         }
+        console.log("START_SESSION_CREATED_BROADCAST", {
+          broadcastId: ok.broadcastId,
+          okVideoId: ok.videoId,
+          watchUrl: ok.watchUrl,
+        });
         setCameraSessionVerify({
           broadcastId: ok.broadcastId,
           requestedStreamId: ok.streamId,
@@ -1408,6 +1420,57 @@ export default function StreamRoomPage() {
             typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
         });
         const watchUrl = ok.watchUrl.trim();
+
+        const channelIdForResolve =
+          cam.channelId?.trim() ||
+          (typeof ok.channelId === "string" ? ok.channelId.trim() : "");
+        const handleForResolve =
+          cam.channelHandle?.trim() ||
+          (typeof ok.channelHandle === "string" ? ok.channelHandle.trim() : "");
+        const resolveSource =
+          channelIdForResolve ? "channelId" : handleForResolve ? "handle" : null;
+
+        let resolvedVideoId: string | null = null;
+        if (resolveSource) {
+          const deadline = Date.now() + 30_000;
+          while (Date.now() < deadline) {
+            const qs = channelIdForResolve
+              ? `channelId=${encodeURIComponent(channelIdForResolve)}`
+              : `handle=${encodeURIComponent(handleForResolve)}`;
+            try {
+              const rr = await fetch(`/api/youtube-resolve-live?${qs}`, {
+                cache: "no-store",
+              });
+              const data = (await rr.json()) as {
+                ok?: boolean;
+                videoId?: string | null;
+              };
+              if (rr.ok && data.ok === true) {
+                const vid =
+                  typeof data.videoId === "string" ? data.videoId.trim() : "";
+                if (vid) {
+                  resolvedVideoId = vid;
+                  break;
+                }
+              }
+            } catch {
+              /* ignore transient polling errors */
+            }
+            await new Promise<void>((r) => window.setTimeout(r, 2000));
+          }
+        }
+
+        if (resolvedVideoId) {
+          console.log("START_SESSION_RESOLVED_ACTIVE_LIVE", {
+            resolvedVideoId,
+            source: resolveSource,
+          });
+          setCameraActiveLinkStatus({
+            kind: "success",
+            message: "Active live link loaded.",
+          });
+        }
+
         const apiVideoId =
           typeof ok.videoId === "string" && ok.videoId.trim() !== ""
             ? ok.videoId.trim()
@@ -1415,24 +1478,28 @@ export default function StreamRoomPage() {
         const watchTarget = parsePersistentLiveUrlTarget(watchUrl);
         const derivedVideoIdFromWatch =
           watchTarget && watchTarget.kind === "video" ? watchTarget.videoId : null;
-        const videoIdForLive =
-          apiVideoId ?? derivedVideoIdFromWatch ?? null;
-        if (!videoIdForLive) {
-          console.warn(
-            "START_SESSION_LIVE_PLAYBACK_URL missing videoId; falling back to watchUrl",
-            { watchUrl, okVideoId: ok.videoId },
-          );
-        }
-        const livePlaybackUrl = videoIdForLive
-          ? `https://youtube.com/live/${videoIdForLive}`
+        const fallbackVideoId = apiVideoId ?? derivedVideoIdFromWatch ?? null;
+
+        const finalVideoId = resolvedVideoId ?? fallbackVideoId;
+        const livePlaybackUrl = finalVideoId
+          ? `https://youtube.com/live/${finalVideoId}`
           : watchUrl;
+
+        if (!resolvedVideoId) {
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message:
+              "Could not confirm active live video. Using created broadcast link.",
+          });
+        }
+
         console.log("START_SESSION_LIVE_PLAYBACK_URL", {
-          videoId: videoIdForLive,
+          videoId: finalVideoId,
           livePlaybackUrl,
           watchUrl: ok.watchUrl,
         });
 
-        // Immediately populate the angle with the fresh session live playback URL (never /live, never lastWatchUrl).
+        // Populate only after resolve (or fallback).
         setAngles((prev) => {
           if (prev.length === 0) return prev;
           const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
@@ -1444,8 +1511,8 @@ export default function StreamRoomPage() {
                   ...a,
                   name: cam.name.trim() || a.name,
                   url: livePlaybackUrl,
-                  videoId: derivedVid ?? videoIdForLive,
-                  status: derivedVid || videoIdForLive ? "checking" : "idle",
+                  videoId: derivedVid ?? finalVideoId,
+                  status: derivedVid || finalVideoId ? "checking" : "idle",
                   debug: null,
                   pastBroadcastWarning: false,
                   persistentLiveHint: null,
@@ -1458,7 +1525,6 @@ export default function StreamRoomPage() {
           );
         });
 
-        // Keep helper call for centralized logging/behavior.
         fillFirstAngleWithUrl(livePlaybackUrl, {
           appCreatedLive: true,
           source: "youtube_api_broadcast",
@@ -1497,6 +1563,7 @@ export default function StreamRoomPage() {
             ? err.message
             : "Could not start session with camera.",
         );
+        setCameraActiveLinkStatus(null);
       } finally {
         setSessionFromCameraLoadingId(null);
       }
@@ -1841,6 +1908,20 @@ export default function StreamRoomPage() {
                 This is the exact key your phone must stream to.
               </p>
             </div>
+          ) : null}
+
+          {cameraActiveLinkStatus ? (
+            <p
+              className={`mt-3 rounded-lg border px-3 py-2 text-[11px] ${
+                cameraActiveLinkStatus.kind === "success"
+                  ? "border-emerald-500/30 bg-emerald-950/25 text-emerald-100"
+                  : cameraActiveLinkStatus.kind === "warning"
+                    ? "border-amber-500/35 bg-amber-950/30 text-amber-100"
+                    : "border-white/10 bg-black/25 text-zinc-300"
+              }`}
+            >
+              {cameraActiveLinkStatus.message}
+            </p>
           ) : null}
 
           {savedCamerasSorted.length > 0 ? (
