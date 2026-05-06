@@ -46,7 +46,34 @@ type LiveBroadcastListResponse = {
   }>;
 };
 
-function pickBoundBroadcast(
+/**
+ * Daily-use "live now": bound to this stream AND lifecycle indicates the broadcast is live.
+ * YouTube uses lifeCycleStatus `live` / `liveStarting` for an actual live signal.
+ * We do not treat `ready` / `testing` / `created` as live even if listed under broadcastStatus=active.
+ */
+function isAcceptableLiveBroadcast(lifeCycleStatus: string): boolean {
+  const s = lifeCycleStatus.trim().toLowerCase();
+  /** `live` / `liveStarting`: streaming; `active` included per API variance */
+  return s === "live" || s === "livestarting" || s === "active";
+}
+
+function countBoundToStream(
+  list: LiveBroadcastListResponse,
+  streamId: string,
+): number {
+  const items = Array.isArray(list.items) ? list.items : [];
+  let n = 0;
+  for (const it of items) {
+    const bound =
+      typeof it.contentDetails?.boundStreamId === "string"
+        ? it.contentDetails.boundStreamId.trim()
+        : "";
+    if (bound === streamId) n += 1;
+  }
+  return n;
+}
+
+function pickLiveBoundBroadcast(
   list: LiveBroadcastListResponse,
   streamId: string,
 ): { broadcastId: string; boundStreamId: string; lifeCycleStatus: string } | null {
@@ -61,6 +88,7 @@ function pickBoundBroadcast(
     if (!broadcastId) continue;
     const lsRaw = it.status?.lifeCycleStatus;
     const lifeCycleStatus = typeof lsRaw === "string" ? lsRaw.trim() : "";
+    if (!isAcceptableLiveBroadcast(lifeCycleStatus)) continue;
     return { broadcastId, boundStreamId, lifeCycleStatus };
   }
   return null;
@@ -99,8 +127,7 @@ export async function POST(request: Request) {
   async function listByStatus(
     broadcastStatus: "active" | "upcoming",
   ): Promise<
-    | { ok: true; match: { broadcastId: string; boundStreamId: string; lifeCycleStatus: string } }
-    | { ok: true; match: null }
+    | { ok: true; data: LiveBroadcastListResponse }
     | {
         ok: false;
         status: number;
@@ -122,7 +149,7 @@ export async function POST(request: Request) {
         error: r.error,
         endpoint: url,
       };
-    return { ok: true, match: pickBoundBroadcast(r.data, streamId) };
+    return { ok: true, data: r.data };
   }
 
   const active = await listByStatus("active");
@@ -133,20 +160,6 @@ export async function POST(request: Request) {
       httpStatus: active.status,
       httpStatusText: active.statusText,
       rawBody: active.error,
-    });
-  }
-  if (active.match) {
-    const { broadcastId, boundStreamId, lifeCycleStatus } = active.match;
-    return NextResponse.json({
-      ok: true,
-      found: true,
-      broadcastId,
-      videoId: broadcastId,
-      watchUrl: `https://youtube.com/live/${broadcastId}`,
-      standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
-      status: "active",
-      lifeCycleStatus,
-      boundStreamId,
     });
   }
 
@@ -160,21 +173,40 @@ export async function POST(request: Request) {
       rawBody: upcoming.error,
     });
   }
-  if (upcoming.match) {
-    const { broadcastId, boundStreamId, lifeCycleStatus } = upcoming.match;
+
+  const foundActiveBoundCount = countBoundToStream(active.data, streamId);
+  const foundUpcomingBoundCount = countBoundToStream(upcoming.data, streamId);
+  const liveMatch = pickLiveBoundBroadcast(active.data, streamId);
+
+  if (liveMatch) {
+    const { broadcastId, boundStreamId, lifeCycleStatus } = liveMatch;
     return NextResponse.json({
       ok: true,
-      found: true,
+      noCreateAttempted: true,
+      foundActiveBoundCount,
+      foundUpcomingBoundCount,
+      foundAcceptableLive: true,
+      foundOnlyUpcomingBound: false,
       broadcastId,
       videoId: broadcastId,
       watchUrl: `https://youtube.com/live/${broadcastId}`,
       standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
-      status: "upcoming",
+      broadcastStatusFilter: "active",
       lifeCycleStatus,
       boundStreamId,
+      selectedBroadcastId: broadcastId,
+      selectedVideoId: broadcastId,
     });
   }
 
-  return NextResponse.json({ ok: true, found: false });
+  return NextResponse.json({
+    ok: true,
+    noCreateAttempted: true,
+    foundActiveBoundCount,
+    foundUpcomingBoundCount,
+    foundAcceptableLive: false,
+    foundOnlyUpcomingBound: foundUpcomingBoundCount > 0,
+    selectedBroadcastId: null,
+    selectedVideoId: null,
+  });
 }
-
