@@ -682,6 +682,24 @@ export default function StreamRoomPage() {
   const [cameraActiveLinkStatus, setCameraActiveLinkStatus] = useState<
     { kind: "resolving" | "success" | "warning"; message: string } | null
   >(null);
+  const [cameraActiveResolveDebug, setCameraActiveResolveDebug] = useState<{
+    createdBroadcastId: string;
+    okVideoId: string | null;
+    okWatchUrl: string;
+    okEmbedUrl: string | null;
+    resolvedActiveVideoId: string | null;
+    finalAngleUrl: string;
+    resolverChannelId: string;
+    resolverHandle: string;
+    attempts: Array<{
+      attempt: number;
+      at: string;
+      channelId: string;
+      handle: string;
+      response: unknown;
+    }>;
+  } | null>(null);
+  const [manualLiveLinkDraft, setManualLiveLinkDraft] = useState("");
   const [cameraSessionVerify, setCameraSessionVerify] =
     useState<CameraSessionVerify | null>(null);
   const [verifyCameraLoadingId, setVerifyCameraLoadingId] = useState<
@@ -1326,6 +1344,7 @@ export default function StreamRoomPage() {
       if (sessionFromCameraLoadingId) return;
       setSessionFromCameraLoadingId(cam.id);
       setCameraSessionVerify(null);
+      setCameraActiveResolveDebug(null);
       setCameraActiveLinkStatus({
         kind: "resolving",
         message: "Finding active YouTube live link…",
@@ -1384,6 +1403,7 @@ export default function StreamRoomPage() {
           channelId?: string;
           channelHandle?: string;
           persistentLiveUrl?: string;
+          embedUrl?: string;
         };
         if (
           ok.ok !== true ||
@@ -1431,9 +1451,18 @@ export default function StreamRoomPage() {
           channelIdForResolve ? "channelId" : handleForResolve ? "handle" : null;
 
         let resolvedVideoId: string | null = null;
+        const attemptLogs: Array<{
+          attempt: number;
+          at: string;
+          channelId: string;
+          handle: string;
+          response: unknown;
+        }> = [];
         if (resolveSource) {
           const deadline = Date.now() + 30_000;
+          let attempt = 0;
           while (Date.now() < deadline) {
+            attempt += 1;
             const qs = channelIdForResolve
               ? `channelId=${encodeURIComponent(channelIdForResolve)}`
               : `handle=${encodeURIComponent(handleForResolve)}`;
@@ -1441,10 +1470,26 @@ export default function StreamRoomPage() {
               const rr = await fetch(`/api/youtube-resolve-live?${qs}`, {
                 cache: "no-store",
               });
-              const data = (await rr.json()) as {
-                ok?: boolean;
-                videoId?: string | null;
-              };
+              let attemptJson: unknown = null;
+              try {
+                attemptJson = (await rr.json()) as unknown;
+              } catch {
+                attemptJson = { ok: false, error: "Invalid JSON" };
+              }
+              attemptLogs.push({
+                attempt,
+                at: new Date().toISOString(),
+                channelId: channelIdForResolve,
+                handle: handleForResolve,
+                response: attemptJson,
+              });
+              console.log("START_SESSION_RESOLVE_ATTEMPT", {
+                attempt,
+                channelId: channelIdForResolve,
+                handle: handleForResolve,
+                response: attemptJson,
+              });
+              const data = attemptJson as { ok?: boolean; videoId?: string | null };
               if (rr.ok && data.ok === true) {
                 const vid =
                   typeof data.videoId === "string" ? data.videoId.trim() : "";
@@ -1493,6 +1538,13 @@ export default function StreamRoomPage() {
           });
         }
 
+        console.log("START_SESSION_FINAL_URL", {
+          finalUrl: livePlaybackUrl,
+          resolvedVideoId,
+          okVideoId: ok.videoId,
+          watchUrl: ok.watchUrl,
+        });
+
         console.log("START_SESSION_LIVE_PLAYBACK_URL", {
           videoId: finalVideoId,
           livePlaybackUrl,
@@ -1529,6 +1581,21 @@ export default function StreamRoomPage() {
           appCreatedLive: true,
           source: "youtube_api_broadcast",
           createdBroadcastId: ok.broadcastId,
+        });
+
+        setCameraActiveResolveDebug({
+          createdBroadcastId: ok.broadcastId,
+          okVideoId: apiVideoId,
+          okWatchUrl: watchUrl,
+          okEmbedUrl:
+            typeof ok.embedUrl === "string" && ok.embedUrl.trim() !== ""
+              ? ok.embedUrl.trim()
+              : null,
+          resolvedActiveVideoId: resolvedVideoId,
+          finalAngleUrl: livePlaybackUrl,
+          resolverChannelId: channelIdForResolve,
+          resolverHandle: handleForResolve,
+          attempts: attemptLogs,
         });
         const merged: YouTubeCameraPreset = {
           ...cam,
@@ -1568,8 +1635,39 @@ export default function StreamRoomPage() {
         setSessionFromCameraLoadingId(null);
       }
     },
-    [sessionFromCameraLoadingId, fillFirstAngleWithUrl],
+    [sessionFromCameraLoadingId, fillFirstAngleWithUrl, setAngles],
   );
+
+  const useManualLiveLink = useCallback(() => {
+    const raw = manualLiveLinkDraft.trim();
+    if (!raw) {
+      window.alert("Paste a YouTube live link first.");
+      return;
+    }
+    const t = parsePersistentLiveUrlTarget(raw);
+    const derivedVid = t && t.kind === "video" ? t.videoId : null;
+    setAngles((prev) => {
+      if (prev.length === 0) return prev;
+      const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+      return prev.map((a, i) =>
+        i === idx
+          ? {
+              ...a,
+              url: raw,
+              videoId: derivedVid,
+              status: derivedVid ? "checking" : "idle",
+              debug: null,
+              pastBroadcastWarning: false,
+              persistentLiveHint: null,
+              urlResolveNote: null,
+              appCreatedLive: true,
+              source: "youtube_api_broadcast",
+              createdBroadcastId: a.createdBroadcastId,
+            }
+          : a,
+      );
+    });
+  }, [manualLiveLinkDraft, setAngles]);
 
   const createYouTubeStream = useCallback(async () => {
     if (creatingYt) return;
@@ -1922,6 +2020,36 @@ export default function StreamRoomPage() {
             >
               {cameraActiveLinkStatus.message}
             </p>
+          ) : null}
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+              Paste working YouTube live link
+            </div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                value={manualLiveLinkDraft}
+                onChange={(e) => setManualLiveLinkDraft(e.target.value)}
+                className={`${inputClass} flex-1`}
+                placeholder="https://youtube.com/live/VIDEO_ID?feature=share"
+              />
+              <button type="button" className={ghostBtn} onClick={useManualLiveLink}>
+                Use this live link
+              </button>
+            </div>
+          </div>
+
+          {cameraActiveResolveDebug ? (
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/35 p-4">
+              <details>
+                <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
+                  Start Session debug (temporary)
+                </summary>
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
+                  {JSON.stringify(cameraActiveResolveDebug, null, 2)}
+                </pre>
+              </details>
+            </div>
           ) : null}
 
           {savedCamerasSorted.length > 0 ? (
