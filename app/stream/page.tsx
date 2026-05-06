@@ -30,6 +30,7 @@ type AngleStatus =
   | "live_ready"
   | "waiting_for_signal"
   | "waiting_offline"
+  | "app_created_live"
   | "stream_ended"
   | "invalid_url"
   | "not_embeddable";
@@ -62,6 +63,10 @@ type StreamAngleRow = {
   url: string;
   videoId: string | null;
   status: AngleStatus;
+  /** Set when URL came from binding-verified create-broadcast-from-stream. */
+  appCreatedLive?: boolean;
+  source?: "youtube_api_broadcast";
+  createdBroadcastId?: string;
   /** Populated after embed + meta settle (cleared when URL changes). */
   debug?: StreamAngleDebug | null;
   /** Meta says VOD / past broadcast while Stream Room expects live. */
@@ -79,6 +84,15 @@ function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
     a.status === "stream_ended"
   ) {
     return false;
+  }
+  const vid = a.videoId;
+  if (
+    a.appCreatedLive === true &&
+    a.url.includes("watch?v=") &&
+    typeof vid === "string" &&
+    /^[a-zA-Z0-9_-]{11}$/.test(vid)
+  ) {
+    return true;
   }
   if (Boolean(a.videoId)) return true;
   if (a.status !== "waiting_for_signal") return false;
@@ -259,6 +273,8 @@ function pillClasses(status: AngleStatus): string {
       return "border-sky-400/35 bg-sky-500/15 text-sky-100";
     case "waiting_offline":
       return "border-amber-400/30 bg-amber-500/15 text-amber-200";
+    case "app_created_live":
+      return "border-violet-400/35 bg-violet-500/15 text-violet-100";
     case "stream_ended":
       return "border-rose-400/35 bg-rose-950/40 text-rose-100";
     case "invalid_url":
@@ -287,6 +303,8 @@ function pillLabel(status: AngleStatus): string {
       return "Not embeddable";
     case "waiting_offline":
       return "Waiting / Offline";
+    case "app_created_live":
+      return "App-created live link";
     case "stream_ended":
       return "Stream ended — restart stream source";
     default: {
@@ -371,11 +389,13 @@ function StreamAngleValidationPipeline({
   angleId,
   videoId,
   sourceUrl,
+  appCreatedLive,
   onSettled,
 }: {
   angleId: string;
   videoId: string;
   sourceUrl: string;
+  appCreatedLive: boolean;
   onSettled: (
     rowId: string,
     patch: Pick<
@@ -415,9 +435,17 @@ function StreamAngleValidationPipeline({
       channelCustomUrl: m?.channelCustomUrl,
     };
 
-    const finalStatus = computeStreamAngleStatus(emb, meta, {
+    let finalStatus = computeStreamAngleStatus(emb, meta, {
       persistentLiveUrl: isPersistentYouTubeLiveUrl(sourceUrl),
     });
+    if (
+      appCreatedLive &&
+      sourceUrl.includes("watch?v=") &&
+      (finalStatus === "waiting_offline" ||
+        finalStatus === "waiting_for_signal")
+    ) {
+      finalStatus = "app_created_live";
+    }
 
     const pastBroadcastWarning =
       meta.ok === true &&
@@ -466,11 +494,12 @@ function StreamAngleValidationPipeline({
       status: finalStatus,
       debug,
       pastBroadcastWarning,
-      persistentLiveHint: isYoutubeWatchVideoUrl(sourceUrl)
-        ? (persistentLiveHint ?? null)
-        : null,
+      persistentLiveHint:
+        isYoutubeWatchVideoUrl(sourceUrl) && !appCreatedLive
+          ? (persistentLiveHint ?? null)
+          : null,
     });
-  }, [angleId, onSettled, sourceUrl, videoId]);
+  }, [angleId, appCreatedLive, onSettled, sourceUrl, videoId]);
 
   useEffect(() => {
     decidedRef.current = false;
@@ -733,8 +762,13 @@ export default function StreamRoomPage() {
           if (a.id !== id) return a;
           if (patch.url !== undefined) {
             const incoming = patch.url;
+            const clearAppMeta = {
+              appCreatedLive: undefined,
+              source: undefined,
+              createdBroadcastId: undefined,
+            };
             if (incoming.trim() === "") {
-              return { ...a, ...patch };
+              return { ...a, ...patch, ...clearAppMeta };
             }
             const prevUrl = a.url;
             if (
@@ -748,6 +782,9 @@ export default function StreamRoomPage() {
                 rejected: incoming,
               });
               return { ...a, ...patch, url: prevUrl };
+            }
+            if (incoming.trim() !== prevUrl.trim()) {
+              return { ...a, ...patch, ...clearAppMeta };
             }
           }
           return { ...a, ...patch };
@@ -795,6 +832,11 @@ export default function StreamRoomPage() {
   // Debounced URL → videoId (watch, /live/, or channel/@ persistent URLs) + checking.
   useEffect(() => {
     const timers: number[] = [];
+    const clearedAppBroadcastMeta = {
+      appCreatedLive: undefined,
+      source: undefined,
+      createdBroadcastId: undefined,
+    } as const;
     for (const row of angles) {
       const rowId = row.id;
       const urlAtSchedule = row.url.trim();
@@ -819,6 +861,7 @@ export default function StreamRoomPage() {
               pastBroadcastWarning: false,
               persistentLiveHint: null,
               urlResolveNote: null,
+              ...clearedAppBroadcastMeta,
             }));
             return;
           }
@@ -834,6 +877,7 @@ export default function StreamRoomPage() {
               pastBroadcastWarning: false,
               persistentLiveHint: null,
               urlResolveNote: null,
+              ...clearedAppBroadcastMeta,
             }));
             return;
           }
@@ -853,9 +897,10 @@ export default function StreamRoomPage() {
                   status: "checking",
                   debug: null,
                   pastBroadcastWarning: false,
-                  persistentLiveHint: isYoutubeWatchVideoUrl(trimmed)
-                    ? "Checking channel…"
-                    : null,
+                  persistentLiveHint:
+                    isYoutubeWatchVideoUrl(trimmed) && !a.appCreatedLive
+                      ? "Checking channel…"
+                      : null,
                   urlResolveNote: null,
                 };
               });
@@ -880,6 +925,7 @@ export default function StreamRoomPage() {
               pastBroadcastWarning: false,
               persistentLiveHint: null,
               urlResolveNote: "Could not reach resolve-live API.",
+              ...clearedAppBroadcastMeta,
             }));
             return;
           }
@@ -908,6 +954,7 @@ export default function StreamRoomPage() {
                 typeof data.error === "string"
                   ? data.error
                   : "Could not resolve /live URL.",
+              ...clearedAppBroadcastMeta,
             }));
             return;
           }
@@ -1114,32 +1161,54 @@ export default function StreamRoomPage() {
     });
   }, [ytCreateResult, cameraPresetName]);
 
-  const fillFirstAngleWithUrl = useCallback((url: string) => {
-    const finalUrl = url.trim();
-    console.log("FILM_ROOM_LOAD_LIVE_URL", {
-      source: "fillFirstAngleWithUrl",
-      inputUrl: url,
-      finalUrl,
-      length: finalUrl.length,
-    });
-    setAngles((prev) => {
-      if (prev.length === 0) return prev;
-      return prev.map((a, i) =>
-        i === 0
-          ? {
-              ...a,
-              url: finalUrl,
-              videoId: null,
-              status: "idle",
-              debug: null,
-              pastBroadcastWarning: false,
-              persistentLiveHint: null,
-              urlResolveNote: null,
-            }
-          : a,
-      );
-    });
-  }, [setAngles]);
+  const fillFirstAngleWithUrl = useCallback(
+    (
+      url: string,
+      fromYouTubeBroadcast?: {
+        appCreatedLive: true;
+        source: "youtube_api_broadcast";
+        createdBroadcastId: string;
+      },
+    ) => {
+      const finalUrl = url.trim();
+      console.log("FILM_ROOM_LOAD_LIVE_URL", {
+        source: "fillFirstAngleWithUrl",
+        inputUrl: url,
+        finalUrl,
+        length: finalUrl.length,
+        fromYouTubeBroadcast: Boolean(fromYouTubeBroadcast),
+      });
+      setAngles((prev) => {
+        if (prev.length === 0) return prev;
+        return prev.map((a, i) =>
+          i === 0
+            ? {
+                ...a,
+                url: finalUrl,
+                videoId: null,
+                status: "idle",
+                debug: null,
+                pastBroadcastWarning: false,
+                persistentLiveHint: null,
+                urlResolveNote: null,
+                ...(fromYouTubeBroadcast
+                  ? {
+                      appCreatedLive: true,
+                      source: fromYouTubeBroadcast.source,
+                      createdBroadcastId: fromYouTubeBroadcast.createdBroadcastId,
+                    }
+                  : {
+                      appCreatedLive: undefined,
+                      source: undefined,
+                      createdBroadcastId: undefined,
+                    }),
+              }
+            : a,
+        );
+      });
+    },
+    [setAngles],
+  );
 
   const loadCameraPresetIntoAngle = useCallback((cam: YouTubeCameraPreset) => {
     const { preset: augmented, didAddPersistent } =
@@ -1190,6 +1259,9 @@ export default function StreamRoomPage() {
               pastBroadcastWarning: false,
               persistentLiveHint: null,
               urlResolveNote: null,
+              appCreatedLive: undefined,
+              source: undefined,
+              createdBroadcastId: undefined,
             }
           : a,
       );
@@ -1370,7 +1442,11 @@ export default function StreamRoomPage() {
         const { preset: mergedWithDerived, didAddPersistent } =
           augmentPresetPersistentForStorage(merged);
         const storedPreset = didAddPersistent ? mergedWithDerived : merged;
-        fillFirstAngleWithUrl(watch);
+        fillFirstAngleWithUrl(watch, {
+          appCreatedLive: true,
+          source: "youtube_api_broadcast",
+          createdBroadcastId: ok.broadcastId,
+        });
         setSavedCameras((prev) => {
           const next = prev.map((c) => (c.id === cam.id ? storedPreset : c));
           if (typeof window !== "undefined") {
@@ -1897,10 +1973,11 @@ export default function StreamRoomPage() {
 
                 {a.videoId && a.status === "checking" ? (
                   <StreamAngleValidationPipeline
-                    key={`${a.id}-${a.videoId}`}
+                    key={`${a.id}-${a.videoId}-${a.appCreatedLive ? "app" : "x"}`}
                     angleId={a.id}
                     videoId={a.videoId}
                     sourceUrl={a.url}
+                    appCreatedLive={a.appCreatedLive === true}
                     onSettled={handleStreamAngleSettled}
                   />
                 ) : null}
@@ -1952,6 +2029,9 @@ export default function StreamRoomPage() {
                             publishedAt: a.debug.computed.publishedAt,
                             embeddableFromApi: a.debug.computed.embeddable,
                             finalStreamRoomStatus: a.debug.finalStatus,
+                            appCreatedLive: a.appCreatedLive,
+                            angleSource: a.source,
+                            createdBroadcastId: a.createdBroadcastId,
                           },
                           null,
                           2,
@@ -1968,7 +2048,8 @@ export default function StreamRoomPage() {
             <div className="text-xs text-zinc-400">
               {angles.some(
                 (a) =>
-                  a.status === "waiting_offline" || a.status === "stream_ended",
+                  (a.status === "waiting_offline" && !a.appCreatedLive) ||
+                  a.status === "stream_ended",
               ) ? (
                 <span className="text-amber-200">
                   Some angles are waiting, offline, or the last broadcast ended.
