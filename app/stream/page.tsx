@@ -1370,14 +1370,7 @@ export default function StreamRoomPage() {
         const { preset: mergedWithDerived, didAddPersistent } =
           augmentPresetPersistentForStorage(merged);
         const storedPreset = didAddPersistent ? mergedWithDerived : merged;
-        const angleUrl = persistentLiveViewUrlFromPreset(storedPreset);
-        if (angleUrl) {
-          fillFirstAngleWithUrl(angleUrl);
-        } else {
-          window.alert(
-            "This camera preset does not have a persistent live URL. The new broadcast was saved as Last archive URL only. Recreate the camera preset or add channel / @handle metadata so a /live URL can be used for angles.",
-          );
-        }
+        fillFirstAngleWithUrl(watch);
         setSavedCameras((prev) => {
           const next = prev.map((c) => (c.id === cam.id ? storedPreset : c));
           if (typeof window !== "undefined") {
@@ -1548,8 +1541,13 @@ export default function StreamRoomPage() {
             Open Larix Broadcaster, Streamlabs, or another RTMP camera app. Paste the
             RTMP Server URL and Stream Key once and save the preset — your phone stays
             configured. Each practice, use <strong className="text-zinc-200">Start Session with Camera</strong>{" "}
-            to create a <em>new</em> YouTube broadcast bound to the same RTMP stream, then
-            start your Film Room when ready.
+            to create a <em>new</em> YouTube broadcast bound to the same RTMP stream.{" "}
+            <strong className="text-zinc-200">Start Session with Camera</strong> creates a fresh
+            YouTube broadcast and loads that exact view link (this session’s{" "}
+            <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">watchUrl</code> from the
+            API — not a saved archive URL or channel{" "}
+            <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">/live</code> link) into
+            your first angle. Then start your Film Room when ready.
           </p>
           <p className="mt-2 text-xs text-zinc-500">
             Creating a stream signs you in with Google (YouTube scope) and does not start
