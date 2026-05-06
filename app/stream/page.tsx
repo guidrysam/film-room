@@ -124,6 +124,10 @@ type YouTubeCameraPreset = {
   channelHandle?: string;
   persistentLiveUrl?: string;
   lastWatchUrl?: string;
+  /** Last time Verify Camera Stream succeeded (ISO string). */
+  lastVerifiedAt?: string;
+  lastVerifiedStreamTitle?: string;
+  lastVerifiedStreamStatus?: string;
   /** For ordering saved list (optional on legacy rows). */
   createdAt: string;
 };
@@ -165,12 +169,6 @@ function augmentPresetPersistentForStorage(cam: YouTubeCameraPreset): {
     preset: { ...cam, persistentLiveUrl: derived },
     didAddPersistent: true,
   };
-}
-
-function pickAngleIndexForPresetLoad(rows: StreamAngleRow[]): number {
-  const emptyIdx = rows.findIndex((a) => !a.url.trim());
-  if (emptyIdx >= 0) return emptyIdx;
-  return 0;
 }
 
 function isCameraPresetIncomplete(cam: YouTubeCameraPreset): boolean {
@@ -224,6 +222,9 @@ function parseCamerasFromStorage(raw: string | null): YouTubeCameraPreset[] {
         }
       }
       const lastWatchUrl = optionalTrimString(o.lastWatchUrl);
+      const lastVerifiedAt = optionalTrimString(o.lastVerifiedAt);
+      const lastVerifiedStreamTitle = optionalTrimString(o.lastVerifiedStreamTitle);
+      const lastVerifiedStreamStatus = optionalTrimString(o.lastVerifiedStreamStatus);
       out.push({
         id,
         name,
@@ -236,6 +237,9 @@ function parseCamerasFromStorage(raw: string | null): YouTubeCameraPreset[] {
         ...(channelHandle ? { channelHandle } : {}),
         ...(persistentLiveUrl ? { persistentLiveUrl } : {}),
         ...(lastWatchUrl ? { lastWatchUrl } : {}),
+        ...(lastVerifiedAt ? { lastVerifiedAt } : {}),
+        ...(lastVerifiedStreamTitle ? { lastVerifiedStreamTitle } : {}),
+        ...(lastVerifiedStreamStatus ? { lastVerifiedStreamStatus } : {}),
         createdAt,
       });
     }
@@ -1210,64 +1214,6 @@ export default function StreamRoomPage() {
     [setAngles],
   );
 
-  const loadCameraPresetIntoAngle = useCallback((cam: YouTubeCameraPreset) => {
-    const { preset: augmented, didAddPersistent } =
-      augmentPresetPersistentForStorage(cam);
-    if (didAddPersistent) {
-      setSavedCameras((prev) => {
-        const next = prev.map((c) => (c.id === augmented.id ? augmented : c));
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
-        }
-        return next;
-      });
-    }
-    const url = persistentLiveViewUrlFromPreset(augmented);
-    if (!url) {
-      window.alert(
-        "This camera preset does not have a persistent live URL. Recreate the camera preset or use Start Session with Camera to generate one.",
-      );
-      return;
-    }
-    const inputUrl =
-      augmented.persistentLiveUrl?.trim() ??
-      (augmented.channelId?.trim() &&
-      CHANNEL_ID_PRESET_RE.test(augmented.channelId.trim())
-        ? `https://www.youtube.com/channel/${augmented.channelId.trim()}/live`
-        : augmented.channelHandle?.trim()
-          ? `https://www.youtube.com/@${augmented.channelHandle.replace(/^@/, "")}/live`
-          : "");
-    const finalUrl = url.trim();
-    console.log("FILM_ROOM_LOAD_LIVE_URL", {
-      source: "loadCameraPresetIntoAngle",
-      inputUrl: inputUrl || finalUrl,
-      finalUrl,
-      length: finalUrl.length,
-    });
-    setAngles((prev) => {
-      if (prev.length === 0) return prev;
-      const idx = pickAngleIndexForPresetLoad(prev);
-      return prev.map((a, i) =>
-        i === idx
-          ? {
-              ...a,
-              name: augmented.name.trim() || a.name,
-              url: finalUrl,
-              videoId: null,
-              status: "idle",
-              debug: null,
-              pastBroadcastWarning: false,
-              persistentLiveHint: null,
-              urlResolveNote: null,
-              appCreatedLive: undefined,
-              source: undefined,
-              createdBroadcastId: undefined,
-            }
-          : a,
-      );
-    });
-  }, [setSavedCameras, setAngles]);
-
   const verifyCameraStream = useCallback(async (cam: YouTubeCameraPreset) => {
     if (!cam.streamId.trim()) {
       window.alert("This preset has no stream id.");
@@ -1307,6 +1253,25 @@ export default function StreamRoomPage() {
         streamTitle?: string;
         streamStatus?: string;
       };
+      const verifiedAt = new Date().toISOString();
+      setSavedCameras((prev) => {
+        const next = prev.map((c) =>
+          c.id === cam.id
+            ? {
+                ...c,
+                lastVerifiedAt: verifiedAt,
+                lastVerifiedStreamTitle:
+                  typeof ok.streamTitle === "string" ? ok.streamTitle.trim() : "",
+                lastVerifiedStreamStatus:
+                  typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
+              }
+            : c,
+        );
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
       window.alert(
         [
           `Stream ID: ${ok.streamId ?? ""}`,
@@ -1326,6 +1291,23 @@ export default function StreamRoomPage() {
       setVerifyCameraLoadingId(null);
     }
   }, [verifyCameraLoadingId]);
+
+  const deleteCameraPreset = useCallback(
+    (cam: YouTubeCameraPreset) => {
+      const ok = window.confirm(
+        "This removes the saved camera preset from this browser. It does NOT delete the YouTube stream.",
+      );
+      if (!ok) return;
+      setSavedCameras((prev) => {
+        const next = prev.filter((c) => c.id !== cam.id);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(CAMERAS_STORAGE_KEY, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [setSavedCameras],
+  );
 
   const startSessionWithCamera = useCallback(
     async (cam: YouTubeCameraPreset) => {
@@ -1469,6 +1451,12 @@ export default function StreamRoomPage() {
 
   const createYouTubeStream = useCallback(async () => {
     if (creatingYt) return;
+    if (savedCameras.length > 0) {
+      const ok = window.confirm(
+        "This creates a NEW YouTube stream key. Your phone streaming app will need to be updated with the new RTMP key. Continue?",
+      );
+      if (!ok) return;
+    }
     setCreatingYt(true);
     setYtCreateResult(null);
     setYtCreateError(null);
@@ -1564,7 +1552,7 @@ export default function StreamRoomPage() {
     } finally {
       setCreatingYt(false);
     }
-  }, [creatingYt]);
+  }, [creatingYt, savedCameras.length]);
 
   return (
     <div className="min-h-screen px-4 py-14 text-white">
@@ -1632,7 +1620,7 @@ export default function StreamRoomPage() {
 
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <label className="block min-w-[200px] flex-1 text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
-              Camera name (saved preset)
+              New camera name (saved preset)
               <input
                 type="text"
                 value={cameraPresetName}
@@ -1647,7 +1635,7 @@ export default function StreamRoomPage() {
               className={ghostBtn}
               disabled={creatingYt}
             >
-              {creatingYt ? "Creating…" : "Create / Reuse YouTube Camera Stream"}
+              {creatingYt ? "Creating…" : "Create New Camera Stream"}
             </button>
           </div>
 
@@ -1808,6 +1796,11 @@ export default function StreamRoomPage() {
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
                 Saved cameras
               </h3>
+              <p className="mt-2 text-xs text-zinc-400">
+                If you already configured your phone/camera, use the saved camera below.
+                You only need to create a new stream when adding a new camera or
+                replacing a stream key.
+              </p>
               <ul className="mt-3 space-y-3">
                 {savedCamerasSorted.map((cam) => {
                   const liveUrlDisplay = persistentLiveViewUrlFromPreset(cam);
@@ -1820,9 +1813,16 @@ export default function StreamRoomPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-white">{cam.name}</p>
-                        <p className="mt-1 text-xs text-zinc-500">
-                          RTMP/key already configured on phone
-                        </p>
+                        <div className="mt-2 space-y-1 text-[11px] leading-snug text-zinc-300">
+                          <div className="break-all font-mono">
+                            <span className="text-zinc-500">RTMP server:</span>{" "}
+                            <span className="text-zinc-200">{cam.ingestionAddress || "—"}</span>
+                          </div>
+                          <div className="break-all font-mono">
+                            <span className="text-zinc-500">Stream key:</span>{" "}
+                            <span className="text-zinc-200">{cam.streamName || "—"}</span>
+                          </div>
+                        </div>
                         {presetIncomplete ? (
                           <p className="mt-2 rounded-lg border border-amber-500/35 bg-amber-950/35 px-2.5 py-1.5 text-[11px] text-amber-100/95">
                             Camera preset is incomplete — recreate it.
@@ -1840,6 +1840,30 @@ export default function StreamRoomPage() {
                         {cam.lastWatchUrl ? (
                           <p className="mt-1 break-all text-[11px] text-zinc-500">
                             Last archive URL: {cam.lastWatchUrl}
+                          </p>
+                        ) : null}
+                        {cam.lastVerifiedAt ? (
+                          <p className="mt-2 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] text-zinc-300">
+                            <span className="text-zinc-500">Last verified:</span>{" "}
+                            <span className="font-medium text-zinc-200">{cam.lastVerifiedAt}</span>
+                            {cam.lastVerifiedStreamStatus ? (
+                              <>
+                                {" "}
+                                <span className="text-zinc-500">· status</span>{" "}
+                                <span className="text-zinc-200">
+                                  {cam.lastVerifiedStreamStatus}
+                                </span>
+                              </>
+                            ) : null}
+                            {cam.lastVerifiedStreamTitle ? (
+                              <>
+                                {" "}
+                                <span className="text-zinc-500">·</span>{" "}
+                                <span className="text-zinc-200">
+                                  {cam.lastVerifiedStreamTitle}
+                                </span>
+                              </>
+                            ) : null}
                           </p>
                         ) : null}
                       </div>
@@ -1880,13 +1904,6 @@ export default function StreamRoomPage() {
                         </button>
                         <button
                           type="button"
-                          className={ghostBtn}
-                          onClick={() => loadCameraPresetIntoAngle(cam)}
-                        >
-                          Load into Angle
-                        </button>
-                        <button
-                          type="button"
                           className="rounded-xl border border-blue-500/35 bg-blue-600/25 px-3 py-2 text-xs font-semibold text-white transition hover:border-blue-400/50 hover:bg-blue-600/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={
                             sessionFromCameraLoadingId !== null ||
@@ -1902,6 +1919,13 @@ export default function StreamRoomPage() {
                           {sessionFromCameraLoadingId === cam.id
                             ? "Creating session…"
                             : "Start Session with Camera"}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-xl border border-rose-500/35 bg-rose-950/30 px-3 py-2 text-xs font-medium text-rose-100 transition hover:border-rose-400/45 hover:bg-rose-950/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50"
+                          onClick={() => deleteCameraPreset(cam)}
+                        >
+                          Delete Preset
                         </button>
                       </div>
                     </div>
