@@ -1,20 +1,8 @@
 import { NextResponse } from "next/server";
 
-type YouTubeApiErrorResponse = {
-  error?: {
-    code?: number;
-    message?: string;
-    errors?: Array<{
-      domain?: string;
-      reason?: string;
-      message?: string;
-      locationType?: string;
-      location?: string;
-    }>;
-    status?: string;
-    details?: unknown;
-  };
-};
+import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
+
+const ROUTE = "/api/youtube/find-broadcast-for-stream";
 
 function bearerTokenFromRequest(req: Request): string | null {
   const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -25,36 +13,13 @@ function bearerTokenFromRequest(req: Request): string | null {
   return token ? token : null;
 }
 
-function ytErrorMessage(
-  status: number,
-  body: unknown,
-): {
-  message: string;
-  reason?: string;
-} {
-  const parsed = body as YouTubeApiErrorResponse;
-  const first = Array.isArray(parsed?.error?.errors)
-    ? parsed.error.errors[0]
-    : undefined;
-  const reason =
-    typeof first?.reason === "string" && first.reason.trim() !== ""
-      ? first.reason.trim()
-      : typeof parsed?.error?.status === "string" && parsed.error.status.trim() !== ""
-        ? parsed.error.status.trim()
-        : undefined;
-  const msg =
-    typeof parsed?.error?.message === "string" && parsed.error.message.trim() !== ""
-      ? parsed.error.message.trim()
-      : typeof first?.message === "string" && first.message.trim() !== ""
-        ? first.message.trim()
-        : `YouTube API request failed (HTTP ${status}).`;
-  return { message: msg, reason };
-}
-
 async function ytGetJson<T>(args: {
   url: string;
   token: string;
-}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: unknown }> {
+}): Promise<
+  | { ok: true; data: T }
+  | { ok: false; status: number; statusText: string; error: unknown }
+> {
   const res = await fetch(args.url, {
     headers: { Authorization: `Bearer ${args.token}` },
     cache: "no-store",
@@ -65,7 +30,8 @@ async function ytGetJson<T>(args: {
   } catch {
     data = null;
   }
-  if (!res.ok) return { ok: false, status: res.status, error: data };
+  if (!res.ok)
+    return { ok: false, status: res.status, statusText: res.statusText, error: data };
   return { ok: true, data: data as T };
 }
 
@@ -135,24 +101,39 @@ export async function POST(request: Request) {
   ): Promise<
     | { ok: true; match: { broadcastId: string; boundStreamId: string; lifeCycleStatus: string } }
     | { ok: true; match: null }
-    | { ok: false; status: number; error: unknown }
+    | {
+        ok: false;
+        status: number;
+        statusText: string;
+        error: unknown;
+        endpoint: string;
+      }
   > {
     const url =
       "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
       `?part=snippet,contentDetails,status&broadcastStatus=${broadcastStatus}` +
       "&mine=true&maxResults=50";
     const r = await ytGetJson<LiveBroadcastListResponse>({ url, token: authToken });
-    if (!r.ok) return r;
+    if (!r.ok)
+      return {
+        ok: false,
+        status: r.status,
+        statusText: r.statusText,
+        error: r.error,
+        endpoint: url,
+      };
     return { ok: true, match: pickBoundBroadcast(r.data, streamId) };
   }
 
   const active = await listByStatus("active");
   if (!active.ok) {
-    const info = ytErrorMessage(active.status, active.error);
-    return NextResponse.json(
-      { ok: false, error: info.message, reason: info.reason, status: active.status },
-      { status: 502 },
-    );
+    return youtubeApiErrorNextResponse({
+      route: ROUTE,
+      endpoint: active.endpoint,
+      httpStatus: active.status,
+      httpStatusText: active.statusText,
+      rawBody: active.error,
+    });
   }
   if (active.match) {
     const { broadcastId, boundStreamId, lifeCycleStatus } = active.match;
@@ -171,11 +152,13 @@ export async function POST(request: Request) {
 
   const upcoming = await listByStatus("upcoming");
   if (!upcoming.ok) {
-    const info = ytErrorMessage(upcoming.status, upcoming.error);
-    return NextResponse.json(
-      { ok: false, error: info.message, reason: info.reason, status: upcoming.status },
-      { status: 502 },
-    );
+    return youtubeApiErrorNextResponse({
+      route: ROUTE,
+      endpoint: upcoming.endpoint,
+      httpStatus: upcoming.status,
+      httpStatusText: upcoming.statusText,
+      rawBody: upcoming.error,
+    });
   }
   if (upcoming.match) {
     const { broadcastId, boundStreamId, lifeCycleStatus } = upcoming.match;

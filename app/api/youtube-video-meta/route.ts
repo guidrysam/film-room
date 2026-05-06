@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
+import {
+  logYoutubeApiErrorFromParts,
+  youtubeApiErrorNextResponseFromFetch,
+} from "@/lib/youtube-api-error-diagnostic";
+
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
+const ROUTE = "/api/youtube-video-meta";
 
 export type YouTubeStreamPhase = "active" | "upcoming" | "ended" | "vod";
 
@@ -34,22 +40,6 @@ type YouTubeMeta = {
   channelCustomUrl?: string;
 };
 
-type YouTubeApiErrorResponse = {
-  error?: {
-    code?: number;
-    message?: string;
-    errors?: Array<{
-      domain?: string;
-      reason?: string;
-      message?: string;
-      locationType?: string;
-      location?: string;
-    }>;
-    status?: string;
-    details?: unknown;
-  };
-};
-
 const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
 
 export async function GET(request: Request) {
@@ -75,6 +65,7 @@ export async function GET(request: Request) {
     "https://www.googleapis.com/youtube/v3/videos" +
     `?part=snippet,liveStreamingDetails,status&id=${encodeURIComponent(videoId)}` +
     `&key=${encodeURIComponent(key)}`;
+  const redactKey = (u: string) => u.replace(key, "<redacted>");
 
   let res: Response;
   try {
@@ -93,31 +84,12 @@ export async function GET(request: Request) {
     } catch {
       raw = null;
     }
-    const parsed = raw as YouTubeApiErrorResponse;
-    const first = Array.isArray(parsed?.error?.errors)
-      ? parsed.error.errors[0]
-      : undefined;
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "YouTube API error",
-        status: res.status,
-        details: parsed?.error?.details ?? undefined,
-        reason:
-          typeof first?.reason === "string" && first.reason.trim() !== ""
-            ? first.reason
-            : typeof parsed?.error?.status === "string" && parsed.error.status.trim() !== ""
-              ? parsed.error.status
-              : undefined,
-        message:
-          typeof parsed?.error?.message === "string" && parsed.error.message.trim() !== ""
-            ? parsed.error.message
-            : typeof first?.message === "string" && first.message.trim() !== ""
-              ? first.message
-              : undefined,
-      },
-      { status: 502 },
-    );
+    return youtubeApiErrorNextResponseFromFetch({
+      route: ROUTE,
+      endpoint: url,
+      res,
+      rawBody: raw,
+    });
   }
 
   let data: unknown;
@@ -255,6 +227,20 @@ export async function GET(request: Request) {
         if (typeof cu === "string" && cu.trim() !== "") {
           channelCustomUrl = cu.trim().replace(/^@/, "");
         }
+      } else {
+        let chRaw: unknown = null;
+        try {
+          chRaw = await chRes.json();
+        } catch {
+          chRaw = null;
+        }
+        logYoutubeApiErrorFromParts({
+          route: ROUTE,
+          endpoint: redactKey(chUrl),
+          httpStatus: chRes.status,
+          httpStatusText: chRes.statusText,
+          rawBody: chRaw,
+        });
       }
     } catch {
       /* optional */

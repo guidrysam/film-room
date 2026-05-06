@@ -1,20 +1,6 @@
 import { NextResponse } from "next/server";
 
-type YouTubeApiErrorResponse = {
-  error?: {
-    code?: number;
-    message?: string;
-    errors?: Array<{
-      domain?: string;
-      reason?: string;
-      message?: string;
-      locationType?: string;
-      location?: string;
-    }>;
-    status?: string;
-    details?: unknown;
-  };
-};
+import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
 
 function bearerTokenFromRequest(req: Request): string | null {
   const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -25,79 +11,14 @@ function bearerTokenFromRequest(req: Request): string | null {
   return token ? token : null;
 }
 
-function ytErrorMessage(
-  status: number,
-  body: unknown,
-): {
-  message: string;
-  reason?: string;
-  statusText?: string;
-} {
-  const parsed = body as YouTubeApiErrorResponse;
-  const first = Array.isArray(parsed?.error?.errors)
-    ? parsed.error.errors[0]
-    : undefined;
-  const reason =
-    typeof first?.reason === "string" && first.reason.trim() !== ""
-      ? first.reason.trim()
-      : typeof parsed?.error?.status === "string" && parsed.error.status.trim() !== ""
-        ? parsed.error.status.trim()
-        : undefined;
-  const msg =
-    typeof parsed?.error?.message === "string" && parsed.error.message.trim() !== ""
-      ? parsed.error.message.trim()
-      : typeof first?.message === "string" && first.message.trim() !== ""
-        ? first.message.trim()
-        : `YouTube API request failed (HTTP ${status}).`;
-
-  // Friendly mapping for common failure cases.
-  if (
-    status === 401 ||
-    reason === "authError" ||
-    reason === "invalidCredentials"
-  ) {
-    return {
-      message: "User not authenticated with Google / YouTube.",
-      reason,
-    };
-  }
-  if (status === 403 && reason === "insufficientPermissions") {
-    return {
-      message:
-        "Missing YouTube OAuth scope. Re-authenticate with scope `https://www.googleapis.com/auth/youtube`.",
-      reason,
-    };
-  }
-  if (
-    status === 403 &&
-    (reason === "liveStreamingNotEnabled" ||
-      reason === "livePermissionBlocked" ||
-      reason === "liveStreamingNotAllowed")
-  ) {
-    return {
-      message:
-        "YouTube Live is not enabled or the account is not eligible. Enable live streaming in YouTube Studio and ensure the channel is verified.",
-      reason,
-    };
-  }
-  if (
-    status === 403 &&
-    (reason === "quotaExceeded" || reason === "dailyLimitExceeded")
-  ) {
-    return {
-      message:
-        "YouTube API quota exceeded. Try again later or check quota limits in Google Cloud Console.",
-      reason,
-    };
-  }
-  return { message: msg, reason };
-}
-
 async function ytPostJson<T>(args: {
   url: string;
   token: string;
   body: unknown;
-}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: unknown }> {
+}): Promise<
+  | { ok: true; data: T }
+  | { ok: false; status: number; statusText: string; error: unknown }
+> {
   const { url, token, body } = args;
   const res = await fetch(url, {
     method: "POST",
@@ -114,7 +35,8 @@ async function ytPostJson<T>(args: {
   } catch {
     data = null;
   }
-  if (!res.ok) return { ok: false, status: res.status, error: data };
+  if (!res.ok)
+    return { ok: false, status: res.status, statusText: res.statusText, error: data };
   return { ok: true, data: data as T };
 }
 
@@ -123,7 +45,10 @@ const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
 async function ytGetJson<T>(args: {
   url: string;
   token: string;
-}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: unknown }> {
+}): Promise<
+  | { ok: true; data: T }
+  | { ok: false; status: number; statusText: string; error: unknown }
+> {
   const res = await fetch(args.url, {
     headers: { Authorization: `Bearer ${args.token}` },
     cache: "no-store",
@@ -134,9 +59,12 @@ async function ytGetJson<T>(args: {
   } catch {
     data = null;
   }
-  if (!res.ok) return { ok: false, status: res.status, error: data };
+  if (!res.ok)
+    return { ok: false, status: res.status, statusText: res.statusText, error: data };
   return { ok: true, data: data as T };
 }
+
+const ROUTE = "/api/youtube/create-live-stream";
 
 export async function POST(request: Request) {
   const token = bearerTokenFromRequest(request);
@@ -187,11 +115,13 @@ export async function POST(request: Request) {
     token,
   });
   if (!mine.ok) {
-    const info = ytErrorMessage(mine.status, mine.error);
-    return NextResponse.json(
-      { ok: false, error: info.message, reason: info.reason, status: mine.status },
-      { status: 502 },
-    );
+    return youtubeApiErrorNextResponse({
+      route: ROUTE,
+      endpoint: mineUrl,
+      httpStatus: mine.status,
+      httpStatusText: mine.statusText,
+      rawBody: mine.error,
+    });
   }
   const channel = mine.data?.items?.[0];
   const rawChannelId = typeof channel?.id === "string" ? channel.id.trim() : "";
@@ -247,11 +177,13 @@ export async function POST(request: Request) {
       body: broadcastBody,
     });
     if (!b.ok) {
-      const info = ytErrorMessage(b.status, b.error);
-      return NextResponse.json(
-        { ok: false, error: info.message, reason: info.reason, status: b.status },
-        { status: 502 },
-      );
+      return youtubeApiErrorNextResponse({
+        route: ROUTE,
+        endpoint: broadcastUrl,
+        httpStatus: b.status,
+        httpStatusText: b.statusText,
+        rawBody: b.error,
+      });
     }
     const id = b.data?.id;
     if (typeof id !== "string" || id.trim() === "") {
@@ -310,17 +242,14 @@ export async function POST(request: Request) {
       body: streamBody,
     });
     if (!s.ok) {
-      const info = ytErrorMessage(s.status, s.error);
-      return NextResponse.json(
-        {
-          ok: false,
-          error: info.message,
-          reason: info.reason,
-          status: s.status,
-          broadcastId,
-        },
-        { status: 502 },
-      );
+      return youtubeApiErrorNextResponse({
+        route: ROUTE,
+        endpoint: streamUrl,
+        httpStatus: s.status,
+        httpStatusText: s.statusText,
+        rawBody: s.error,
+        extra: { broadcastId },
+      });
     }
     const id = s.data?.id;
     if (typeof id !== "string" || id.trim() === "") {
@@ -357,18 +286,14 @@ export async function POST(request: Request) {
       body: {},
     });
     if (!bind.ok) {
-      const info = ytErrorMessage(bind.status, bind.error);
-      return NextResponse.json(
-        {
-          ok: false,
-          error: info.message,
-          reason: info.reason,
-          status: bind.status,
-          broadcastId,
-          streamId,
-        },
-        { status: 502 },
-      );
+      return youtubeApiErrorNextResponse({
+        route: ROUTE,
+        endpoint: bindUrl,
+        httpStatus: bind.status,
+        httpStatusText: bind.statusText,
+        rawBody: bind.error,
+        extra: { broadcastId, streamId },
+      });
     }
   } catch (err) {
     return NextResponse.json(

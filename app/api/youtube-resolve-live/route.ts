@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
+import { youtubeApiErrorNextResponseFromFetch } from "@/lib/youtube-api-error-diagnostic";
+
 const CHANNEL_ID_RE = /^UC[a-zA-Z0-9_-]{22}$/;
 const HANDLE_RE = /^[a-zA-Z0-9._-]{1,100}$/;
+const ROUTE = "/api/youtube-resolve-live";
 
 type SearchListResponse = {
   items?: Array<{ id?: { videoId?: string } }>;
@@ -24,6 +27,7 @@ export async function GET(request: Request) {
     );
   }
   const apiKey = envKey.trim();
+  const redactKey = (u: string) => u.replace(apiKey, "<redacted>");
 
   let channelId = channelIdParam;
   if (handleParam) {
@@ -45,21 +49,21 @@ export async function GET(request: Request) {
         { status: 502 },
       );
     }
-    if (!chRes.ok) {
-      return NextResponse.json(
-        { ok: false, error: "Could not resolve @handle to a channel." },
-        { status: 404 },
-      );
-    }
-    let chData: ChannelsListResponse;
+    let chBody: unknown = null;
     try {
-      chData = (await chRes.json()) as ChannelsListResponse;
+      chBody = await chRes.json();
     } catch {
-      return NextResponse.json(
-        { ok: false, error: "Invalid channel response." },
-        { status: 502 },
-      );
+      chBody = null;
     }
+    if (!chRes.ok) {
+      return youtubeApiErrorNextResponseFromFetch({
+        route: ROUTE,
+        endpoint: redactKey(chUrl),
+        res: chRes,
+        rawBody: chBody,
+      });
+    }
+    const chData = chBody as ChannelsListResponse;
     const cid = chData.items?.[0]?.id;
     if (typeof cid !== "string" || !CHANNEL_ID_RE.test(cid)) {
       return NextResponse.json(
@@ -80,38 +84,62 @@ export async function GET(request: Request) {
 
   async function searchLive(
     eventType: "live" | "upcoming",
-  ): Promise<string | null> {
+  ): Promise<
+    | { ok: true; videoId: string | null }
+    | { ok: false; res: Response; rawBody: unknown; endpoint: string }
+  > {
     const u =
       "https://www.googleapis.com/youtube/v3/search" +
       `?part=id&channelId=${encodeURIComponent(resolvedChannelId)}` +
       `&type=video&eventType=${eventType}&maxResults=1` +
       `&key=${encodeURIComponent(apiKey)}`;
     const r = await fetch(u, { cache: "no-store" });
-    if (!r.ok) return null;
-    let data: SearchListResponse;
+    let data: unknown = null;
     try {
-      data = (await r.json()) as SearchListResponse;
+      data = await r.json();
     } catch {
-      return null;
+      data = null;
     }
-    const vid = data.items?.[0]?.id?.videoId;
-    return typeof vid === "string" && /^[a-zA-Z0-9_-]{11}$/.test(vid)
-      ? vid
-      : null;
+    if (!r.ok) {
+      return { ok: false, res: r, rawBody: data, endpoint: redactKey(u) };
+    }
+    const parsed = data as SearchListResponse;
+    const vid = parsed.items?.[0]?.id?.videoId;
+    const videoId =
+      typeof vid === "string" && /^[a-zA-Z0-9_-]{11}$/.test(vid) ? vid : null;
+    return { ok: true, videoId };
   }
 
   try {
-    let videoId = await searchLive("live");
+    const live = await searchLive("live");
+    if (!live.ok) {
+      return youtubeApiErrorNextResponseFromFetch({
+        route: ROUTE,
+        endpoint: live.endpoint,
+        res: live.res,
+        rawBody: live.rawBody,
+      });
+    }
+    let videoId = live.videoId;
     let mode: "live" | "upcoming" | null = videoId ? "live" : null;
     if (!videoId) {
-      videoId = await searchLive("upcoming");
+      const upcoming = await searchLive("upcoming");
+      if (!upcoming.ok) {
+        return youtubeApiErrorNextResponseFromFetch({
+          route: ROUTE,
+          endpoint: upcoming.endpoint,
+          res: upcoming.res,
+          rawBody: upcoming.rawBody,
+        });
+      }
+      videoId = upcoming.videoId;
       mode = videoId ? "upcoming" : null;
     }
     if (!videoId) {
-    return NextResponse.json({
-      ok: true,
-      videoId: null,
-      channelId: resolvedChannelId,
+      return NextResponse.json({
+        ok: true,
+        videoId: null,
+        channelId: resolvedChannelId,
         mode: "idle",
         message:
           "No active or upcoming broadcast for this channel. The /live URL is still valid — start the stream, then refresh.",

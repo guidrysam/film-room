@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { youtubeApiErrorNextResponseFromFetch } from "@/lib/youtube-api-error-diagnostic";
+
+const ROUTE = "/api/youtube-title";
+
 /** Matches canonical YouTube video id format (same idea as `lib/youtube-id.ts`). */
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 
@@ -66,22 +70,28 @@ export async function GET(request: NextRequest) {
     const res = await fetch(url.toString(), { cache: "no-store" });
     console.log("[YT TITLE] response", res.ok ? "ok" : `not ok (${res.status})`);
 
-    const data = (await res.json()) as {
-      items?: Array<{ snippet?: { title?: string } }>;
-      error?: { message?: string; code?: number };
-    };
-
-    if (!res.ok) {
-      console.warn(
-        "[YT TITLE] YouTube HTTP error body:",
-        data?.error ?? data,
-      );
-      setCached(videoId, null, 60_000);
-      console.log("[YT TITLE] title=null");
-      return NextResponse.json({ title: null }, { status: 200 });
+    let data: unknown = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
     }
 
-    const rawTitle = data?.items?.[0]?.snippet?.title;
+    if (!res.ok) {
+      const endpointSafe = url.toString().replace(apiKey, "<redacted>");
+      return youtubeApiErrorNextResponseFromFetch({
+        route: ROUTE,
+        endpoint: endpointSafe,
+        res,
+        rawBody: data,
+      });
+    }
+
+    const parsed = data as {
+      items?: Array<{ snippet?: { title?: string } }>;
+    };
+
+    const rawTitle = parsed?.items?.[0]?.snippet?.title;
     const title =
       typeof rawTitle === "string" && rawTitle.trim() !== ""
         ? rawTitle.trim()

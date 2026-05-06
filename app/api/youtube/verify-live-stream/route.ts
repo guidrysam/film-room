@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 
-type YouTubeApiErrorResponse = {
-  error?: {
-    message?: string;
-    errors?: Array<{ reason?: string }>;
-    status?: string;
-  };
-};
+import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
+
+const ROUTE = "/api/youtube/verify-live-stream";
 
 function bearerTokenFromRequest(req: Request): string | null {
   const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -20,7 +16,10 @@ function bearerTokenFromRequest(req: Request): string | null {
 async function ytGetJson<T>(args: {
   url: string;
   token: string;
-}): Promise<{ ok: true; data: T } | { ok: false; status: number; error: unknown }> {
+}): Promise<
+  | { ok: true; data: T }
+  | { ok: false; status: number; statusText: string; error: unknown }
+> {
   const res = await fetch(args.url, {
     headers: { Authorization: `Bearer ${args.token}` },
     cache: "no-store",
@@ -31,7 +30,8 @@ async function ytGetJson<T>(args: {
   } catch {
     data = null;
   }
-  if (!res.ok) return { ok: false, status: res.status, error: data };
+  if (!res.ok)
+    return { ok: false, status: res.status, statusText: res.statusText, error: data };
   return { ok: true, data: data as T };
 }
 
@@ -88,12 +88,13 @@ export async function POST(request: Request) {
 
   const ls = await ytGetJson<LiveStreamsListResponse>({ url, token });
   if (!ls.ok) {
-    const parsed = ls.error as YouTubeApiErrorResponse;
-    const msg =
-      typeof parsed?.error?.message === "string" && parsed.error.message.trim() !== ""
-        ? parsed.error.message.trim()
-        : `YouTube liveStreams.list failed (HTTP ${ls.status}).`;
-    return NextResponse.json({ ok: false, error: msg }, { status: 502 });
+    return youtubeApiErrorNextResponse({
+      route: ROUTE,
+      endpoint: url,
+      httpStatus: ls.status,
+      httpStatusText: ls.statusText,
+      rawBody: ls.error,
+    });
   }
 
   const item = ls.data?.items?.[0];
