@@ -1,14 +1,11 @@
 "use client";
 
-import YouTube from "react-youtube";
-import type { YouTubePlayer } from "react-youtube";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type SetStateAction,
 } from "react";
@@ -18,14 +15,11 @@ import { markRoomHost } from "@/lib/room-host";
 import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
   isPersistentChannelOrHandleLiveUrl,
-  isPersistentYouTubeLiveUrl,
-  isYoutubeWatchVideoUrl,
   parsePersistentLiveUrlTarget,
 } from "@/lib/youtube-id";
 
 type AngleStatus =
   | "idle"
-  | "checking"
   | "ready"
   | "live_ready"
   | "waiting_for_signal"
@@ -37,31 +31,9 @@ type AngleStatus =
 
 /** Temporary Stream Room diagnostics (UI + console). */
 type StreamAngleDebug = {
-  videoId: string;
-  embedResult: "ready" | "offline_or_not_started" | "quota_bypass_live" | "error";
-  metaResponse: unknown;
-  computed: {
-    /** API `isLive` (includes upcoming / chat / viewers); not used for strict LIVE UI. */
-    broadIsLive?: boolean;
-    liveBroadcastContent?: string;
-    streamPhase?: string;
-    actualStartTime?: string;
-    actualEndTime?: string;
-    uploadStatus?: string;
-    privacyStatus?: string;
-    publishedAt?: string;
-    embeddable?: boolean;
-    channelId?: string;
-    channelCustomUrl?: string;
-  };
-  finalStatus: AngleStatus;
+  /** Reserved for future Stream Room diagnostics. */
+  note?: string;
 };
-
-function isQuotaExceededMeta(meta: unknown): boolean {
-  if (!meta || typeof meta !== "object") return false;
-  const m = meta as { ok?: unknown; reason?: unknown };
-  return m.ok === false && m.reason === "quotaExceeded";
-}
 
 type StreamAngleRow = {
   id: string;
@@ -100,9 +72,7 @@ function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
     return Boolean(t && t.kind === "video");
   }
   if (Boolean(a.videoId)) return true;
-  if (a.status !== "waiting_for_signal") return false;
-  const t = parsePersistentLiveUrlTarget(a.url.trim());
-  return Boolean(t && (t.kind === "channel_live" || t.kind === "handle_live"));
+  return false;
 }
 
 type SavedSetupV1 = {
@@ -276,8 +246,6 @@ function pillClasses(status: AngleStatus): string {
       return "border-emerald-400/30 bg-emerald-500/15 text-emerald-200";
     case "live_ready":
       return "border-red-400/35 bg-red-500/15 text-red-100";
-    case "checking":
-      return "border-blue-400/30 bg-blue-500/15 text-blue-200";
     case "waiting_for_signal":
       return "border-sky-400/35 bg-sky-500/15 text-sky-100";
     case "waiting_offline":
@@ -294,12 +262,10 @@ function pillClasses(status: AngleStatus): string {
   }
 }
 
-function pillLabel(status: AngleStatus, opts?: { quotaBypass?: boolean }): string {
+function pillLabel(status: AngleStatus): string {
   switch (status) {
     case "idle":
       return "Idle";
-    case "checking":
-      return "Checking";
     case "ready":
       return "Ready";
     case "live_ready":
@@ -313,9 +279,7 @@ function pillLabel(status: AngleStatus, opts?: { quotaBypass?: boolean }): strin
     case "waiting_offline":
       return "Waiting / Offline";
     case "app_created_live":
-      return opts?.quotaBypass
-        ? "Live (quota bypass)"
-        : "Ready — app-created live link";
+      return "Ready — app-created live link";
     case "stream_ended":
       return "Stream ended — restart stream source";
     default: {
@@ -325,301 +289,13 @@ function pillLabel(status: AngleStatus, opts?: { quotaBypass?: boolean }): strin
   }
 }
 
-function StatusPill({
-  status,
-  quotaBypass,
-}: {
-  status: AngleStatus;
-  quotaBypass?: boolean;
-}) {
+function StatusPill({ status }: { status: AngleStatus }) {
   return (
     <span
       className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${pillClasses(status)}`}
     >
-      {pillLabel(status, { quotaBypass })}
+      {pillLabel(status)}
     </span>
-  );
-}
-
-type MetaApiJson = {
-  ok?: boolean;
-  meta?: {
-    isLive?: boolean;
-    liveBroadcastContent?: string;
-    streamPhase?: string;
-    actualStartTime?: string;
-    actualEndTime?: string;
-    uploadStatus?: string;
-    privacyStatus?: string;
-    publishedAt?: string;
-    embeddable?: boolean;
-    channelId?: string;
-    channelCustomUrl?: string;
-  };
-  error?: string;
-};
-
-function computeStreamAngleStatus(
-  embed: "ready" | "offline_or_not_started",
-  metaJson: MetaApiJson | null,
-  opts?: { persistentLiveUrl?: boolean },
-): AngleStatus {
-  const persist = opts?.persistentLiveUrl === true;
-  const metaOk =
-    metaJson &&
-    metaJson.ok === true &&
-    metaJson.meta &&
-    typeof metaJson.meta === "object";
-  const m = metaOk ? metaJson.meta! : null;
-
-  if (!m) {
-    if (persist) {
-      return embed === "offline_or_not_started"
-        ? "waiting_for_signal"
-        : "live_ready";
-    }
-    return embed === "offline_or_not_started" ? "waiting_offline" : "ready";
-  }
-
-  if (m.streamPhase === "ended") {
-    return "stream_ended";
-  }
-  if (m.streamPhase === "active" || m.liveBroadcastContent === "live") {
-    return "live_ready";
-  }
-  if (
-    m.streamPhase === "upcoming" ||
-    m.liveBroadcastContent === "upcoming"
-  ) {
-    return persist ? "waiting_for_signal" : "waiting_offline";
-  }
-  if (embed === "offline_or_not_started") {
-    return persist ? "waiting_for_signal" : "waiting_offline";
-  }
-  return "ready";
-}
-
-/**
- * Fetches `/api/youtube-video-meta` and runs an off-screen embed probe; merges into final status + debug.
- */
-function StreamAngleValidationPipeline({
-  angleId,
-  videoId,
-  sourceUrl,
-  appCreatedLive,
-  onSettled,
-}: {
-  angleId: string;
-  videoId: string;
-  sourceUrl: string;
-  appCreatedLive: boolean;
-  onSettled: (
-    rowId: string,
-    patch: Pick<
-      StreamAngleRow,
-      | "status"
-      | "debug"
-      | "pastBroadcastWarning"
-      | "persistentLiveHint"
-    >,
-  ) => void;
-}) {
-  const decidedRef = useRef(false);
-  const metaRef = useRef<MetaApiJson | "pending">("pending");
-  const embedRef = useRef<
-    "ready" | "offline_or_not_started" | "quota_bypass_live" | null
-  >(null);
-
-  const finalize = useCallback(() => {
-    if (decidedRef.current) return;
-    const meta = metaRef.current;
-    const emb = embedRef.current;
-    if (meta === "pending" || emb === null) return;
-    decidedRef.current = true;
-
-    const metaResponse: unknown = meta;
-
-    const m = meta.ok === true ? meta.meta : undefined;
-    const computed = {
-      broadIsLive: m?.isLive,
-      liveBroadcastContent: m?.liveBroadcastContent,
-      streamPhase: m?.streamPhase,
-      actualStartTime: m?.actualStartTime,
-      actualEndTime: m?.actualEndTime,
-      uploadStatus: m?.uploadStatus,
-      privacyStatus: m?.privacyStatus,
-      publishedAt: m?.publishedAt,
-      embeddable: m?.embeddable,
-      channelId: m?.channelId,
-      channelCustomUrl: m?.channelCustomUrl,
-    };
-
-    // `computeStreamAngleStatus` doesn't understand quota bypass; normalize to "ready".
-    let finalStatus = computeStreamAngleStatus(
-      emb === "quota_bypass_live" ? "ready" : emb,
-      meta,
-      { persistentLiveUrl: isPersistentYouTubeLiveUrl(sourceUrl) },
-    );
-
-    // Quota bypass: app-created live + valid video id + quotaExceeded meta.
-    const parsed = parsePersistentLiveUrlTarget(sourceUrl);
-    const parsedVideoId = parsed && parsed.kind === "video" ? parsed.videoId : null;
-    if (appCreatedLive && parsedVideoId && isQuotaExceededMeta(metaResponse)) {
-      console.log("LIVE_QUOTA_BYPASS", { videoId: parsedVideoId, sourceUrl });
-      finalStatus = "app_created_live";
-      embedRef.current = "quota_bypass_live";
-    }
-    if (
-      appCreatedLive &&
-      sourceUrl.includes("watch?v=") &&
-      (finalStatus === "waiting_offline" ||
-        finalStatus === "waiting_for_signal")
-    ) {
-      finalStatus = "app_created_live";
-    }
-
-    const pastBroadcastWarning =
-      meta.ok === true &&
-      m?.streamPhase === "vod" &&
-      m.liveBroadcastContent !== "live" &&
-      m.liveBroadcastContent !== "upcoming";
-
-    let persistentLiveHint: string | null | undefined;
-    if (sourceUrl.trim() && isYoutubeWatchVideoUrl(sourceUrl)) {
-      const cid = m?.channelId;
-      const cu = m?.channelCustomUrl;
-      if (meta.ok === true && cid) {
-        const lines = [`https://www.youtube.com/channel/${cid}/live`];
-        if (cu) {
-          lines.push(`https://www.youtube.com/@${cu.replace(/^@/, "")}/live`);
-        }
-        persistentLiveHint = `Prefer a persistent live URL (follows the current live broadcast):\n${lines.join("\n")}`;
-      } else if (meta.ok === true) {
-        persistentLiveHint =
-          "Prefer `youtube.com/channel/CHANNEL_ID/live` or `@handle/live` so one URL always tracks the current live stream.";
-      }
-    }
-
-    const debug: StreamAngleDebug = {
-      videoId,
-      embedResult: embedRef.current ?? emb,
-      metaResponse,
-      computed,
-      finalStatus,
-    };
-
-    console.log("[Stream Room] angle settled", angleId, {
-      videoId,
-      embed: emb,
-      meta: metaResponse,
-      broadIsLive: computed.broadIsLive,
-      liveBroadcastContent: computed.liveBroadcastContent,
-      streamPhase: computed.streamPhase,
-      uploadStatus: computed.uploadStatus,
-      privacyStatus: computed.privacyStatus,
-      publishedAt: computed.publishedAt,
-      finalStatus,
-    });
-
-    onSettled(angleId, {
-      status: finalStatus,
-      debug,
-      pastBroadcastWarning,
-      persistentLiveHint:
-        isYoutubeWatchVideoUrl(sourceUrl) && !appCreatedLive
-          ? (persistentLiveHint ?? null)
-          : null,
-    });
-  }, [angleId, appCreatedLive, onSettled, sourceUrl, videoId]);
-
-  useEffect(() => {
-    decidedRef.current = false;
-    metaRef.current = "pending";
-    embedRef.current = null;
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const res = await fetch(
-          `/api/youtube-video-meta?videoId=${encodeURIComponent(videoId)}&includeChannel=1`,
-        );
-        let data: MetaApiJson = {};
-        try {
-          data = (await res.json()) as MetaApiJson;
-        } catch {
-          data = { ok: false, error: "Invalid JSON from youtube-video-meta" };
-        }
-        if (cancelled) return;
-        metaRef.current = data;
-        console.log("[Stream Room] youtube-video-meta", videoId, data);
-      } catch (e) {
-        if (cancelled) return;
-        metaRef.current = {
-          ok: false,
-          error: e instanceof Error ? e.message : "Meta fetch failed",
-        };
-        console.warn("[Stream Room] meta fetch error", videoId, e);
-      }
-      finalize();
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [videoId, finalize]);
-
-  const handlePlayerReady = useCallback(
-    async (evt: { target: YouTubePlayer }) => {
-      if (decidedRef.current) return;
-      try {
-        const state = await evt.target.getPlayerState();
-        if (state === -1 || state === 5) {
-          embedRef.current = "offline_or_not_started";
-        } else {
-          embedRef.current = "ready";
-        }
-      } catch {
-        embedRef.current = "ready";
-      }
-      console.log("[Stream Room] embed probe", videoId, embedRef.current);
-      finalize();
-    },
-    [finalize, videoId],
-  );
-
-  const handlePlayerError = useCallback(() => {
-    if (decidedRef.current) return;
-    decidedRef.current = true;
-    const meta = metaRef.current;
-    const metaResponse: unknown =
-      meta === "pending"
-        ? { ok: false, error: "Embed error (meta still loading)" }
-        : meta;
-    const debug: StreamAngleDebug = {
-      videoId,
-      embedResult: "error",
-      metaResponse,
-      computed: {},
-      finalStatus: "not_embeddable",
-    };
-    console.warn("[Stream Room] embed error", videoId, metaResponse);
-    onSettled(angleId, {
-      status: "not_embeddable",
-      debug,
-      pastBroadcastWarning: false,
-      persistentLiveHint: null,
-    });
-  }, [angleId, onSettled, videoId]);
-
-  return (
-    <div className="pointer-events-none absolute -left-[99999px] -top-[99999px] h-px w-px overflow-hidden opacity-0">
-      <YouTube
-        videoId={videoId}
-        opts={{ height: "1", width: "1", playerVars: { playsinline: 1 } }}
-        onReady={handlePlayerReady}
-        onError={handlePlayerError}
-      />
-    </div>
   );
 }
 
@@ -703,6 +379,17 @@ export default function StreamRoomPage() {
   const [ytCreateError, setYtCreateError] = useState<string | null>(null);
   const [cameraPresetName, setCameraPresetName] = useState("Practice Cam");
   const [savedCameras, setSavedCameras] = useState<YouTubeCameraPreset[]>([]);
+  const [apiCallCounts, setApiCallCounts] = useState<{
+    youtubeVideoMeta: number;
+    youtubeResolveLive: number;
+    findBroadcast: number;
+  }>({ youtubeVideoMeta: 0, youtubeResolveLive: 0, findBroadcast: 0 });
+  const bumpApiCount = useCallback(
+    (key: keyof typeof apiCallCounts) => {
+      setApiCallCounts((prev) => ({ ...prev, [key]: prev[key] + 1 }));
+    },
+    [setApiCallCounts],
+  );
   const [sessionFromCameraLoadingId, setSessionFromCameraLoadingId] = useState<
     string | null
   >(null);
@@ -867,24 +554,6 @@ export default function StreamRoomPage() {
     setAngles((prev) => prev.filter((a) => a.id !== id));
   }, [setAngles]);
 
-  const handleStreamAngleSettled = useCallback(
-    (
-      rowId: string,
-      patch: Pick<
-        StreamAngleRow,
-        | "status"
-        | "debug"
-        | "pastBroadcastWarning"
-        | "persistentLiveHint"
-      >,
-    ) => {
-      setAngles((prev) =>
-        prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
-      );
-    },
-    [setAngles],
-  );
-
   // Debounced URL → videoId (watch, /live/, or channel/@ persistent URLs) + checking.
   useEffect(() => {
     const timers: number[] = [];
@@ -946,127 +615,39 @@ export default function StreamRoomPage() {
               return prev.map((a) => {
                 if (a.id !== rowId) return a;
                 if (a.videoId === vid && a.status !== "invalid_url") return a;
-                if (a.appCreatedLive === true) {
-                  return {
-                    ...a,
-                    url: a.url,
-                    videoId: vid,
-                    status: "app_created_live",
-                    debug: null,
-                    pastBroadcastWarning: false,
-                    persistentLiveHint: null,
-                    urlResolveNote:
-                      "Film Room will load this YouTube live player directly.",
-                  };
-                }
                 return {
                   ...a,
                   url: a.url,
                   videoId: vid,
-                  status: "checking",
+                  status: a.appCreatedLive === true ? "app_created_live" : "ready",
                   debug: null,
                   pastBroadcastWarning: false,
-                  persistentLiveHint:
-                    isYoutubeWatchVideoUrl(trimmed) && !a.appCreatedLive
-                      ? "Checking channel…"
+                  persistentLiveHint: null,
+                  urlResolveNote:
+                    a.appCreatedLive === true
+                      ? "Film Room will load this YouTube live player directly."
                       : null,
-                  urlResolveNote: null,
                 };
               });
             });
             return;
           }
 
-          const q =
+          const hintUrl =
             target.kind === "channel_live"
-              ? `channelId=${encodeURIComponent(target.channelId)}`
-              : `handle=${encodeURIComponent(target.handle)}`;
-          let res: Response;
-          try {
-            res = await fetch(`/api/youtube-resolve-live?${q}`);
-          } catch {
-            applyIfUrl((a) => ({
-              ...a,
-              url: a.url,
-              videoId: null,
-              status: "invalid_url",
-              debug: null,
-              pastBroadcastWarning: false,
-              persistentLiveHint: null,
-              urlResolveNote: "Could not reach resolve-live API.",
-              ...clearedAppBroadcastMeta,
-            }));
-            return;
-          }
-          let data: {
-            ok?: boolean;
-            videoId?: string | null;
-            message?: string;
-            mode?: string;
-            error?: string;
-          } = {};
-          try {
-            data = (await res.json()) as typeof data;
-          } catch {
-            data = { ok: false, error: "Invalid JSON" };
-          }
-          if (!res.ok || data.ok === false) {
-            applyIfUrl((a) => ({
-              ...a,
-              url: a.url,
-              videoId: null,
-              status: "invalid_url",
-              debug: null,
-              pastBroadcastWarning: false,
-              persistentLiveHint: null,
-              urlResolveNote:
-                typeof data.error === "string"
-                  ? data.error
-                  : "Could not resolve /live URL.",
-              ...clearedAppBroadcastMeta,
-            }));
-            return;
-          }
-          if (!data.videoId) {
-            const hintUrl =
-              target.kind === "channel_live"
-                ? `https://www.youtube.com/channel/${target.channelId}/live`
-                : `https://www.youtube.com/@${target.handle}/live`;
-            applyIfUrl((a) => ({
-              ...a,
-              url: a.url,
-              videoId: null,
-              status: "waiting_for_signal",
-              debug: null,
-              pastBroadcastWarning: false,
-              persistentLiveHint: hintUrl,
-              urlResolveNote: "Waiting for live signal from YouTube…",
-            }));
-            return;
-          }
-
-          setAngles((prev) => {
-            const cur = prev.find((x) => x.id === rowId);
-            if (!cur || cur.url.trim() !== urlAtSchedule) return prev;
-            return prev.map((a) => {
-              if (a.id !== rowId) return a;
-              if (a.videoId === data.videoId && a.status !== "invalid_url")
-                return a;
-              return {
-                ...a,
-                url: a.url,
-                videoId: data.videoId!,
-                status: "checking",
-                debug: null,
-                pastBroadcastWarning: false,
-                persistentLiveHint:
-                  data.mode === "upcoming"
-                    ? "Upcoming broadcast — embed will go live at start."
-                    : null,
-                urlResolveNote: null,
-              };
-            });
-          });
+              ? `https://www.youtube.com/channel/${target.channelId}/live`
+              : `https://www.youtube.com/@${target.handle}/live`;
+          applyIfUrl((a) => ({
+            ...a,
+            url: a.url,
+            videoId: null,
+            status: "waiting_for_signal",
+            debug: null,
+            pastBroadcastWarning: false,
+            persistentLiveHint: hintUrl,
+            urlResolveNote:
+              "Persistent /live URLs are not resolved in Daily Use Mode. Paste a direct `youtube.com/live/VIDEO_ID` (or use Get Watch Link).",
+          }));
         })();
       }, 500);
       timers.push(tid);
@@ -1103,46 +684,9 @@ export default function StreamRoomPage() {
           });
           continue;
         }
-        const target = parsePersistentLiveUrlTarget(a.url.trim());
-        if (!target || target.kind === "video") {
-          throw new Error("Unexpected angle without video id.");
-        }
-        const q =
-          target.kind === "channel_live"
-            ? `channelId=${encodeURIComponent(target.channelId)}`
-            : `handle=${encodeURIComponent(target.handle)}`;
-        let res: Response;
-        try {
-          res = await fetch(`/api/youtube-resolve-live?${q}`);
-        } catch {
-          throw new Error("Could not reach resolve-live API.");
-        }
-        let data: { ok?: boolean; videoId?: string | null; error?: string } =
-          {};
-        try {
-          data = (await res.json()) as typeof data;
-        } catch {
-          data = { ok: false };
-        }
-        if (!res.ok || data.ok === false) {
-          const msg =
-            typeof data.error === "string" && data.error.trim() !== ""
-              ? data.error
-              : "Could not resolve /live URL.";
-          throw new Error(msg);
-        }
-        const vid =
-          typeof data.videoId === "string" ? data.videoId.trim() : "";
-        if (!/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
-          throw new Error(
-            "Waiting for live signal from YouTube — no broadcast id yet. Try again shortly.",
-          );
-        }
-        resolved.push({
-          id: a.id,
-          name: a.name.trim() || "Angle",
-          videoId: vid,
-        });
+        throw new Error(
+          "Angle is missing a YouTube video id. Paste a direct `youtube.com/live/VIDEO_ID` URL (or use Get Watch Link).",
+        );
       }
 
       const primary = resolved[0]!;
@@ -1259,7 +803,11 @@ export default function StreamRoomPage() {
                 ...a,
                 url: finalUrl,
                 videoId: derivedVid,
-                status: trustedAppCreated ? "app_created_live" : derivedVid ? "checking" : "idle",
+                status: trustedAppCreated
+                  ? "app_created_live"
+                  : derivedVid
+                    ? "ready"
+                    : "idle",
                 debug: null,
                 pastBroadcastWarning: false,
                 persistentLiveHint: null,
@@ -1394,13 +942,14 @@ export default function StreamRoomPage() {
       setCameraActiveResolveDebug(null);
       setCameraActiveLinkStatus({
         kind: "resolving",
-        message: "Finding active YouTube live link…",
+        message: "Getting watch link…",
       });
       try {
         const { accessToken } = await getYouTubeOAuthAccessToken();
 
         // Priority 1: reuse an existing active/upcoming broadcast already bound to this reusable stream.
         try {
+          bumpApiCount("findBroadcast");
           const existingRes = await fetch("/api/youtube/find-broadcast-for-stream", {
             method: "POST",
             headers: {
@@ -1469,7 +1018,7 @@ export default function StreamRoomPage() {
                         name: cam.name.trim() || a.name,
                         url: finalUrl,
                         videoId: derivedVid ?? (vid || null),
-                        status: derivedVid || vid ? "checking" : "idle",
+                        status: derivedVid || vid ? "app_created_live" : "idle",
                         debug: null,
                         pastBroadcastWarning: false,
                         persistentLiveHint: null,
@@ -1501,7 +1050,7 @@ export default function StreamRoomPage() {
                         name: cam.name.trim() || a.name,
                         url: finalUrl,
                         videoId: derivedVid ?? (vid || null),
-                        status: derivedVid || vid ? "checking" : "idle",
+                        status: derivedVid || vid ? "app_created_live" : "idle",
                         debug: null,
                         pastBroadcastWarning: false,
                         persistentLiveHint: null,
@@ -1614,81 +1163,6 @@ export default function StreamRoomPage() {
         });
         const watchUrl = ok.watchUrl.trim();
 
-        const channelIdForResolve =
-          cam.channelId?.trim() ||
-          (typeof ok.channelId === "string" ? ok.channelId.trim() : "");
-        const handleForResolve =
-          cam.channelHandle?.trim() ||
-          (typeof ok.channelHandle === "string" ? ok.channelHandle.trim() : "");
-        const resolveSource =
-          channelIdForResolve ? "channelId" : handleForResolve ? "handle" : null;
-
-        let resolvedVideoId: string | null = null;
-        const attemptLogs: Array<{
-          attempt: number;
-          at: string;
-          channelId: string;
-          handle: string;
-          response: unknown;
-        }> = [];
-        if (resolveSource) {
-          const deadline = Date.now() + 30_000;
-          let attempt = 0;
-          while (Date.now() < deadline) {
-            attempt += 1;
-            const qs = channelIdForResolve
-              ? `channelId=${encodeURIComponent(channelIdForResolve)}`
-              : `handle=${encodeURIComponent(handleForResolve)}`;
-            try {
-              const rr = await fetch(`/api/youtube-resolve-live?${qs}`, {
-                cache: "no-store",
-              });
-              let attemptJson: unknown = null;
-              try {
-                attemptJson = (await rr.json()) as unknown;
-              } catch {
-                attemptJson = { ok: false, error: "Invalid JSON" };
-              }
-              attemptLogs.push({
-                attempt,
-                at: new Date().toISOString(),
-                channelId: channelIdForResolve,
-                handle: handleForResolve,
-                response: attemptJson,
-              });
-              console.log("START_SESSION_RESOLVE_ATTEMPT", {
-                attempt,
-                channelId: channelIdForResolve,
-                handle: handleForResolve,
-                response: attemptJson,
-              });
-              const data = attemptJson as { ok?: boolean; videoId?: string | null };
-              if (rr.ok && data.ok === true) {
-                const vid =
-                  typeof data.videoId === "string" ? data.videoId.trim() : "";
-                if (vid) {
-                  resolvedVideoId = vid;
-                  break;
-                }
-              }
-            } catch {
-              /* ignore transient polling errors */
-            }
-            await new Promise<void>((r) => window.setTimeout(r, 2000));
-          }
-        }
-
-        if (resolvedVideoId) {
-          console.log("START_SESSION_RESOLVED_ACTIVE_LIVE", {
-            resolvedVideoId,
-            source: resolveSource,
-          });
-          setCameraActiveLinkStatus({
-            kind: "success",
-            message: "Active live link loaded.",
-          });
-        }
-
         const apiVideoId =
           typeof ok.videoId === "string" && ok.videoId.trim() !== ""
             ? ok.videoId.trim()
@@ -1698,22 +1172,18 @@ export default function StreamRoomPage() {
           watchTarget && watchTarget.kind === "video" ? watchTarget.videoId : null;
         const fallbackVideoId = apiVideoId ?? derivedVideoIdFromWatch ?? null;
 
-        const finalVideoId = resolvedVideoId ?? fallbackVideoId;
+        const finalVideoId = fallbackVideoId;
         const livePlaybackUrl = finalVideoId
           ? `https://youtube.com/live/${finalVideoId}`
           : watchUrl;
-
-        if (!resolvedVideoId) {
-          setCameraActiveLinkStatus({
-            kind: "warning",
-            message:
-              "Could not confirm active live video. Using created broadcast link.",
-          });
-        }
+        setCameraActiveLinkStatus({
+          kind: "success",
+          message: "Watch link loaded.",
+        });
 
         console.log("START_SESSION_FINAL_URL", {
           finalUrl: livePlaybackUrl,
-          resolvedVideoId,
+          resolvedVideoId: null,
           okVideoId: ok.videoId,
           watchUrl: ok.watchUrl,
         });
@@ -1737,7 +1207,7 @@ export default function StreamRoomPage() {
                   name: cam.name.trim() || a.name,
                   url: livePlaybackUrl,
                   videoId: derivedVid ?? finalVideoId,
-                  status: derivedVid || finalVideoId ? "checking" : "idle",
+                  status: derivedVid || finalVideoId ? "app_created_live" : "idle",
                   debug: null,
                   pastBroadcastWarning: false,
                   persistentLiveHint: null,
@@ -1764,11 +1234,13 @@ export default function StreamRoomPage() {
             typeof ok.embedUrl === "string" && ok.embedUrl.trim() !== ""
               ? ok.embedUrl.trim()
               : null,
-          resolvedActiveVideoId: resolvedVideoId,
+          resolvedActiveVideoId: null,
           finalAngleUrl: livePlaybackUrl,
-          resolverChannelId: channelIdForResolve,
-          resolverHandle: handleForResolve,
-          attempts: attemptLogs,
+          resolverChannelId: cam.channelId?.trim() ?? "",
+          resolverHandle: cam.channelHandle?.trim() ?? "",
+          attempts: [],
+          foundExistingBroadcast: false,
+          usedExistingBroadcast: false,
         });
         const merged: YouTubeCameraPreset = {
           ...cam,
@@ -1808,7 +1280,7 @@ export default function StreamRoomPage() {
         setSessionFromCameraLoadingId(null);
       }
     },
-    [sessionFromCameraLoadingId, fillFirstAngleWithUrl, setAngles],
+    [sessionFromCameraLoadingId, fillFirstAngleWithUrl, setAngles, bumpApiCount],
   );
 
   const useManualLiveLink = useCallback(() => {
@@ -1828,7 +1300,7 @@ export default function StreamRoomPage() {
               ...a,
               url: raw,
               videoId: derivedVid,
-              status: derivedVid ? "checking" : "idle",
+              status: derivedVid ? "app_created_live" : "idle",
               debug: null,
               pastBroadcastWarning: false,
               persistentLiveHint: null,
@@ -1993,15 +1465,21 @@ export default function StreamRoomPage() {
         </div>
 
         <div className={panelClass}>
-          <h2 className="text-sm font-semibold text-white">Camera Setup</h2>
+          <h2 className="text-sm font-semibold text-white">Camera</h2>
           <p className="mt-2 text-sm leading-relaxed text-zinc-300">
             Open Larix Broadcaster, Streamlabs, or another RTMP camera app. Paste the
             RTMP Server URL and Stream Key once and save the preset — your phone stays
-            configured. Each practice, use <strong className="text-zinc-200">Start Session with Camera</strong>{" "}
-            to create a <em>new</em> YouTube broadcast bound to the same RTMP stream.{" "}
-            <strong className="text-zinc-200">Start Session with Camera</strong> creates a fresh
-            YouTube broadcast and loads the <em>active live playback URL</em> into your first
-            angle. Film Room now uses the active live playback URL for app-created broadcasts.
+            configured.
+          </p>
+          <p className="mt-3 text-sm leading-relaxed text-zinc-300">
+            <strong className="text-zinc-200">Setup mode (rare):</strong> create a reusable YouTube
+            stream key and save a camera preset.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+            <strong className="text-zinc-200">Daily use mode:</strong> start streaming on your
+            phone, then click <strong className="text-zinc-200">Get Watch Link</strong>. Film Room
+            does a single lookup to find the current active/upcoming broadcast for that preset’s
+            saved <code className="text-zinc-200">streamId</code>, then auto-adds it as an angle.
           </p>
           <p className="mt-2 text-xs text-zinc-500">
             Creating a stream signs you in with Google (YouTube scope) and does not start
@@ -2216,7 +1694,7 @@ export default function StreamRoomPage() {
             <div className="mt-4 rounded-xl border border-white/10 bg-black/35 p-4">
               <details>
                 <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
-                  Start Session debug (temporary)
+                  Get Watch Link debug (temporary)
                 </summary>
                 <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
                   {JSON.stringify(cameraActiveResolveDebug, null, 2)}
@@ -2351,8 +1829,8 @@ export default function StreamRoomPage() {
                           onClick={() => void startSessionWithCamera(cam)}
                         >
                           {sessionFromCameraLoadingId === cam.id
-                            ? "Creating session…"
-                            : "Start Session with Camera"}
+                            ? "Getting link…"
+                            : "Get Watch Link"}
                         </button>
                         <button
                           type="button"
@@ -2369,6 +1847,41 @@ export default function StreamRoomPage() {
               </ul>
             </div>
           ) : null}
+
+          <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
+              Daily use
+            </div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-zinc-300">
+                After <strong>Get Watch Link</strong>, click{" "}
+                <strong>Launch Film Room</strong>.
+              </div>
+              <button
+                type="button"
+                onClick={() => void startLiveSession()}
+                className={primaryBtn}
+                disabled={!startEnabled}
+              >
+                Launch Film Room
+              </button>
+            </div>
+
+            <div className="mt-3 text-[11px] text-zinc-500">
+              API calls this session:{" "}
+              <span className="font-mono text-zinc-300">
+                find-broadcast={apiCallCounts.findBroadcast}
+              </span>
+              ,{" "}
+              <span className="font-mono text-zinc-300">
+                youtube-resolve-live={apiCallCounts.youtubeResolveLive}
+              </span>
+              ,{" "}
+              <span className="font-mono text-zinc-300">
+                youtube-video-meta={apiCallCounts.youtubeVideoMeta}
+              </span>
+            </div>
+          </div>
         </div>
 
         <div className={panelClass}>
@@ -2417,13 +1930,7 @@ export default function StreamRoomPage() {
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 md:col-span-3 md:justify-end">
-                  <StatusPill
-                    status={a.status}
-                    quotaBypass={
-                      a.status === "app_created_live" &&
-                      isQuotaExceededMeta(a.debug?.metaResponse)
-                    }
-                  />
+                  <StatusPill status={a.status} />
                   <button
                     type="button"
                     onClick={() => removeAngle(a.id)}
@@ -2434,17 +1941,6 @@ export default function StreamRoomPage() {
                     Remove
                   </button>
                 </div>
-
-                {a.videoId && a.status === "checking" && !a.appCreatedLive ? (
-                  <StreamAngleValidationPipeline
-                    key={`${a.id}-${a.videoId}-${a.appCreatedLive ? "app" : "x"}`}
-                    angleId={a.id}
-                    videoId={a.videoId}
-                    sourceUrl={a.url}
-                    appCreatedLive={false}
-                    onSettled={handleStreamAngleSettled}
-                  />
-                ) : null}
 
                 {(a.persistentLiveHint ||
                   a.urlResolveNote ||
@@ -2479,25 +1975,12 @@ export default function StreamRoomPage() {
                   <div className="md:col-span-12">
                     <details className="rounded-lg border border-white/10 bg-black/35 px-3 py-2">
                       <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
-                        Live detection debug (temporary)
+                        Debug (temporary)
                       </summary>
                       <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
                         {JSON.stringify(
                           {
-                            videoId: a.debug.videoId,
-                            embedResult: a.debug.embedResult,
-                            metaResponse: a.debug.metaResponse,
-                            liveBroadcastContent:
-                              a.debug.computed.liveBroadcastContent,
-                            streamPhase: a.debug.computed.streamPhase,
-                            actualStartTime: a.debug.computed.actualStartTime,
-                            actualEndTime: a.debug.computed.actualEndTime,
-                            broadIsLive: a.debug.computed.broadIsLive,
-                            uploadStatus: a.debug.computed.uploadStatus,
-                            privacyStatus: a.debug.computed.privacyStatus,
-                            publishedAt: a.debug.computed.publishedAt,
-                            embeddableFromApi: a.debug.computed.embeddable,
-                            finalStreamRoomStatus: a.debug.finalStatus,
+                            debug: a.debug,
                             appCreatedLive: a.appCreatedLive,
                             angleSource: a.source,
                             createdBroadcastId: a.createdBroadcastId,
