@@ -91,16 +91,11 @@ function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
   ) {
     return false;
   }
-  const vid = a.videoId;
-  if (
-    a.appCreatedLive === true &&
-    a.url.includes("watch?v=") &&
-    typeof vid === "string" &&
-    /^[a-zA-Z0-9_-]{11}$/.test(vid)
-  ) {
-    return true;
-  }
   if (a.status === "app_created_live") {
+    const t = parsePersistentLiveUrlTarget(a.url.trim());
+    return Boolean(t && t.kind === "video");
+  }
+  if (a.appCreatedLive === true) {
     const t = parsePersistentLiveUrlTarget(a.url.trim());
     return Boolean(t && t.kind === "video");
   }
@@ -318,7 +313,9 @@ function pillLabel(status: AngleStatus, opts?: { quotaBypass?: boolean }): strin
     case "waiting_offline":
       return "Waiting / Offline";
     case "app_created_live":
-      return opts?.quotaBypass ? "Live (quota bypass)" : "App-created live link";
+      return opts?.quotaBypass
+        ? "Live (quota bypass)"
+        : "Ready — app-created live link";
     case "stream_ended":
       return "Stream ended — restart stream source";
     default: {
@@ -949,6 +946,19 @@ export default function StreamRoomPage() {
               return prev.map((a) => {
                 if (a.id !== rowId) return a;
                 if (a.videoId === vid && a.status !== "invalid_url") return a;
+                if (a.appCreatedLive === true) {
+                  return {
+                    ...a,
+                    url: a.url,
+                    videoId: vid,
+                    status: "app_created_live",
+                    debug: null,
+                    pastBroadcastWarning: false,
+                    persistentLiveHint: null,
+                    urlResolveNote:
+                      "Film Room will load this YouTube live player directly.",
+                  };
+                }
                 return {
                   ...a,
                   url: a.url,
@@ -1242,17 +1252,20 @@ export default function StreamRoomPage() {
         const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
         const t = parsePersistentLiveUrlTarget(finalUrl);
         const derivedVid = t && t.kind === "video" ? t.videoId : null;
+        const trustedAppCreated = Boolean(fromYouTubeBroadcast && derivedVid);
         return prev.map((a, i) =>
           i === idx
             ? {
                 ...a,
                 url: finalUrl,
                 videoId: derivedVid,
-                status: derivedVid ? "checking" : "idle",
+                status: trustedAppCreated ? "app_created_live" : derivedVid ? "checking" : "idle",
                 debug: null,
                 pastBroadcastWarning: false,
                 persistentLiveHint: null,
-                urlResolveNote: null,
+                urlResolveNote: trustedAppCreated
+                  ? "Film Room will load this YouTube live player directly."
+                  : null,
                 ...(fromYouTubeBroadcast
                   ? {
                       appCreatedLive: true,
@@ -2422,13 +2435,13 @@ export default function StreamRoomPage() {
                   </button>
                 </div>
 
-                {a.videoId && a.status === "checking" ? (
+                {a.videoId && a.status === "checking" && !a.appCreatedLive ? (
                   <StreamAngleValidationPipeline
                     key={`${a.id}-${a.videoId}-${a.appCreatedLive ? "app" : "x"}`}
                     angleId={a.id}
                     videoId={a.videoId}
                     sourceUrl={a.url}
-                    appCreatedLive={a.appCreatedLive === true}
+                    appCreatedLive={false}
                     onSettled={handleStreamAngleSettled}
                   />
                 ) : null}
@@ -2445,6 +2458,11 @@ export default function StreamRoomPage() {
                     {a.urlResolveNote ? (
                       <p className="rounded-lg border border-zinc-500/25 bg-zinc-900/50 px-3 py-2 text-zinc-300">
                         {a.urlResolveNote}
+                      </p>
+                    ) : null}
+                    {a.appCreatedLive ? (
+                      <p className="rounded-lg border border-violet-500/20 bg-violet-950/25 px-3 py-2 text-violet-100/95">
+                        Film Room will load this YouTube live player directly.
                       </p>
                     ) : null}
                     {a.pastBroadcastWarning ? (
