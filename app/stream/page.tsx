@@ -1365,6 +1365,7 @@ export default function StreamRoomPage() {
         const ok = data as {
           ok?: boolean;
           watchUrl?: string;
+          videoId?: string;
           broadcastId?: string;
           streamId?: string;
           boundStreamId?: string;
@@ -1407,26 +1408,44 @@ export default function StreamRoomPage() {
             typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
         });
         const watchUrl = ok.watchUrl.trim();
-        console.log("START_SESSION_WATCH_URL", {
-          watchUrl,
-          broadcastId: ok.broadcastId,
-          streamId: ok.streamId,
+        const apiVideoId =
+          typeof ok.videoId === "string" && ok.videoId.trim() !== ""
+            ? ok.videoId.trim()
+            : null;
+        const watchTarget = parsePersistentLiveUrlTarget(watchUrl);
+        const derivedVideoIdFromWatch =
+          watchTarget && watchTarget.kind === "video" ? watchTarget.videoId : null;
+        const videoIdForLive =
+          apiVideoId ?? derivedVideoIdFromWatch ?? null;
+        if (!videoIdForLive) {
+          console.warn(
+            "START_SESSION_LIVE_PLAYBACK_URL missing videoId; falling back to watchUrl",
+            { watchUrl, okVideoId: ok.videoId },
+          );
+        }
+        const livePlaybackUrl = videoIdForLive
+          ? `https://youtube.com/live/${videoIdForLive}`
+          : watchUrl;
+        console.log("START_SESSION_LIVE_PLAYBACK_URL", {
+          videoId: videoIdForLive,
+          livePlaybackUrl,
+          watchUrl: ok.watchUrl,
         });
 
-        // Immediately populate the angle with the fresh session watch URL (never /live, never lastWatchUrl).
+        // Immediately populate the angle with the fresh session live playback URL (never /live, never lastWatchUrl).
         setAngles((prev) => {
           if (prev.length === 0) return prev;
           const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
-          const t = parsePersistentLiveUrlTarget(watchUrl);
+          const t = parsePersistentLiveUrlTarget(livePlaybackUrl);
           const derivedVid = t && t.kind === "video" ? t.videoId : null;
           return prev.map((a, i) =>
             i === idx
               ? {
                   ...a,
                   name: cam.name.trim() || a.name,
-                  url: watchUrl,
-                  videoId: derivedVid,
-                  status: derivedVid ? "checking" : "idle",
+                  url: livePlaybackUrl,
+                  videoId: derivedVid ?? videoIdForLive,
+                  status: derivedVid || videoIdForLive ? "checking" : "idle",
                   debug: null,
                   pastBroadcastWarning: false,
                   persistentLiveHint: null,
@@ -1440,7 +1459,7 @@ export default function StreamRoomPage() {
         });
 
         // Keep helper call for centralized logging/behavior.
-        fillFirstAngleWithUrl(watchUrl, {
+        fillFirstAngleWithUrl(livePlaybackUrl, {
           appCreatedLive: true,
           source: "youtube_api_broadcast",
           createdBroadcastId: ok.broadcastId,
@@ -1643,11 +1662,8 @@ export default function StreamRoomPage() {
             configured. Each practice, use <strong className="text-zinc-200">Start Session with Camera</strong>{" "}
             to create a <em>new</em> YouTube broadcast bound to the same RTMP stream.{" "}
             <strong className="text-zinc-200">Start Session with Camera</strong> creates a fresh
-            YouTube broadcast and loads that exact view link (this session’s{" "}
-            <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">watchUrl</code> from the
-            API — not a saved archive URL or channel{" "}
-            <code className="rounded bg-white/10 px-1 py-0.5 text-[11px]">/live</code> link) into
-            your first angle. Then start your Film Room when ready.
+            YouTube broadcast and loads the <em>active live playback URL</em> into your first
+            angle. Film Room now uses the active live playback URL for app-created broadcasts.
           </p>
           <p className="mt-2 text-xs text-zinc-500">
             Creating a stream signs you in with Google (YouTube scope) and does not start
