@@ -184,6 +184,8 @@ type ChapterEntry = {
   gameTime?: number;
 };
 
+type VideoAngleWithAppCreated = VideoAngle & { appCreatedLive?: boolean };
+
 type RoomState = {
   /** Room owner (optional for legacy rooms). */
   ownerId?: string;
@@ -207,7 +209,7 @@ type RoomState = {
   syncAnchorTime?: number;
   chapters: ChapterEntry[];
   /** Camera angles; synthesized as a single default angle when absent from RTDB. */
-  angles: VideoAngle[];
+  angles: VideoAngleWithAppCreated[];
   currentAngleId: string;
   /** Which angle is shown on top in stacked (viewer follow-coach). */
   selectedDisplayAngleId?: string;
@@ -505,7 +507,22 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
   }
 
   const canonicalClipId = clips[idx]?.videoId ?? videoIdRaw;
-  const angles = parseVideoAngles(val.angles, canonicalClipId);
+  const anglesBase = parseVideoAngles(val.angles, canonicalClipId);
+  const appCreatedById = new Map<string, true>();
+  if (Array.isArray(val.angles)) {
+    for (const row of val.angles) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as Record<string, unknown>;
+      const id = typeof r.id === "string" ? r.id.trim() : "";
+      if (!id) continue;
+      if (r.appCreatedLive === true) {
+        appCreatedById.set(id, true);
+      }
+    }
+  }
+  const angles: VideoAngleWithAppCreated[] = anglesBase.map((a) =>
+    appCreatedById.get(a.id) ? { ...a, appCreatedLive: true } : a,
+  );
 
   const rawAngleId = val.currentAngleId;
   let currentAngleId =
@@ -1034,6 +1051,54 @@ function forceYouTubePlay(
   }
 }
 
+async function forceLiveBootstrapPlay(
+  player: YouTubePlayer,
+  reason: string,
+): Promise<void> {
+  try {
+    console.log("LIVE_BOOTSTRAP_READY", { reason });
+
+    player.mute?.();
+
+    const attempts = [0, 250, 750, 1500, 3000];
+    let loggedPlaying = false;
+
+    for (const delay of attempts) {
+      window.setTimeout(() => {
+        try {
+          const state = player.getPlayerState?.();
+
+          console.log("LIVE_BOOTSTRAP_ATTEMPT", {
+            reason,
+            delay,
+            state,
+          });
+
+          if (state === YT_PLAYING || state === YT_BUFFERING) {
+            if (!loggedPlaying) {
+              loggedPlaying = true;
+              console.log("LIVE_BOOTSTRAP_PLAYING", { reason, delay, state });
+            }
+            return;
+          }
+
+          player.playVideo?.();
+
+          try {
+            player.seekTo?.(player.getCurrentTime?.() || 0, true);
+          } catch {
+            /* ignore */
+          }
+        } catch (err) {
+          console.warn("LIVE_BOOTSTRAP_FAIL", err);
+        }
+      }, delay);
+    }
+  } catch (err) {
+    console.warn("LIVE_BOOTSTRAP_FATAL", err);
+  }
+}
+
 /** After seek on live, kick playback with muted autoplay pattern (stack unmutes top angle). */
 async function livePlayRequestedWithRetry(
   player: YouTubePlayer,
@@ -1055,6 +1120,10 @@ async function livePlayRequestedWithRetry(
   forceYouTubePlay(player, `livePlayRequestedWithRetry:${context}`, angleId, {
     delayedUnmute: false,
   });
+  void forceLiveBootstrapPlay(
+    player,
+    `livePlayRequestedWithRetry:${context}:${angleId}`,
+  );
 
   await new Promise<void>((resolve) => {
     window.setTimeout(resolve, 400);
@@ -1093,6 +1162,10 @@ async function applyPlaybackIfNeeded(
         forceYouTubePlay(player, "applyPlaybackIfNeeded:live-host", undefined, {
           delayedUnmute: true,
         });
+        void forceLiveBootstrapPlay(
+          player,
+          "applyPlaybackIfNeeded:live-host",
+        );
       } else {
         player.playVideo();
       }
@@ -1107,6 +1180,10 @@ async function applyPlaybackIfNeeded(
       forceYouTubePlay(player, "applyPlaybackIfNeeded:live-host", undefined, {
         delayedUnmute: true,
       });
+      void forceLiveBootstrapPlay(
+        player,
+        "applyPlaybackIfNeeded:live-host",
+      );
       return;
     }
     player.playVideo();
@@ -1140,6 +1217,10 @@ async function ensureViewerPlaybackIntent(
       forceYouTubePlay(player, "ensureViewerPlaybackIntent:live", undefined, {
         delayedUnmute: false,
       });
+      void forceLiveBootstrapPlay(
+        player,
+        "ensureViewerPlaybackIntent:live",
+      );
     } else {
       player.playVideo();
     }
@@ -1152,6 +1233,10 @@ async function ensureViewerPlaybackIntent(
     forceYouTubePlay(player, "ensureViewerPlaybackIntent:live", undefined, {
       delayedUnmute: false,
     });
+    void forceLiveBootstrapPlay(
+      player,
+      "ensureViewerPlaybackIntent:live",
+    );
     return;
   }
   player.playVideo();
@@ -1947,6 +2032,10 @@ function RoomContent() {
           forceYouTubePlay(p, "ensureSelectedViewerStackPlayerPlaying", a.id, {
             delayedUnmute: a.id === topId,
           });
+          void forceLiveBootstrapPlay(
+            p,
+            `ensureSelectedViewerStackPlayerPlaying:${a.id}`,
+          );
         } else {
           try {
             p.playVideo?.();
@@ -2747,6 +2836,10 @@ function RoomContent() {
                 `applySyncStateToAnglePlayer:${reason}`,
                 angleId,
                 { delayedUnmute: angleId === audibleId },
+              );
+              void forceLiveBootstrapPlay(
+                player,
+                `applySyncStateToAnglePlayer:${reason}:${angleId}`,
               );
             } else {
               try {
@@ -4427,6 +4520,12 @@ function RoomContent() {
                 videoId: nextAngle.videoId,
               });
             }
+            if (roomStateRef.current?.sourceType === "live") {
+              void forceLiveBootstrapPlay(
+                lp,
+                `angle-switch:prestart:loadVideoById:${nextAngle.id}`,
+              );
+            }
             window.setTimeout(() => {
               const p2 = getPlayer();
               if (!p2) return;
@@ -4450,6 +4549,12 @@ function RoomContent() {
               syncLog("angle switch pre-start cueVideoById failed", {
                 videoId: nextAngle.videoId,
               });
+            }
+            if (roomStateRef.current?.sourceType === "live") {
+              void forceLiveBootstrapPlay(
+                lp,
+                `angle-switch:prestart:cueVideoById:${nextAngle.id}`,
+              );
             }
             scheduleMultiViewSecondary();
             return;
@@ -4500,6 +4605,12 @@ function RoomContent() {
             syncLog("angle switch loadVideoById failed → fallback", {
               videoId: nextAngle.videoId,
             });
+          }
+          if (roomStateRef.current?.sourceType === "live") {
+            void forceLiveBootstrapPlay(
+              lp,
+              `angle-switch:loadVideoById:${nextAngle.id}`,
+            );
           }
 
           window.setTimeout(() => {
@@ -4560,6 +4671,12 @@ function RoomContent() {
               videoId: nextAngle.videoId,
             });
           }
+          if (roomStateRef.current?.sourceType === "live") {
+            void forceLiveBootstrapPlay(
+              lp,
+              `angle-switch:cueVideoById:${nextAngle.id}`,
+            );
+          }
           scheduleMultiViewSecondary();
           return;
         }
@@ -4601,6 +4718,12 @@ function RoomContent() {
           lp.loadVideoById({ videoId, startSeconds });
         } catch {
           syncLog(`${logPrefix} loadVideoById failed → fallback`, { videoId });
+        }
+        if (opts?.liveHostKick) {
+          void forceLiveBootstrapPlay(
+            lp,
+            `${logPrefix}:loadVideoById`,
+          );
         }
       } else {
         syncLog(`${logPrefix} fallback used`, {
@@ -4913,6 +5036,10 @@ function RoomContent() {
           forceYouTubePlay(player, "handlePlay-initial-kick", activeAngleId, {
             delayedUnmute: true,
           });
+          void forceLiveBootstrapPlay(
+            player,
+            `handlePlay-initial-kick:${activeAngleId}`,
+          );
         } else {
           try {
             player.playVideo?.();
@@ -5552,6 +5679,43 @@ function RoomContent() {
     const s = roomStateRef.current;
     if (!s) return;
     const p = getPlayer();
+    if (p && s.sourceType === "live") {
+      void forceLiveBootstrapPlay(p, "onReady:primary");
+      const activeAngle =
+        s.angles.find((a) => a.id === s.currentAngleId) ?? s.angles[0]!;
+      if (activeAngle.appCreatedLive === true) {
+        window.setTimeout(() => {
+          try {
+            const p2 = getPlayer();
+            const cur = roomStateRef.current;
+            if (!p2 || !cur || cur.sourceType !== "live") return;
+            const active =
+              cur.angles.find((a) => a.id === cur.currentAngleId) ??
+              cur.angles[0]!;
+            if (active.appCreatedLive !== true) return;
+            const st = p2.getPlayerState?.();
+            if (st !== YT_UNSTARTED) return;
+            console.log("LIVE_BOOTSTRAP_RECOVER", {
+              reason: "unstarted>4s-after-onReady",
+              videoId: cur.videoId,
+              state: st,
+            });
+            try {
+              (p2 as YouTubePlayer & { loadVideoById?: (id: string) => void })
+                .loadVideoById?.(cur.videoId);
+            } catch {
+              /* ignore */
+            }
+            void forceLiveBootstrapPlay(
+              p2,
+              "recover:unstarted>4s-after-onReady",
+            );
+          } catch {
+            /* ignore */
+          }
+        }, 4000);
+      }
+    }
     if (!isHostRef.current && p && pendingPlaybackCommandRef.current) {
       const cmd = pendingPlaybackCommandRef.current;
       if (
