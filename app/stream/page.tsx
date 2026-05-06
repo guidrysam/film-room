@@ -38,7 +38,7 @@ type AngleStatus =
 /** Temporary Stream Room diagnostics (UI + console). */
 type StreamAngleDebug = {
   videoId: string;
-  embedResult: "ready" | "offline_or_not_started" | "error";
+  embedResult: "ready" | "offline_or_not_started" | "quota_bypass_live" | "error";
   metaResponse: unknown;
   computed: {
     /** API `isLive` (includes upcoming / chat / viewers); not used for strict LIVE UI. */
@@ -56,6 +56,12 @@ type StreamAngleDebug = {
   };
   finalStatus: AngleStatus;
 };
+
+function isQuotaExceededMeta(meta: unknown): boolean {
+  if (!meta || typeof meta !== "object") return false;
+  const m = meta as { ok?: unknown; reason?: unknown };
+  return m.ok === false && m.reason === "quotaExceeded";
+}
 
 type StreamAngleRow = {
   id: string;
@@ -93,6 +99,10 @@ function isLaunchableStreamAngle(a: StreamAngleRow): boolean {
     /^[a-zA-Z0-9_-]{11}$/.test(vid)
   ) {
     return true;
+  }
+  if (a.status === "app_created_live") {
+    const t = parsePersistentLiveUrlTarget(a.url.trim());
+    return Boolean(t && t.kind === "video");
   }
   if (Boolean(a.videoId)) return true;
   if (a.status !== "waiting_for_signal") return false;
@@ -289,7 +299,7 @@ function pillClasses(status: AngleStatus): string {
   }
 }
 
-function pillLabel(status: AngleStatus): string {
+function pillLabel(status: AngleStatus, opts?: { quotaBypass?: boolean }): string {
   switch (status) {
     case "idle":
       return "Idle";
@@ -308,7 +318,7 @@ function pillLabel(status: AngleStatus): string {
     case "waiting_offline":
       return "Waiting / Offline";
     case "app_created_live":
-      return "App-created live link";
+      return opts?.quotaBypass ? "Live (quota bypass)" : "App-created live link";
     case "stream_ended":
       return "Stream ended — restart stream source";
     default: {
@@ -318,12 +328,18 @@ function pillLabel(status: AngleStatus): string {
   }
 }
 
-function StatusPill({ status }: { status: AngleStatus }) {
+function StatusPill({
+  status,
+  quotaBypass,
+}: {
+  status: AngleStatus;
+  quotaBypass?: boolean;
+}) {
   return (
     <span
       className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium ${pillClasses(status)}`}
     >
-      {pillLabel(status)}
+      {pillLabel(status, { quotaBypass })}
     </span>
   );
 }
@@ -413,7 +429,9 @@ function StreamAngleValidationPipeline({
 }) {
   const decidedRef = useRef(false);
   const metaRef = useRef<MetaApiJson | "pending">("pending");
-  const embedRef = useRef<"ready" | "offline_or_not_started" | null>(null);
+  const embedRef = useRef<
+    "ready" | "offline_or_not_started" | "quota_bypass_live" | null
+  >(null);
 
   const finalize = useCallback(() => {
     if (decidedRef.current) return;
@@ -439,9 +457,21 @@ function StreamAngleValidationPipeline({
       channelCustomUrl: m?.channelCustomUrl,
     };
 
-    let finalStatus = computeStreamAngleStatus(emb, meta, {
-      persistentLiveUrl: isPersistentYouTubeLiveUrl(sourceUrl),
-    });
+    // `computeStreamAngleStatus` doesn't understand quota bypass; normalize to "ready".
+    let finalStatus = computeStreamAngleStatus(
+      emb === "quota_bypass_live" ? "ready" : emb,
+      meta,
+      { persistentLiveUrl: isPersistentYouTubeLiveUrl(sourceUrl) },
+    );
+
+    // Quota bypass: app-created live + valid video id + quotaExceeded meta.
+    const parsed = parsePersistentLiveUrlTarget(sourceUrl);
+    const parsedVideoId = parsed && parsed.kind === "video" ? parsed.videoId : null;
+    if (appCreatedLive && parsedVideoId && isQuotaExceededMeta(metaResponse)) {
+      console.log("LIVE_QUOTA_BYPASS", { videoId: parsedVideoId, sourceUrl });
+      finalStatus = "app_created_live";
+      embedRef.current = "quota_bypass_live";
+    }
     if (
       appCreatedLive &&
       sourceUrl.includes("watch?v=") &&
@@ -475,7 +505,7 @@ function StreamAngleValidationPipeline({
 
     const debug: StreamAngleDebug = {
       videoId,
-      embedResult: emb,
+      embedResult: embedRef.current ?? emb,
       metaResponse,
       computed,
       finalStatus,
@@ -2244,7 +2274,13 @@ export default function StreamRoomPage() {
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 md:col-span-3 md:justify-end">
-                  <StatusPill status={a.status} />
+                  <StatusPill
+                    status={a.status}
+                    quotaBypass={
+                      a.status === "app_created_live" &&
+                      isQuotaExceededMeta(a.debug?.metaResponse)
+                    }
+                  />
                   <button
                     type="button"
                     onClick={() => removeAngle(a.id)}
