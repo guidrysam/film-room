@@ -395,6 +395,16 @@ export default function StreamRoomPage() {
     lifeCycleStatus?: string;
     finalAngleUrl?: string;
   } | null>(null);
+  const [cameraTransitionDebug, setCameraTransitionDebug] = useState<{
+    transitionAttempted: boolean;
+    streamStatus: string | null;
+    healthStatus: string | null;
+    streamReceiving: boolean;
+    transitionResponseLifeCycleStatus: string | null;
+    postTransitionLifeCycleStatus: string | null;
+    postTransitionActualStartTime: string | null;
+    postTransitionBoundStreamId: string | null;
+  } | null>(null);
   const [manualLiveLinkDraft, setManualLiveLinkDraft] = useState("");
   const [cameraSessionVerify, setCameraSessionVerify] =
     useState<CameraSessionVerify | null>(null);
@@ -928,6 +938,7 @@ export default function StreamRoomPage() {
       setSessionFromCameraLoadingId(cam.id);
       setCameraSessionVerify(null);
       setCameraActiveResolveDebug(null);
+      setCameraTransitionDebug(null);
       setCameraActiveLinkStatus({
         kind: "resolving",
         message: "Creating / getting today’s watch link…",
@@ -1042,16 +1053,56 @@ export default function StreamRoomPage() {
               ok?: boolean;
               reason?: string;
               message?: string;
-              lifeCycleStatus?: string | null;
               streamStatus?: string | null;
               healthStatus?: string | null;
               streamReceiving?: boolean;
+              transitionResponseLifeCycleStatus?: string | null;
+              postTransitionLifeCycleStatus?: string | null;
+              postTransitionActualStartTime?: string | null;
+              postTransitionBoundStreamId?: string | null;
             };
-            if (r.ok && j.ok === true) {
-              setCameraActiveLinkStatus({
-                kind: "success",
-                message: "Broadcast is live.",
+            if (r.ok && j) {
+              setCameraTransitionDebug({
+                transitionAttempted: true,
+                streamStatus:
+                  typeof j.streamStatus === "string" ? j.streamStatus : null,
+                healthStatus:
+                  typeof j.healthStatus === "string" ? j.healthStatus : null,
+                streamReceiving: j.streamReceiving === true,
+                transitionResponseLifeCycleStatus:
+                  typeof j.transitionResponseLifeCycleStatus === "string"
+                    ? j.transitionResponseLifeCycleStatus
+                    : null,
+                postTransitionLifeCycleStatus:
+                  typeof j.postTransitionLifeCycleStatus === "string"
+                    ? j.postTransitionLifeCycleStatus
+                    : null,
+                postTransitionActualStartTime:
+                  typeof j.postTransitionActualStartTime === "string"
+                    ? j.postTransitionActualStartTime
+                    : null,
+                postTransitionBoundStreamId:
+                  typeof j.postTransitionBoundStreamId === "string"
+                    ? j.postTransitionBoundStreamId
+                    : null,
               });
+            }
+            if (r.ok && j.ok === true) {
+              if (
+                typeof j.postTransitionLifeCycleStatus === "string" &&
+                j.postTransitionLifeCycleStatus.toLowerCase() !== "live"
+              ) {
+                setCameraActiveLinkStatus({
+                  kind: "warning",
+                  message:
+                    "YouTube accepted the request, but the broadcast is still not live.",
+                });
+              } else {
+                setCameraActiveLinkStatus({
+                  kind: "success",
+                  message: "Broadcast is live.",
+                });
+              }
               return;
             }
             setCameraActiveLinkStatus({
@@ -1688,6 +1739,75 @@ export default function StreamRoomPage() {
                 <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
                   {JSON.stringify(cameraActiveResolveDebug, null, 2)}
                 </pre>
+              </details>
+            </div>
+          ) : null}
+
+          {cameraTransitionDebug ? (
+            <div className="mt-3 rounded-xl border border-white/10 bg-black/35 p-4">
+              <details open>
+                <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
+                  Transition-to-live debug (temporary)
+                </summary>
+                <div className="mt-3 space-y-1 text-[11px] text-zinc-300">
+                  <div>
+                    <span className="text-zinc-500">transitionAttempted:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.transitionAttempted)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">streamStatus:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.streamStatus ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">healthStatus:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.healthStatus ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">streamReceiving:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.streamReceiving)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">
+                      transitionResponseLifeCycleStatus:
+                    </span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.transitionResponseLifeCycleStatus ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">postTransitionLifeCycleStatus:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.postTransitionLifeCycleStatus ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">postTransitionActualStartTime:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.postTransitionActualStartTime ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">postTransitionBoundStreamId:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.postTransitionBoundStreamId ?? "—"}
+                    </span>
+                  </div>
+                </div>
+                {cameraTransitionDebug.postTransitionLifeCycleStatus &&
+                cameraTransitionDebug.postTransitionLifeCycleStatus.toLowerCase() !==
+                  "live" ? (
+                  <p className="mt-3 rounded-lg border border-amber-500/35 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-100/95">
+                    YouTube accepted the request, but the broadcast is still not live.
+                  </p>
+                ) : null}
               </details>
             </div>
           ) : null}

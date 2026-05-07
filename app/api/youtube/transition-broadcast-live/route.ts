@@ -31,6 +31,14 @@ type BroadcastTransitionResponse = {
   status?: { lifeCycleStatus?: string };
 };
 
+type BroadcastListResponse = {
+  items?: Array<{
+    status?: { lifeCycleStatus?: string; recordingStatus?: string };
+    contentDetails?: { boundStreamId?: string };
+    snippet?: { actualStartTime?: string; actualEndTime?: string };
+  }>;
+};
+
 export async function POST(request: Request) {
   const token = bearerTokenFromRequest(request);
   if (!token) {
@@ -177,20 +185,105 @@ export async function POST(request: Request) {
   }
 
   const transJson = transBody as BroadcastTransitionResponse;
-  const lifeCycleStatus =
+  const transitionResponseLifeCycleStatus =
     typeof transJson.status?.lifeCycleStatus === "string"
       ? transJson.status.lifeCycleStatus.trim()
       : null;
 
+  // 3) Immediately read post-transition status for visible diagnostics.
+  const postUrl =
+    "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
+    `?part=status,contentDetails,snippet&id=${encodeURIComponent(broadcastId)}`;
+  let postRes: Response;
+  try {
+    postRes = await fetch(postUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+  } catch (err) {
+    return NextResponse.json(
+      {
+        ok: false,
+        route: ROUTE,
+        endpoint: postUrl,
+        message: err instanceof Error ? err.message : "Post-transition read failed.",
+        broadcastId,
+        streamId,
+        streamStatus,
+        healthStatus,
+        streamReceiving,
+        transitionAttempted: true,
+        transitionResponseLifeCycleStatus,
+        rawTransitionResponse: transBody,
+      },
+      { status: 502 },
+    );
+  }
+
+  let postBody: unknown = null;
+  try {
+    postBody = await postRes.json();
+  } catch {
+    postBody = null;
+  }
+  if (!postRes.ok) {
+    return youtubeApiErrorNextResponseFromFetch({
+      route: ROUTE,
+      endpoint: postUrl,
+      res: postRes,
+      rawBody: postBody,
+      extra: {
+        broadcastId,
+        streamId,
+        streamStatus,
+        healthStatus,
+        streamReceiving,
+        transitionAttempted: true,
+        transitionResponseLifeCycleStatus,
+        rawTransitionResponse: transBody,
+      },
+    });
+  }
+
+  const postJson = postBody as BroadcastListResponse;
+  const postItem = postJson.items?.[0];
+  const postTransitionLifeCycleStatus =
+    typeof postItem?.status?.lifeCycleStatus === "string"
+      ? postItem.status.lifeCycleStatus.trim()
+      : null;
+  const postTransitionRecordingStatus =
+    typeof postItem?.status?.recordingStatus === "string"
+      ? postItem.status.recordingStatus.trim()
+      : null;
+  const postTransitionBoundStreamId =
+    typeof postItem?.contentDetails?.boundStreamId === "string"
+      ? postItem.contentDetails.boundStreamId.trim()
+      : null;
+  const postTransitionActualStartTime =
+    typeof postItem?.snippet?.actualStartTime === "string"
+      ? postItem.snippet.actualStartTime.trim()
+      : null;
+  const postTransitionActualEndTime =
+    typeof postItem?.snippet?.actualEndTime === "string"
+      ? postItem.snippet.actualEndTime.trim()
+      : null;
+
   return NextResponse.json({
     ok: true,
+    transitionAttempted: true,
     broadcastId,
     streamId,
-    lifeCycleStatus,
     streamStatus,
     healthStatus,
     streamReceiving,
-    transitionAttempted: true,
+    transitionResponseLifeCycleStatus,
+    postTransitionLifeCycleStatus,
+    postTransitionRecordingStatus,
+    postTransitionBoundStreamId,
+    postTransitionActualStartTime,
+    postTransitionActualEndTime,
+    rawTransitionResponse: transBody,
+    rawPostTransitionBroadcast: postBody,
   });
 }
 
