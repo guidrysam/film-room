@@ -88,7 +88,7 @@ const CAMERAS_STORAGE_KEY = "filmRoomYouTubeCameras";
 
 /**
  * Saved YouTube RTMP camera preset (localStorage only).
- * Daily “Get Watch Link” only reads existing live broadcasts; it does not create new ones.
+ * Daily “Create / Get Today’s Watch Link” reuses or creates one broadcast for today.
  */
 type YouTubeCameraPreset = {
   id: string;
@@ -930,7 +930,7 @@ export default function StreamRoomPage() {
       setCameraActiveResolveDebug(null);
       setCameraActiveLinkStatus({
         kind: "resolving",
-        message: "Getting watch link…",
+        message: "Creating / getting today’s watch link…",
       });
       try {
         const { accessToken } = await getYouTubeOAuthAccessToken();
@@ -948,6 +948,8 @@ export default function StreamRoomPage() {
         const existingJson = (await existingRes.json()) as {
           ok?: boolean;
           message?: string;
+          foundCurrentUsable?: boolean;
+          foundOnlyStale?: boolean;
           foundAcceptableLive?: boolean;
           foundActiveBoundCount?: number;
           foundUpcomingBoundCount?: number;
@@ -957,9 +959,19 @@ export default function StreamRoomPage() {
           videoId?: string;
           watchUrl?: string;
           lifeCycleStatus?: string;
+          selectedLifeCycleStatus?: string;
+          selectedScheduledStartTime?: string | null;
+          selectedActualStartTime?: string | null;
           selectedBroadcastId?: string | null;
           selectedVideoId?: string | null;
           boundStreamId?: string;
+          staleCandidates?: Array<{
+            id: string;
+            lifeCycleStatus: string;
+            scheduledStartTime: string | null;
+            actualStartTime: string | null;
+            actualEndTime: string | null;
+          }>;
         };
 
         const foundActiveBoundCount =
@@ -1013,13 +1025,10 @@ export default function StreamRoomPage() {
           finalAngleUrl: undefined,
         });
 
-        if (existingJson.foundAcceptableLive === true) {
+        if (existingJson.foundCurrentUsable === true) {
           const vid =
             typeof existingJson.videoId === "string" ? existingJson.videoId.trim() : "";
-          const broadcastId =
-            typeof existingJson.broadcastId === "string"
-              ? existingJson.broadcastId.trim()
-              : vid;
+          const broadcastId = vid;
           const finalUrl =
             vid && /^[a-zA-Z0-9_-]{11}$/.test(vid)
               ? `https://youtube.com/live/${vid}`
@@ -1048,7 +1057,7 @@ export default function StreamRoomPage() {
 
           setCameraActiveLinkStatus({
             kind: "success",
-            message: "Using currently live broadcast.",
+            message: "Using today’s existing broadcast.",
           });
 
           setAngles((prev) => {
@@ -1090,25 +1099,112 @@ export default function StreamRoomPage() {
           return;
         }
 
-        if (existingJson.foundOnlyUpcomingBound === true) {
+        // Only stale or none: create ONE new broadcast bound to the reusable stream.
+        const stale = Array.isArray(existingJson.staleCandidates)
+          ? existingJson.staleCandidates
+          : [];
+        if (stale.length > 0) {
           setCameraActiveLinkStatus({
             kind: "warning",
-            message:
-              "Found only an upcoming/waiting broadcast, not the live stream. Start the phone stream or paste the working YouTube live link.",
+            message: "Stale broadcasts found and ignored. Creating today’s broadcast…",
           });
-          return;
+        } else {
+          setCameraActiveLinkStatus({
+            kind: "resolving",
+            message: "No usable broadcast found. Creating today’s broadcast…",
+          });
         }
 
+        const createRes = await fetch("/api/youtube/create-broadcast-from-stream", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            streamId: cam.streamId.trim(),
+            title: "Practice Session",
+            description: "Film Room session",
+            privacyStatus: "unlisted",
+          }),
+        });
+        const createdJson = (await createRes.json()) as {
+          ok?: boolean;
+          broadcastId?: string;
+          videoId?: string;
+          watchUrl?: string;
+          standardWatchUrl?: string;
+          boundMatchesRequested?: boolean;
+          boundStreamId?: string;
+          streamId?: string;
+          error?: string;
+        };
+        if (!createRes.ok || createdJson.ok !== true) {
+          window.alert(
+            typeof createdJson.error === "string" && createdJson.error.trim() !== ""
+              ? createdJson.error.trim()
+              : `create-broadcast-from-stream failed (HTTP ${createRes.status}).`,
+          );
+          setCameraActiveLinkStatus(null);
+          return;
+        }
+        const vid =
+          typeof createdJson.videoId === "string" ? createdJson.videoId.trim() : "";
+        if (!/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
+          window.alert("Create broadcast returned invalid video id.");
+          setCameraActiveLinkStatus(null);
+          return;
+        }
+        if (createdJson.boundMatchesRequested !== true) {
+          window.alert("Created broadcast did not bind to the saved stream key.");
+          setCameraActiveLinkStatus(null);
+          return;
+        }
+        const finalUrl = `https://youtube.com/live/${vid}`;
         setCameraActiveLinkStatus({
-          kind: "warning",
-          message:
-            "No active broadcast found for this camera stream. Paste the working YouTube live link, or open YouTube Studio to confirm the phone is streaming to this key.",
+          kind: "success",
+          message: "Created today’s broadcast.",
+        });
+        setAngles((prev) => {
+          if (prev.length === 0) return prev;
+          const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
+          const t = parsePersistentLiveUrlTarget(finalUrl);
+          const derivedVid = t && t.kind === "video" ? t.videoId : null;
+          return prev.map((a, i) =>
+            i === idx
+              ? {
+                  ...a,
+                  name: cam.name.trim() || a.name,
+                  url: finalUrl,
+                  videoId: derivedVid ?? vid,
+                  status: "app_created_live",
+                  debug: null,
+                  pastBroadcastWarning: false,
+                  persistentLiveHint: null,
+                  urlResolveNote: null,
+                  appCreatedLive: true,
+                  source: "youtube_api_broadcast",
+                  createdBroadcastId: vid,
+                }
+              : a,
+          );
+        });
+        fillFirstAngleWithUrl(finalUrl, {
+          appCreatedLive: true,
+          source: "youtube_api_broadcast",
+          createdBroadcastId: vid,
+        });
+        console.log("GET_WATCH_LINK_APPLIED", {
+          streamId: cam.streamId.trim(),
+          broadcastId: vid,
+          videoId: vid,
+          finalUrl,
         });
       } catch (err) {
         window.alert(
           err instanceof Error && err.message.trim()
             ? err.message
-            : "Could not get watch link.",
+            : "Could not create/get today’s watch link.",
         );
         setCameraActiveLinkStatus(null);
       } finally {
@@ -1281,7 +1377,10 @@ export default function StreamRoomPage() {
               <h2 className="text-sm font-semibold text-white">Saved setup</h2>
               <p className="text-xs text-zinc-400">
                 Save angle names locally. YouTube URLs are not restored — use{" "}
-                <strong className="text-zinc-300">Get Watch Link</strong> or paste a live URL so
+                <strong className="text-zinc-300">
+                  Create / Get Today’s Watch Link
+                </strong>{" "}
+                or paste a live URL so
                 playback is never stale.
               </p>
             </div>
@@ -1314,14 +1413,15 @@ export default function StreamRoomPage() {
           </p>
           <p className="mt-2 text-sm leading-relaxed text-zinc-300">
             <strong className="text-zinc-200">Daily use mode:</strong> start streaming on your
-            phone, then click <strong className="text-zinc-200">Get Watch Link</strong>. Film Room
-            looks up the current <strong className="text-zinc-200">live</strong> broadcast bound to
-            that preset’s <code className="text-zinc-200">streamId</code> and adds it as an angle.
+            phone, then click{" "}
+            <strong className="text-zinc-200">Create / Get Today’s Watch Link</strong>. Film Room
+            reuses today’s broadcast when possible; otherwise it creates a fresh broadcast for
+            today and binds it to the saved <code className="text-zinc-200">streamId</code>.
           </p>
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">
             Saved presets store your reusable stream key configuration only. Use{" "}
-            <strong className="text-zinc-200">Get Watch Link</strong> to load the currently
-            live broadcast into Stream Room.
+            <strong className="text-zinc-200">Create / Get Today’s Watch Link</strong> to load the
+            currently live broadcast into Stream Room.
           </p>
           <p className="mt-2 text-xs text-zinc-500">
             Creating a stream signs you in with Google (YouTube scope) and does not start
@@ -1435,7 +1535,8 @@ export default function StreamRoomPage() {
                 </button>
                 <span className="text-xs text-zinc-500">
                   Saves stream id, RTMP, optional channel reference URLs — never auto-loads
-                  playback into angles (use Get Watch Link). Stored in {CAMERAS_STORAGE_KEY}.
+                  playback into angles (use Create / Get Today’s Watch Link). Stored in{" "}
+                  {CAMERAS_STORAGE_KEY}.
                 </span>
               </div>
             </div>
@@ -1536,7 +1637,7 @@ export default function StreamRoomPage() {
             <div className="mt-4 rounded-xl border border-white/10 bg-black/35 p-4">
               <details>
                 <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
-                  Get Watch Link debug (temporary)
+                  Today’s watch link debug (temporary)
                 </summary>
                 <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
                   {JSON.stringify(cameraActiveResolveDebug, null, 2)}
@@ -1552,7 +1653,10 @@ export default function StreamRoomPage() {
               </h3>
               <p className="mt-2 text-xs text-zinc-400">
                 Saved presets store your reusable stream key configuration only. Use{" "}
-                <strong className="text-zinc-200">Get Watch Link</strong> to load the
+                <strong className="text-zinc-200">
+                  Create / Get Today’s Watch Link
+                </strong>{" "}
+                to load the
                 currently live broadcast into Stream Room. Create a new stream only when
                 adding a camera or replacing a key.
               </p>
@@ -1673,8 +1777,8 @@ export default function StreamRoomPage() {
                           onClick={() => void startSessionWithCamera(cam)}
                         >
                           {sessionFromCameraLoadingId === cam.id
-                            ? "Getting link…"
-                            : "Get Watch Link"}
+                            ? "Working…"
+                            : "Create / Get Today’s Watch Link"}
                         </button>
                         <button
                           type="button"
@@ -1698,7 +1802,7 @@ export default function StreamRoomPage() {
             </div>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs text-zinc-300">
-                After <strong>Get Watch Link</strong>, click{" "}
+                After <strong>Create / Get Today’s Watch Link</strong>, click{" "}
                 <strong>Launch Film Room</strong>.
               </div>
               <button

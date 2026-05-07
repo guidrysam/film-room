@@ -163,16 +163,47 @@ function toMs(iso: string | null): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-function pickPreferredBroadcast(rows: BoundRow[]): BoundRow | null {
-  // Reject ended broadcasts entirely.
-  const eligible = rows.filter((r) => !r.actualEndTime);
-  if (eligible.length === 0) return null;
+function isWithinWindow(tsIso: string | null, now: number): boolean {
+  const ms = toMs(tsIso);
+  if (ms === null) return false;
+  const diff = ms - now;
+  // current if within last 12h or next 24h
+  return diff >= -12 * 60 * 60 * 1000 && diff <= 24 * 60 * 60 * 1000;
+}
 
-  // A) Prefer: lifeCycleStatus === live AND actualStartTime exists AND actualEndTime missing.
-  const liveStrict = eligible.filter((r) => {
-    const n = normLifeCycle(r.lifeCycleStatus);
-    return n === "live" && r.actualStartTime != null;
-  });
+function isLiveish(lifeCycleStatus: string): boolean {
+  return FILTER_LIFECYCLES.has(normLifeCycle(lifeCycleStatus));
+}
+
+function isCurrentUsableCandidate(r: BoundRow, now: number): boolean {
+  if (!isLiveish(r.lifeCycleStatus)) return false;
+  if (r.actualEndTime) return false;
+  const lc = normLifeCycle(r.lifeCycleStatus);
+  // If it's actually live/liveStarting, treat as current even if timestamps are weird.
+  if (lc === "live" || lc === "livestarting") return true;
+  return (
+    isWithinWindow(r.actualStartTime, now) || isWithinWindow(r.scheduledStartTime, now)
+  );
+}
+
+function isStaleCandidate(r: BoundRow, now: number): boolean {
+  if (!isLiveish(r.lifeCycleStatus)) return false;
+  if (r.actualEndTime) return true;
+  const lc = normLifeCycle(r.lifeCycleStatus);
+  if (lc === "live" || lc === "livestarting") return false;
+  const ts = toMs(r.actualStartTime) ?? toMs(r.scheduledStartTime);
+  if (ts === null) return true;
+  return ts < now - 12 * 60 * 60 * 1000;
+}
+
+function pickPreferredCurrent(rows: BoundRow[], now: number): BoundRow | null {
+  const current = rows.filter((r) => isCurrentUsableCandidate(r, now));
+  if (current.length === 0) return null;
+
+  // A) Prefer: lifeCycleStatus === live AND actualStartTime exists AND no actualEndTime
+  const liveStrict = current.filter(
+    (r) => normLifeCycle(r.lifeCycleStatus) === "live" && r.actualStartTime != null,
+  );
   if (liveStrict.length > 0) {
     liveStrict.sort(
       (a, b) => (toMs(b.actualStartTime) ?? 0) - (toMs(a.actualStartTime) ?? 0),
@@ -180,10 +211,9 @@ function pickPreferredBroadcast(rows: BoundRow[]): BoundRow | null {
     return liveStrict[0]!;
   }
 
-  // B/C/D) Fall back by lifecycle priority; break ties by most recent start time (actual or scheduled).
   const tieMs = (r: BoundRow) =>
     toMs(r.actualStartTime) ?? toMs(r.scheduledStartTime) ?? 0;
-  const sorted = [...eligible].sort((a, b) => {
+  const sorted = [...current].sort((a, b) => {
     const ra = selectionPriorityRank(a.lifeCycleStatus) ?? 999;
     const rb = selectionPriorityRank(b.lifeCycleStatus) ?? 999;
     if (ra !== rb) return ra - rb;
@@ -248,8 +278,33 @@ export async function POST(request: Request) {
   const foundActiveBoundCount = activeBoundBroadcasts.length;
   const foundUpcomingBoundCount = upcomingBoundBroadcasts.length;
 
-  const preferred = pickPreferredBroadcast(relevantRows);
+  const now = Date.now();
+  const currentCandidates = relevantRows.filter((r) =>
+    isCurrentUsableCandidate(r, now),
+  );
+  const staleCandidates = relevantRows.filter((r) => isStaleCandidate(r, now));
+  const preferred = pickPreferredCurrent(relevantRows, now);
   const boundCandidates = relevantRows.map((r) => ({
+    id: r.broadcastId,
+    title: r.title,
+    lifeCycleStatus: r.lifeCycleStatus,
+    privacyStatus: r.privacyStatus,
+    actualStartTime: r.actualStartTime,
+    scheduledStartTime: r.scheduledStartTime,
+    actualEndTime: r.actualEndTime,
+    boundStreamId: r.boundStreamId,
+  }));
+  const currentCandidatesOut = currentCandidates.map((r) => ({
+    id: r.broadcastId,
+    title: r.title,
+    lifeCycleStatus: r.lifeCycleStatus,
+    privacyStatus: r.privacyStatus,
+    actualStartTime: r.actualStartTime,
+    scheduledStartTime: r.scheduledStartTime,
+    actualEndTime: r.actualEndTime,
+    boundStreamId: r.boundStreamId,
+  }));
+  const staleCandidatesOut = staleCandidates.map((r) => ({
     id: r.broadcastId,
     title: r.title,
     lifeCycleStatus: r.lifeCycleStatus,
@@ -269,49 +324,42 @@ export async function POST(request: Request) {
       foundUpcomingBoundCount,
       foundAcceptableLive: false,
       foundOnlyUpcomingBound: false,
+      foundCurrentUsable: false,
+      foundOnlyStale: staleCandidatesOut.length > 0,
       selectedBroadcastId: null,
       selectedVideoId: null,
       boundCandidates,
+      currentCandidates: currentCandidatesOut,
+      staleCandidates: staleCandidatesOut,
     });
   }
 
   const n = normLifeCycle(preferred.lifeCycleStatus);
   const isLiveOrStarting = n === "live" || n === "livestarting";
 
-  if (isLiveOrStarting) {
-    const { broadcastId, boundStreamId, lifeCycleStatus } = preferred;
-    return NextResponse.json({
-      ok: true,
-      found: true,
-      noCreateAttempted: true,
-      foundActiveBoundCount,
-      foundUpcomingBoundCount,
-      foundAcceptableLive: true,
-      foundOnlyUpcomingBound: false,
-      broadcastId,
-      videoId: broadcastId,
-      watchUrl: `https://youtube.com/live/${broadcastId}`,
-      standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
-      selectedBroadcastId: broadcastId,
-      selectedVideoId: broadcastId,
-      selectedLifeCycleStatus: lifeCycleStatus,
-      selectedActualStartTime: preferred.actualStartTime,
-      lifeCycleStatus,
-      boundStreamId,
-      boundCandidates,
-    });
-  }
-
+  const { broadcastId, boundStreamId, lifeCycleStatus } = preferred;
   return NextResponse.json({
     ok: true,
-    found: false,
+    found: true,
     noCreateAttempted: true,
     foundActiveBoundCount,
     foundUpcomingBoundCount,
-    foundAcceptableLive: false,
-    foundOnlyUpcomingBound: true,
-    selectedBroadcastId: null,
-    selectedVideoId: null,
+    foundAcceptableLive: isLiveOrStarting,
+    foundOnlyUpcomingBound: !isLiveOrStarting,
+    foundCurrentUsable: true,
+    foundOnlyStale: false,
+    videoId: broadcastId,
+    watchUrl: `https://youtube.com/live/${broadcastId}`,
+    standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
+    selectedBroadcastId: broadcastId,
+    selectedVideoId: broadcastId,
+    selectedLifeCycleStatus: lifeCycleStatus,
+    selectedScheduledStartTime: preferred.scheduledStartTime,
+    selectedActualStartTime: preferred.actualStartTime,
+    lifeCycleStatus,
+    boundStreamId,
     boundCandidates,
+    currentCandidates: currentCandidatesOut,
+    staleCandidates: staleCandidatesOut,
   });
 }

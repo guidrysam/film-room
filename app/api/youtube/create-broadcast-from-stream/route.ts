@@ -338,7 +338,8 @@ export async function POST(request: Request) {
     "";
 
   const videoId = broadcastId;
-  const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
+  const watchUrl = `https://youtube.com/live/${broadcastId}`;
+  const standardWatchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
 
   let channelId = insertSnippetChannelId;
@@ -389,6 +390,7 @@ export async function POST(request: Request) {
     broadcastId,
     videoId,
     watchUrl,
+    standardWatchUrl,
     embedUrl,
     streamId,
     boundStreamId,
