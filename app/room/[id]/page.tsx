@@ -16,6 +16,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   get,
   onValue,
+  push,
   ref,
   remove,
   set,
@@ -1588,6 +1589,7 @@ function RoomContent() {
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [telDrawOn, setTelDrawOn] = useState(false);
+  const lastViewerStrokeCountRef = useRef<number | null>(null);
   /** Host: app-controlled fullscreen for one angle (not browser / iframe fullscreen). */
   const [fullscreenAngleId, setFullscreenAngleId] = useState<string | null>(null);
   /** Host-only: minimal mobile layout with video dominant. */
@@ -3580,18 +3582,38 @@ function RoomContent() {
   );
 
   const handleViewerPlaybackUnlock = useCallback(() => {
+    const s = roomStateRef.current;
+    syncLog("viewer unlock tapped", {
+      roomId,
+      view: roomViewModeRef.current,
+      sourceType: s?.sourceType,
+      isPlaying: s?.isPlaying,
+    });
     viewerPlaybackUnlockedRef.current = true;
     setViewerPlaybackUnlocked(true);
+
     const p = getPlayer();
     if (p) {
       try {
-        p.playVideo();
+        p.mute?.();
       } catch {
-        /* autoplay / API */
+        /* YouTube API */
       }
+      const attemptPlay = (label: string) => {
+        try {
+          p.playVideo?.();
+        } catch {
+          /* autoplay / API */
+        }
+        syncLog("viewer sync playback started", { label });
+      };
+      attemptPlay("unlock:immediate");
+      window.setTimeout(() => attemptPlay("unlock:250ms"), 250);
+      window.setTimeout(() => attemptPlay("unlock:750ms"), 750);
+      window.setTimeout(() => attemptPlay("unlock:1500ms"), 1500);
     }
+
     void ensureSelectedViewerStackPlayerPlaying();
-    const s = roomStateRef.current;
     if (s) {
       lastAppliedKey.current = "";
       const gen = ++applyRoomGenRef.current;
@@ -3601,7 +3623,39 @@ function RoomContent() {
         gen,
       );
     }
-  }, [ensureSelectedViewerStackPlayerPlaying]);
+  }, [ensureSelectedViewerStackPlayerPlaying, roomId]);
+
+  const broadcastTelestratorStroke = useCallback(
+    (row: { points: Array<{ x: number; y: number }>; angleId?: string }) => {
+      if (!isHostRef.current) return;
+      if (!roomId) return;
+      const pts = Array.isArray(row.points) ? row.points : [];
+      syncLog("draw stroke broadcast", {
+        roomId,
+        angleId: row.angleId ?? null,
+        points: pts.length,
+      });
+      void push(ref(db, `rooms/${roomId}/telestrator/strokes`), {
+        ...row,
+        createdAt: serverTimestamp(),
+      });
+    },
+    [roomId],
+  );
+
+  useEffect(() => {
+    if (!roomId) return;
+    if (isHost) return;
+    const strokesRef = ref(db, `rooms/${roomId}/telestrator/strokes`);
+    return onValue(strokesRef, (snap) => {
+      const v = snap.val() as unknown;
+      const count =
+        v && typeof v === "object" ? Object.keys(v as Record<string, unknown>).length : 0;
+      if (lastViewerStrokeCountRef.current === count) return;
+      lastViewerStrokeCountRef.current = count;
+      syncLog("draw stroke received", { roomId, count });
+    });
+  }, [isHost, roomId]);
 
   const writeHostTransport = useCallback(
     (
@@ -4244,6 +4298,7 @@ function RoomContent() {
         const vidSet = new Set(single.map((c) => c.videoId));
         const chaptersSingle = cur.chapters.filter((ch) => vidSet.has(ch.videoId));
         lastAppliedKey.current = "";
+        syncLog("draw clear broadcast", { scope: "all", reason: "clip-removed" });
         void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
         writeHostTransport(
           {
@@ -4269,6 +4324,7 @@ function RoomContent() {
       if (newIdx < 0) return;
 
       lastAppliedKey.current = "";
+      syncLog("draw clear broadcast", { scope: "all", reason: "clip-switched" });
       void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
       writeHostTransport(
         {
@@ -6890,6 +6946,7 @@ function RoomContent() {
                               roomId={roomId}
                               isHost={isHost}
                               drawEnabled={telDrawOn}
+                              onBroadcastStroke={broadcastTelestratorStroke}
                               strokeAngleId={featured.id}
                               renderAngleId={featured.id}
                               allowLegacyWithoutAngleId={false}
@@ -6899,6 +6956,7 @@ function RoomContent() {
                               roomId={roomId}
                               isHost={isHost}
                               drawEnabled={telDrawOn}
+                              onBroadcastStroke={broadcastTelestratorStroke}
                               strokeAngleId={angle.id}
                               renderAngleId={angle.id}
                               allowLegacyWithoutAngleId={false}
@@ -6982,6 +7040,17 @@ function RoomContent() {
                 ) : null}
               </div>
               <div className="relative isolate aspect-video w-full overflow-hidden bg-black">
+                {!isHost && !viewerPlaybackUnlocked ? (
+                  <div className="pointer-events-auto absolute inset-0 z-[60] flex items-center justify-center bg-black/55 px-4">
+                    <button
+                      type="button"
+                      onClick={handleViewerPlaybackUnlock}
+                      className="rounded-xl border border-blue-500/35 bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                    >
+                      Tap to join playback
+                    </button>
+                  </div>
+                ) : null}
                 {!isHost && multi ? (
                   <div className="relative isolate h-full w-full">
                     {s.angles.map((a, i) => {
@@ -7015,6 +7084,17 @@ function RoomContent() {
                               opts={youtubePlayerOpts}
                             />
                           </div>
+                        {!viewerPlaybackUnlocked && isMain ? (
+                          <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/55 px-4">
+                            <button
+                              type="button"
+                              onClick={handleViewerPlaybackUnlock}
+                              className="rounded-xl border border-blue-500/35 bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                            >
+                              Tap to join playback
+                            </button>
+                          </div>
+                        ) : null}
                           {roomId && isMain ? (
                             <TelestratorOverlay
                               roomId={roomId}
@@ -7098,6 +7178,7 @@ function RoomContent() {
                     roomId={roomId}
                     isHost={isHost}
                     drawEnabled={telDrawOn}
+                    onBroadcastStroke={broadcastTelestratorStroke}
                     strokeAngleId={isHost ? activeAngle.id : undefined}
                     renderAngleId={
                       isHost ? activeAngle.id : viewerPlayerViewDrawAngleId
@@ -7130,17 +7211,10 @@ function RoomContent() {
               </div>
               {!isHost && multi && !viewerPlaybackUnlocked ? (
                 <div className="border-t border-white/[0.06] bg-zinc-900/55 px-3 py-2.5">
-                  <p className="mb-2 text-[11px] leading-snug text-zinc-400">
-                    Tap once so both angles can play in sync with the host (no
-                    overlay on the video).
+                  <p className="text-[11px] leading-snug text-zinc-400">
+                    If playback is blocked, tap <span className="font-semibold text-zinc-200">Tap to join playback</span>{" "}
+                    on the video.
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleViewerPlaybackUnlock}
-                    className="w-full rounded-lg border border-blue-500/35 bg-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-blue-950/25 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
-                  >
-                    Enable playback
-                  </button>
                 </div>
               ) : null}
               {showIndependentControls

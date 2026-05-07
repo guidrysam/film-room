@@ -32,6 +32,8 @@ type Props = {
   drawEnabled: boolean;
   /** Merged onto the stage wrapper (e.g. fixed fullscreen so drawing tracks the video). */
   wrapClassName?: string;
+  /** Optional: host can delegate RTDB writes to the room page for logging/sync control. */
+  onBroadcastStroke?: (row: { points: Point[]; angleId?: string }) => void;
   /** When set, host saves each new stroke with this `angleId` (omit for legacy clip strokes). */
   strokeAngleId?: string;
   /**
@@ -105,6 +107,7 @@ export function TelestratorOverlay({
   isHost,
   drawEnabled,
   wrapClassName,
+  onBroadcastStroke,
   strokeAngleId,
   renderAngleId,
   allowLegacyWithoutAngleId = true,
@@ -396,9 +399,13 @@ export function TelestratorOverlay({
     if (!pts || pts.length < 1 || !roomId) return;
     const row: { points: Point[]; angleId?: string } = { points: pts };
     if (strokeAngleId) row.angleId = strokeAngleId;
-    void push(ref(db, `rooms/${roomId}/telestrator/strokes`), row);
+    if (onBroadcastStroke) {
+      onBroadcastStroke(row);
+    } else {
+      void push(ref(db, `rooms/${roomId}/telestrator/strokes`), row);
+    }
     scheduleDraw();
-  }, [roomId, strokeAngleId, scheduleDraw]);
+  }, [onBroadcastStroke, roomId, strokeAngleId, scheduleDraw]);
 
   const onPointerDown = (e: PointerEvent<HTMLCanvasElement>) => {
     if (!canDraw) return;
