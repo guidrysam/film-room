@@ -39,6 +39,16 @@ type BroadcastListResponse = {
   }>;
 };
 
+function normLifeCycle(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s ? s : null;
+}
+
+async function sleepMs(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 export async function POST(request: Request) {
   const token = bearerTokenFromRequest(request);
   if (!token) {
@@ -268,6 +278,83 @@ export async function POST(request: Request) {
       ? postItem.snippet.actualEndTime.trim()
       : null;
 
+  // 4) If YouTube is still finalizing (often "liveStarting" or "testing"), poll briefly.
+  const shouldPoll =
+    postTransitionLifeCycleStatus != null &&
+    ["livestarting", "testing"].includes(
+      postTransitionLifeCycleStatus.toLowerCase(),
+    );
+
+  const pollIntervalMs = 2000;
+  const pollMaxMs = 20000;
+  const pollMaxAttempts = Math.floor(pollMaxMs / pollIntervalMs);
+
+  let pollAttempts = 0;
+  let finalLifeCycleStatus: string | null = postTransitionLifeCycleStatus;
+  let reachedLive = postTransitionLifeCycleStatus?.toLowerCase() === "live";
+
+  let finalPostTransitionLifeCycleStatus: string | null =
+    postTransitionLifeCycleStatus;
+  let finalPostTransitionRecordingStatus: string | null =
+    postTransitionRecordingStatus;
+  let finalPostTransitionBoundStreamId: string | null =
+    postTransitionBoundStreamId;
+  let finalPostTransitionActualStartTime: string | null =
+    postTransitionActualStartTime;
+  let finalPostTransitionActualEndTime: string | null =
+    postTransitionActualEndTime;
+  let finalRawPostTransitionBroadcast: unknown = postBody;
+
+  if (shouldPoll) {
+    for (let i = 0; i < pollMaxAttempts; i += 1) {
+      pollAttempts += 1;
+      await sleepMs(pollIntervalMs);
+
+      let pollRes: Response;
+      try {
+        pollRes = await fetch(postUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+      } catch {
+        // Ignore transient network errors during polling; keep last known status.
+        continue;
+      }
+
+      let pollBody: unknown = null;
+      try {
+        pollBody = await pollRes.json();
+      } catch {
+        pollBody = null;
+      }
+      if (!pollRes.ok) {
+        // Ignore API errors during polling; keep last known status.
+        continue;
+      }
+
+      const pollJson = pollBody as BroadcastListResponse;
+      const pollItem = pollJson.items?.[0];
+      const polledLifeCycleStatus = normLifeCycle(pollItem?.status?.lifeCycleStatus);
+      const polledRecordingStatus = normLifeCycle(pollItem?.status?.recordingStatus);
+      const polledBoundStreamId = normLifeCycle(pollItem?.contentDetails?.boundStreamId);
+      const polledActualStartTime = normLifeCycle(pollItem?.snippet?.actualStartTime);
+      const polledActualEndTime = normLifeCycle(pollItem?.snippet?.actualEndTime);
+
+      finalPostTransitionLifeCycleStatus = polledLifeCycleStatus;
+      finalPostTransitionRecordingStatus = polledRecordingStatus;
+      finalPostTransitionBoundStreamId = polledBoundStreamId;
+      finalPostTransitionActualStartTime = polledActualStartTime;
+      finalPostTransitionActualEndTime = polledActualEndTime;
+      finalRawPostTransitionBroadcast = pollBody;
+
+      finalLifeCycleStatus = polledLifeCycleStatus;
+      if (polledLifeCycleStatus?.toLowerCase() === "live") {
+        reachedLive = true;
+        break;
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     transitionAttempted: true,
@@ -277,13 +364,16 @@ export async function POST(request: Request) {
     healthStatus,
     streamReceiving,
     transitionResponseLifeCycleStatus,
-    postTransitionLifeCycleStatus,
-    postTransitionRecordingStatus,
-    postTransitionBoundStreamId,
-    postTransitionActualStartTime,
-    postTransitionActualEndTime,
+    postTransitionLifeCycleStatus: finalPostTransitionLifeCycleStatus,
+    postTransitionRecordingStatus: finalPostTransitionRecordingStatus,
+    postTransitionBoundStreamId: finalPostTransitionBoundStreamId,
+    postTransitionActualStartTime: finalPostTransitionActualStartTime,
+    postTransitionActualEndTime: finalPostTransitionActualEndTime,
+    finalLifeCycleStatus,
+    reachedLive,
+    pollAttempts,
     rawTransitionResponse: transBody,
-    rawPostTransitionBroadcast: postBody,
+    rawPostTransitionBroadcast: finalRawPostTransitionBroadcast,
   });
 }
 

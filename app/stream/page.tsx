@@ -404,6 +404,9 @@ export default function StreamRoomPage() {
     postTransitionLifeCycleStatus: string | null;
     postTransitionActualStartTime: string | null;
     postTransitionBoundStreamId: string | null;
+    finalLifeCycleStatus: string | null;
+    reachedLive: boolean;
+    pollAttempts: number;
   } | null>(null);
   const [manualLiveLinkDraft, setManualLiveLinkDraft] = useState("");
   const [cameraSessionVerify, setCameraSessionVerify] =
@@ -1060,6 +1063,9 @@ export default function StreamRoomPage() {
               postTransitionLifeCycleStatus?: string | null;
               postTransitionActualStartTime?: string | null;
               postTransitionBoundStreamId?: string | null;
+              finalLifeCycleStatus?: string | null;
+              reachedLive?: boolean;
+              pollAttempts?: number;
             };
             if (r.ok && j) {
               setCameraTransitionDebug({
@@ -1085,22 +1091,39 @@ export default function StreamRoomPage() {
                   typeof j.postTransitionBoundStreamId === "string"
                     ? j.postTransitionBoundStreamId
                     : null,
+                finalLifeCycleStatus:
+                  typeof j.finalLifeCycleStatus === "string"
+                    ? j.finalLifeCycleStatus
+                    : null,
+                reachedLive: j.reachedLive === true,
+                pollAttempts:
+                  typeof j.pollAttempts === "number" && Number.isFinite(j.pollAttempts)
+                    ? j.pollAttempts
+                    : 0,
               });
             }
             if (r.ok && j.ok === true) {
-              if (
-                typeof j.postTransitionLifeCycleStatus === "string" &&
-                j.postTransitionLifeCycleStatus.toLowerCase() !== "live"
-              ) {
+              const finalLc =
+                typeof j.finalLifeCycleStatus === "string"
+                  ? j.finalLifeCycleStatus.trim()
+                  : typeof j.postTransitionLifeCycleStatus === "string"
+                    ? j.postTransitionLifeCycleStatus.trim()
+                    : "";
+              if (finalLc.toLowerCase() === "live") {
+                setCameraActiveLinkStatus({
+                  kind: "success",
+                  message: "Broadcast is live.",
+                });
+              } else if (finalLc.toLowerCase() === "livestarting") {
+                setCameraActiveLinkStatus({
+                  kind: "warning",
+                  message: "YouTube is still starting the broadcast…",
+                });
+              } else {
                 setCameraActiveLinkStatus({
                   kind: "warning",
                   message:
                     "YouTube accepted the request, but the broadcast is still not live.",
-                });
-              } else {
-                setCameraActiveLinkStatus({
-                  kind: "success",
-                  message: "Broadcast is live.",
                 });
               }
               return;
@@ -1800,12 +1823,32 @@ export default function StreamRoomPage() {
                       {cameraTransitionDebug.postTransitionBoundStreamId ?? "—"}
                     </span>
                   </div>
+                  <div>
+                    <span className="text-zinc-500">finalLifeCycleStatus:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.finalLifeCycleStatus ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">reachedLive:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.reachedLive)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">pollAttempts:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.pollAttempts)}
+                    </span>
+                  </div>
                 </div>
-                {cameraTransitionDebug.postTransitionLifeCycleStatus &&
-                cameraTransitionDebug.postTransitionLifeCycleStatus.toLowerCase() !==
-                  "live" ? (
+                {cameraTransitionDebug.finalLifeCycleStatus &&
+                cameraTransitionDebug.finalLifeCycleStatus.toLowerCase() !== "live" ? (
                   <p className="mt-3 rounded-lg border border-amber-500/35 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-100/95">
-                    YouTube accepted the request, but the broadcast is still not live.
+                    {cameraTransitionDebug.finalLifeCycleStatus.toLowerCase() ===
+                    "livestarting"
+                      ? "YouTube is still starting the broadcast…"
+                      : "YouTube accepted the request, but the broadcast is still not live."}
                   </p>
                 ) : null}
               </details>
