@@ -400,6 +400,12 @@ export default function StreamRoomPage() {
     streamStatus: string | null;
     healthStatus: string | null;
     streamReceiving: boolean;
+    attemptedTestingTransition: boolean;
+    testingTransitionSucceeded: boolean;
+    lifecycleBeforeTesting: string | null;
+    lifecycleAfterTesting: string | null;
+    attemptedLiveTransition: boolean;
+    lifecycleAfterLiveTransition: string | null;
     transitionResponseLifeCycleStatus: string | null;
     postTransitionLifeCycleStatus: string | null;
     postTransitionActualStartTime: string | null;
@@ -1059,6 +1065,12 @@ export default function StreamRoomPage() {
               streamStatus?: string | null;
               healthStatus?: string | null;
               streamReceiving?: boolean;
+              attemptedTestingTransition?: boolean;
+              testingTransitionSucceeded?: boolean;
+              lifecycleBeforeTesting?: string | null;
+              lifecycleAfterTesting?: string | null;
+              attemptedLiveTransition?: boolean;
+              lifecycleAfterLiveTransition?: string | null;
               transitionResponseLifeCycleStatus?: string | null;
               postTransitionLifeCycleStatus?: string | null;
               postTransitionActualStartTime?: string | null;
@@ -1075,6 +1087,21 @@ export default function StreamRoomPage() {
                 healthStatus:
                   typeof j.healthStatus === "string" ? j.healthStatus : null,
                 streamReceiving: j.streamReceiving === true,
+                attemptedTestingTransition: j.attemptedTestingTransition === true,
+                testingTransitionSucceeded: j.testingTransitionSucceeded === true,
+                lifecycleBeforeTesting:
+                  typeof j.lifecycleBeforeTesting === "string"
+                    ? j.lifecycleBeforeTesting
+                    : null,
+                lifecycleAfterTesting:
+                  typeof j.lifecycleAfterTesting === "string"
+                    ? j.lifecycleAfterTesting
+                    : null,
+                attemptedLiveTransition: j.attemptedLiveTransition !== false,
+                lifecycleAfterLiveTransition:
+                  typeof j.lifecycleAfterLiveTransition === "string"
+                    ? j.lifecycleAfterLiveTransition
+                    : null,
                 transitionResponseLifeCycleStatus:
                   typeof j.transitionResponseLifeCycleStatus === "string"
                     ? j.transitionResponseLifeCycleStatus
@@ -1109,6 +1136,18 @@ export default function StreamRoomPage() {
                   : typeof j.postTransitionLifeCycleStatus === "string"
                     ? j.postTransitionLifeCycleStatus.trim()
                     : "";
+              if (
+                j.attemptedTestingTransition === true &&
+                j.testingTransitionSucceeded !== true &&
+                finalLc.toLowerCase() !== "live"
+              ) {
+                setCameraActiveLinkStatus({
+                  kind: "warning",
+                  message:
+                    "YouTube rejected automatic testing transition. Manual Go Live may still be required.",
+                });
+                return;
+              }
               if (finalLc.toLowerCase() === "live") {
                 setCameraActiveLinkStatus({
                   kind: "success",
@@ -1795,6 +1834,42 @@ export default function StreamRoomPage() {
                     <span className="text-zinc-500">streamReceiving:</span>{" "}
                     <span className="font-mono text-zinc-200">
                       {String(cameraTransitionDebug.streamReceiving)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">attemptedTestingTransition:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.attemptedTestingTransition)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">testingTransitionSucceeded:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.testingTransitionSucceeded)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">lifecycleBeforeTesting:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.lifecycleBeforeTesting ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">lifecycleAfterTesting:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.lifecycleAfterTesting ?? "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">attemptedLiveTransition:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {String(cameraTransitionDebug.attemptedLiveTransition)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">lifecycleAfterLiveTransition:</span>{" "}
+                    <span className="font-mono text-zinc-200">
+                      {cameraTransitionDebug.lifecycleAfterLiveTransition ?? "—"}
                     </span>
                   </div>
                   <div>

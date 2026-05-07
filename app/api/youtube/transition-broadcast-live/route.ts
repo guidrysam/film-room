@@ -139,43 +139,161 @@ export async function POST(request: Request) {
     streamStatus === "active" ||
     (healthStatus != null && healthStatus.toLowerCase() !== "nodata");
 
-  // 2) liveBroadcasts.transition → live (attempt even if status fields missing; return diagnostics)
-  const transitionUrl =
-    "https://www.googleapis.com/youtube/v3/liveBroadcasts/transition" +
-    `?part=status,contentDetails&id=${encodeURIComponent(broadcastId)}` +
-    "&broadcastStatus=live";
+  const broadcastReadUrl =
+    "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
+    `?part=status,contentDetails,snippet&id=${encodeURIComponent(broadcastId)}`;
 
-  let transRes: Response;
-  try {
-    transRes = await fetch(transitionUrl, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-  } catch (err) {
+  const readBroadcastLifecycle = async (): Promise<{
+    ok: boolean;
+    body: unknown;
+    lifeCycleStatus: string | null;
+    recordingStatus: string | null;
+    boundStreamId: string | null;
+    actualStartTime: string | null;
+    actualEndTime: string | null;
+  }> => {
+    let res: Response;
+    try {
+      res = await fetch(broadcastReadUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+    } catch {
+      return {
+        ok: false,
+        body: null,
+        lifeCycleStatus: null,
+        recordingStatus: null,
+        boundStreamId: null,
+        actualStartTime: null,
+        actualEndTime: null,
+      };
+    }
+
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        body,
+        lifeCycleStatus: null,
+        recordingStatus: null,
+        boundStreamId: null,
+        actualStartTime: null,
+        actualEndTime: null,
+      };
+    }
+
+    const json = body as BroadcastListResponse;
+    const it = json.items?.[0];
+    return {
+      ok: true,
+      body,
+      lifeCycleStatus: normLifeCycle(it?.status?.lifeCycleStatus),
+      recordingStatus: normLifeCycle(it?.status?.recordingStatus),
+      boundStreamId: normLifeCycle(it?.contentDetails?.boundStreamId),
+      actualStartTime: normLifeCycle(it?.snippet?.actualStartTime),
+      actualEndTime: normLifeCycle(it?.snippet?.actualEndTime),
+    };
+  };
+
+  const transitionBroadcast = async (broadcastStatus: "testing" | "live") => {
+    const url =
+      "https://www.googleapis.com/youtube/v3/liveBroadcasts/transition" +
+      `?part=status,contentDetails&id=${encodeURIComponent(broadcastId)}` +
+      `&broadcastStatus=${broadcastStatus}`;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+    } catch (err) {
+      return {
+        ok: false as const,
+        url,
+        res: null as Response | null,
+        body: null as unknown,
+        errMsg: err instanceof Error ? err.message : "Fetch failed.",
+      };
+    }
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    return {
+      ok: res.ok,
+      url,
+      res,
+      body,
+      errMsg: res.ok ? null : `HTTP ${res.status}`,
+    };
+  };
+
+  // 2) Read lifecycle before any transitions (to decide if we need testing → live)
+  const beforeRead = await readBroadcastLifecycle();
+  const lifecycleBeforeTesting = beforeRead.lifeCycleStatus;
+
+  let attemptedTestingTransition = false;
+  let testingTransitionSucceeded = false;
+  let lifecycleAfterTesting: string | null = null;
+
+  if (
+    lifecycleBeforeTesting != null &&
+    ["ready", "created"].includes(lifecycleBeforeTesting.toLowerCase())
+  ) {
+    attemptedTestingTransition = true;
+    const testingTrans = await transitionBroadcast("testing");
+    if (testingTrans.ok) {
+      testingTransitionSucceeded = true;
+      await sleepMs(2000);
+      const afterTestingRead = await readBroadcastLifecycle();
+      lifecycleAfterTesting = afterTestingRead.lifeCycleStatus;
+    } else {
+      testingTransitionSucceeded = false;
+      // Intentionally continue to try "live" transition; Studio manual action may still be required.
+    }
+  }
+
+  // 3) liveBroadcasts.transition → live
+  const attemptedLiveTransition = true;
+  const liveTrans = await transitionBroadcast("live");
+  const transitionUrl = liveTrans.url;
+
+  if (!liveTrans.ok || !liveTrans.res) {
     return NextResponse.json(
       {
         ok: false,
         route: ROUTE,
         endpoint: transitionUrl,
-        message: err instanceof Error ? err.message : "Transition request failed.",
+        message:
+          liveTrans.errMsg ??
+          "Live transition request failed.",
         broadcastId,
         streamId,
         streamStatus,
         healthStatus,
         streamReceiving,
         transitionAttempted: true,
+        attemptedTestingTransition,
+        testingTransitionSucceeded,
+        lifecycleBeforeTesting,
+        lifecycleAfterTesting,
+        attemptedLiveTransition,
       },
       { status: 502 },
     );
   }
 
-  let transBody: unknown = null;
-  try {
-    transBody = await transRes.json();
-  } catch {
-    transBody = null;
-  }
+  const transRes = liveTrans.res;
+  const transBody = liveTrans.body;
 
   if (!transRes.ok) {
     return youtubeApiErrorNextResponseFromFetch({
@@ -190,6 +308,11 @@ export async function POST(request: Request) {
         healthStatus,
         streamReceiving,
         transitionAttempted: true,
+        attemptedTestingTransition,
+        testingTransitionSucceeded,
+        lifecycleBeforeTesting,
+        lifecycleAfterTesting,
+        attemptedLiveTransition,
       },
     });
   }
@@ -200,83 +323,15 @@ export async function POST(request: Request) {
       ? transJson.status.lifeCycleStatus.trim()
       : null;
 
-  // 3) Immediately read post-transition status for visible diagnostics.
-  const postUrl =
-    "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
-    `?part=status,contentDetails,snippet&id=${encodeURIComponent(broadcastId)}`;
-  let postRes: Response;
-  try {
-    postRes = await fetch(postUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-  } catch (err) {
-    return NextResponse.json(
-      {
-        ok: false,
-        route: ROUTE,
-        endpoint: postUrl,
-        message: err instanceof Error ? err.message : "Post-transition read failed.",
-        broadcastId,
-        streamId,
-        streamStatus,
-        healthStatus,
-        streamReceiving,
-        transitionAttempted: true,
-        transitionResponseLifeCycleStatus,
-        rawTransitionResponse: transBody,
-      },
-      { status: 502 },
-    );
-  }
-
-  let postBody: unknown = null;
-  try {
-    postBody = await postRes.json();
-  } catch {
-    postBody = null;
-  }
-  if (!postRes.ok) {
-    return youtubeApiErrorNextResponseFromFetch({
-      route: ROUTE,
-      endpoint: postUrl,
-      res: postRes,
-      rawBody: postBody,
-      extra: {
-        broadcastId,
-        streamId,
-        streamStatus,
-        healthStatus,
-        streamReceiving,
-        transitionAttempted: true,
-        transitionResponseLifeCycleStatus,
-        rawTransitionResponse: transBody,
-      },
-    });
-  }
-
-  const postJson = postBody as BroadcastListResponse;
-  const postItem = postJson.items?.[0];
-  const postTransitionLifeCycleStatus =
-    typeof postItem?.status?.lifeCycleStatus === "string"
-      ? postItem.status.lifeCycleStatus.trim()
-      : null;
-  const postTransitionRecordingStatus =
-    typeof postItem?.status?.recordingStatus === "string"
-      ? postItem.status.recordingStatus.trim()
-      : null;
-  const postTransitionBoundStreamId =
-    typeof postItem?.contentDetails?.boundStreamId === "string"
-      ? postItem.contentDetails.boundStreamId.trim()
-      : null;
-  const postTransitionActualStartTime =
-    typeof postItem?.snippet?.actualStartTime === "string"
-      ? postItem.snippet.actualStartTime.trim()
-      : null;
-  const postTransitionActualEndTime =
-    typeof postItem?.snippet?.actualEndTime === "string"
-      ? postItem.snippet.actualEndTime.trim()
-      : null;
+  // 4) Immediately read post-live-transition status for visible diagnostics.
+  const afterLiveRead = await readBroadcastLifecycle();
+  const lifecycleAfterLiveTransition = afterLiveRead.lifeCycleStatus;
+  const postTransitionLifeCycleStatus = afterLiveRead.lifeCycleStatus;
+  const postTransitionRecordingStatus = afterLiveRead.recordingStatus;
+  const postTransitionBoundStreamId = afterLiveRead.boundStreamId;
+  const postTransitionActualStartTime = afterLiveRead.actualStartTime;
+  const postTransitionActualEndTime = afterLiveRead.actualEndTime;
+  const postBody = afterLiveRead.body;
 
   // 4) If YouTube is still finalizing (often "liveStarting" or "testing"), poll briefly.
   const shouldPoll =
@@ -312,7 +367,7 @@ export async function POST(request: Request) {
 
       let pollRes: Response;
       try {
-        pollRes = await fetch(postUrl, {
+        pollRes = await fetch(broadcastReadUrl, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
@@ -363,6 +418,12 @@ export async function POST(request: Request) {
     streamStatus,
     healthStatus,
     streamReceiving,
+    attemptedTestingTransition,
+    testingTransitionSucceeded,
+    lifecycleBeforeTesting,
+    lifecycleAfterTesting,
+    attemptedLiveTransition,
+    lifecycleAfterLiveTransition,
     transitionResponseLifeCycleStatus,
     postTransitionLifeCycleStatus: finalPostTransitionLifeCycleStatus,
     postTransitionRecordingStatus: finalPostTransitionRecordingStatus,
