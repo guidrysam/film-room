@@ -1025,6 +1025,49 @@ export default function StreamRoomPage() {
           finalAngleUrl: undefined,
         });
 
+        const attemptTransitionLive = async (broadcastId: string) => {
+          try {
+            const r = await fetch("/api/youtube/transition-broadcast-live", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                broadcastId,
+                streamId: cam.streamId.trim(),
+              }),
+            });
+            const j = (await r.json()) as {
+              ok?: boolean;
+              reason?: string;
+              message?: string;
+              lifeCycleStatus?: string | null;
+              streamStatus?: string | null;
+              healthStatus?: string | null;
+              streamReceiving?: boolean;
+            };
+            if (r.ok && j.ok === true) {
+              setCameraActiveLinkStatus({
+                kind: "success",
+                message: "Broadcast is live.",
+              });
+              return;
+            }
+            setCameraActiveLinkStatus({
+              kind: "warning",
+              message:
+                "YouTube is receiving video but has not gone live yet. Open Studio and click Go Live, or wait a moment and retry.",
+            });
+          } catch {
+            setCameraActiveLinkStatus({
+              kind: "warning",
+              message:
+                "YouTube is receiving video but has not gone live yet. Open Studio and click Go Live, or wait a moment and retry.",
+            });
+          }
+        };
+
         if (existingJson.foundCurrentUsable === true) {
           const vid =
             typeof existingJson.videoId === "string" ? existingJson.videoId.trim() : "";
@@ -1096,6 +1139,8 @@ export default function StreamRoomPage() {
             videoId: vid,
             finalUrl,
           });
+          // Best-effort: if stream is receiving, try to transition to live.
+          await attemptTransitionLive(broadcastId);
           return;
         }
 
@@ -1200,6 +1245,7 @@ export default function StreamRoomPage() {
           videoId: vid,
           finalUrl,
         });
+        await attemptTransitionLive(vid);
       } catch (err) {
         window.alert(
           err instanceof Error && err.message.trim()
