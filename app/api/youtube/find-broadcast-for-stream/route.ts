@@ -40,8 +40,13 @@ const STREAM_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 type LiveBroadcastListResponse = {
   items?: Array<{
     id?: string;
-    snippet?: { title?: string };
-    status?: { lifeCycleStatus?: string };
+    snippet?: {
+      title?: string;
+      scheduledStartTime?: string;
+      actualStartTime?: string;
+      actualEndTime?: string;
+    };
+    status?: { lifeCycleStatus?: string; privacyStatus?: string };
     contentDetails?: { boundStreamId?: string };
   }>;
 };
@@ -70,6 +75,11 @@ type BoundRow = {
   broadcastId: string;
   boundStreamId: string;
   lifeCycleStatus: string;
+  title: string;
+  privacyStatus: string;
+  actualStartTime: string | null;
+  scheduledStartTime: string | null;
+  actualEndTime: string | null;
 };
 
 function collectBoundRows(
@@ -89,7 +99,40 @@ function collectBoundRows(
     const lsRaw = it.status?.lifeCycleStatus;
     const lifeCycleStatus = typeof lsRaw === "string" ? lsRaw.trim() : "";
     if (!lifeCycleStatus || selectionPriorityRank(lifeCycleStatus) === null) continue;
-    out.push({ broadcastId, boundStreamId: bound, lifeCycleStatus });
+    const titleRaw = it.snippet?.title;
+    const title =
+      typeof titleRaw === "string" && titleRaw.trim() !== "" ? titleRaw.trim() : "";
+    const privacyRaw = it.status?.privacyStatus;
+    const privacyStatus =
+      typeof privacyRaw === "string" && privacyRaw.trim() !== ""
+        ? privacyRaw.trim()
+        : "";
+    const actualStartRaw = it.snippet?.actualStartTime;
+    const actualStartTime =
+      typeof actualStartRaw === "string" && actualStartRaw.trim() !== ""
+        ? actualStartRaw.trim()
+        : null;
+    const scheduledStartRaw = it.snippet?.scheduledStartTime;
+    const scheduledStartTime =
+      typeof scheduledStartRaw === "string" && scheduledStartRaw.trim() !== ""
+        ? scheduledStartRaw.trim()
+        : null;
+    const actualEndRaw = it.snippet?.actualEndTime;
+    const actualEndTime =
+      typeof actualEndRaw === "string" && actualEndRaw.trim() !== ""
+        ? actualEndRaw.trim()
+        : null;
+
+    out.push({
+      broadcastId,
+      boundStreamId: bound,
+      lifeCycleStatus,
+      title,
+      privacyStatus,
+      actualStartTime,
+      scheduledStartTime,
+      actualEndTime,
+    });
   }
   return out;
 }
@@ -114,19 +157,39 @@ function partitionActiveUpcoming(rows: BoundRow[]): {
   };
 }
 
+function toMs(iso: string | null): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function pickPreferredBroadcast(rows: BoundRow[]): BoundRow | null {
-  if (rows.length === 0) return null;
-  let best = rows[0]!;
-  let bestRank = selectionPriorityRank(best.lifeCycleStatus) ?? 999;
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i]!;
-    const rank = selectionPriorityRank(r.lifeCycleStatus) ?? 999;
-    if (rank < bestRank) {
-      best = r;
-      bestRank = rank;
-    }
+  // Reject ended broadcasts entirely.
+  const eligible = rows.filter((r) => !r.actualEndTime);
+  if (eligible.length === 0) return null;
+
+  // A) Prefer: lifeCycleStatus === live AND actualStartTime exists AND actualEndTime missing.
+  const liveStrict = eligible.filter((r) => {
+    const n = normLifeCycle(r.lifeCycleStatus);
+    return n === "live" && r.actualStartTime != null;
+  });
+  if (liveStrict.length > 0) {
+    liveStrict.sort(
+      (a, b) => (toMs(b.actualStartTime) ?? 0) - (toMs(a.actualStartTime) ?? 0),
+    );
+    return liveStrict[0]!;
   }
-  return best;
+
+  // B/C/D) Fall back by lifecycle priority; break ties by most recent start time (actual or scheduled).
+  const tieMs = (r: BoundRow) =>
+    toMs(r.actualStartTime) ?? toMs(r.scheduledStartTime) ?? 0;
+  const sorted = [...eligible].sort((a, b) => {
+    const ra = selectionPriorityRank(a.lifeCycleStatus) ?? 999;
+    const rb = selectionPriorityRank(b.lifeCycleStatus) ?? 999;
+    if (ra !== rb) return ra - rb;
+    return tieMs(b) - tieMs(a);
+  });
+  return sorted[0] ?? null;
 }
 
 export async function POST(request: Request) {
@@ -186,10 +249,21 @@ export async function POST(request: Request) {
   const foundUpcomingBoundCount = upcomingBoundBroadcasts.length;
 
   const preferred = pickPreferredBroadcast(relevantRows);
+  const boundCandidates = relevantRows.map((r) => ({
+    id: r.broadcastId,
+    title: r.title,
+    lifeCycleStatus: r.lifeCycleStatus,
+    privacyStatus: r.privacyStatus,
+    actualStartTime: r.actualStartTime,
+    scheduledStartTime: r.scheduledStartTime,
+    actualEndTime: r.actualEndTime,
+    boundStreamId: r.boundStreamId,
+  }));
 
   if (!preferred) {
     return NextResponse.json({
       ok: true,
+      found: false,
       noCreateAttempted: true,
       foundActiveBoundCount,
       foundUpcomingBoundCount,
@@ -197,6 +271,7 @@ export async function POST(request: Request) {
       foundOnlyUpcomingBound: false,
       selectedBroadcastId: null,
       selectedVideoId: null,
+      boundCandidates,
     });
   }
 
@@ -207,6 +282,7 @@ export async function POST(request: Request) {
     const { broadcastId, boundStreamId, lifeCycleStatus } = preferred;
     return NextResponse.json({
       ok: true,
+      found: true,
       noCreateAttempted: true,
       foundActiveBoundCount,
       foundUpcomingBoundCount,
@@ -216,15 +292,19 @@ export async function POST(request: Request) {
       videoId: broadcastId,
       watchUrl: `https://youtube.com/live/${broadcastId}`,
       standardWatchUrl: `https://www.youtube.com/watch?v=${broadcastId}`,
-      lifeCycleStatus,
-      boundStreamId,
       selectedBroadcastId: broadcastId,
       selectedVideoId: broadcastId,
+      selectedLifeCycleStatus: lifeCycleStatus,
+      selectedActualStartTime: preferred.actualStartTime,
+      lifeCycleStatus,
+      boundStreamId,
+      boundCandidates,
     });
   }
 
   return NextResponse.json({
     ok: true,
+    found: false,
     noCreateAttempted: true,
     foundActiveBoundCount,
     foundUpcomingBoundCount,
@@ -232,5 +312,6 @@ export async function POST(request: Request) {
     foundOnlyUpcomingBound: true,
     selectedBroadcastId: null,
     selectedVideoId: null,
+    boundCandidates,
   });
 }
