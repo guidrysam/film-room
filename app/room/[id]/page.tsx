@@ -47,6 +47,13 @@ import {
   type VideoAngle,
 } from "@/lib/video-angle";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import {
+  type CoachAlertLatest,
+  type RoomGameMark,
+  type RoomGameMarkRole,
+  parseCoachAlertLatest,
+  parseRoomGameMark,
+} from "@/lib/room-game-marks";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -1570,6 +1577,115 @@ function SyncAngleDebugStrip({
   );
 }
 
+const gameMarkQuickBtnClass =
+  "rounded-md border border-white/12 bg-zinc-900/85 px-2 py-1 text-[11px] font-medium text-zinc-100 shadow-sm transition hover:border-white/20 hover:bg-zinc-800/90 disabled:cursor-not-allowed disabled:opacity-40";
+
+function GameMarksToolbar({
+  busy,
+  onQuickMark,
+  onCustomMark,
+}: {
+  busy: boolean;
+  onQuickMark: (label: string) => void;
+  onCustomMark: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+        Marks
+      </span>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={() => onQuickMark("Mark")}
+      >
+        Mark
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={() => onQuickMark("Goal")}
+      >
+        Goal
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={() => onQuickMark("Defensive error")}
+      >
+        Defensive error
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={() => onQuickMark("Transition")}
+      >
+        Transition
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={() => onQuickMark("Set piece")}
+      >
+        Set piece
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        className={gameMarkQuickBtnClass}
+        onClick={onCustomMark}
+      >
+        Custom
+      </button>
+    </div>
+  );
+}
+
+function CoachAlertToastOverlay({
+  alert,
+  onJump,
+  onDismiss,
+}: {
+  alert: CoachAlertLatest;
+  onJump: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      className="pointer-events-auto fixed bottom-4 right-4 z-[10050] w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-emerald-500/35 bg-zinc-950/95 p-4 shadow-2xl shadow-black/60 ring-1 ring-white/[0.06] backdrop-blur-md"
+      role="status"
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-300/90">
+        Coach alert
+      </div>
+      <p className="mt-2 text-sm font-medium text-zinc-100">
+        New mark: {alert.label}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onJump}
+          className="rounded-lg border border-blue-500/45 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-500"
+        >
+          Jump to replay
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="rounded-lg border border-white/12 bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.10]"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function RoomContent() {
   const params = useParams();
   const router = useRouter();
@@ -1778,6 +1894,13 @@ function RoomContent() {
   /** Host: brief "Marked" feedback after one-tap Mark Play. */
   const [markPlayState, setMarkPlayState] = useState<"idle" | "marked">("idle");
   const markPlayTimerRef = useRef<number | null>(null);
+  const [gameMarks, setGameMarks] = useState<RoomGameMark[]>([]);
+  const [gameMarksBusy, setGameMarksBusy] = useState(false);
+  const [coachAlertToast, setCoachAlertToast] = useState<CoachAlertLatest | null>(
+    null,
+  );
+  const coachAlertBaselineHydratedRef = useRef(false);
+  const lastSeenCoachAlertIdRef = useRef<string | null>(null);
   /** Host: transient notice (angle pre-start, blocked chapter jump, etc.). */
   const [hostNotice, setHostNotice] = useState<string | null>(null);
   const hostNoticeTimerRef = useRef<number | null>(null);
@@ -1804,6 +1927,10 @@ function RoomContent() {
     lastDirtyAngleOffsetSigRef.current = "";
     lastDirtyPlayerViewAngleIdRef.current = "";
     lastDirtyStrokeSigRef.current = "";
+    coachAlertBaselineHydratedRef.current = false;
+    lastSeenCoachAlertIdRef.current = null;
+    setCoachAlertToast(null);
+    setGameMarks([]);
   }, [roomId]);
 
   useEffect(() => {
@@ -2406,6 +2533,54 @@ function RoomContent() {
     return () => unsub();
   }, [roomRef]);
 
+  useEffect(() => {
+    if (!roomId) return;
+    const marksRef = ref(db, `rooms/${roomId}/marks`);
+    return onValue(marksRef, (snap) => {
+      const raw = snap.val() as Record<string, unknown> | null;
+      if (!raw || typeof raw !== "object") {
+        setGameMarks([]);
+        return;
+      }
+      const list: RoomGameMark[] = [];
+      for (const key of Object.keys(raw)) {
+        const m = parseRoomGameMark(key, raw[key]);
+        if (m) list.push(m);
+      }
+      list.sort((a, b) => b.createdAt - a.createdAt);
+      setGameMarks(list);
+    });
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!roomId) return;
+    const alertRef = ref(db, `rooms/${roomId}/coachAlerts/latest`);
+    return onValue(alertRef, (snap) => {
+      const parsed = parseCoachAlertLatest(snap.val());
+      if (!parsed) return;
+
+      if (!coachAlertBaselineHydratedRef.current) {
+        coachAlertBaselineHydratedRef.current = true;
+        lastSeenCoachAlertIdRef.current = parsed.id;
+        return;
+      }
+
+      if (parsed.id === lastSeenCoachAlertIdRef.current) {
+        return;
+      }
+
+      lastSeenCoachAlertIdRef.current = parsed.id;
+      setCoachAlertToast(parsed);
+      syncLog("coach alert received", {
+        id: parsed.id,
+        markId: parsed.markId,
+        label: parsed.label,
+        timestamp: parsed.timestamp,
+        angleId: parsed.angleId ?? null,
+      });
+    });
+  }, [roomId]);
+
   const applyRoomStateToPlayer = useCallback(
     async (state: RoomState, prev: RoomState | null, gen: number) => {
       const stale = () => gen !== applyRoomGenRef.current;
@@ -2752,6 +2927,197 @@ function RoomContent() {
       | null
       | undefined;
   };
+
+  const handleDismissCoachAlert = useCallback(() => {
+    setCoachAlertToast(null);
+  }, []);
+
+  const handleJumpToMarkReplay = useCallback(
+    async (mark: { timestamp: number; angleId?: string }) => {
+      const seekTo = Math.max(0, mark.timestamp - 15);
+      const s = roomStateRef.current;
+      let player: YouTubePlayer | null | undefined;
+
+      const aid = mark.angleId;
+      if (aid && s?.angles.some((a) => a.id === aid)) {
+        const hit = syncPlayerRefs.current[aid];
+        if (hit) player = hit;
+      }
+      if (!player) {
+        if (isHostRef.current) {
+          player = getPlayer() ?? null;
+        } else if (
+          s &&
+          isSyncLayoutMode(roomViewModeRef.current) &&
+          s.angles.length > 1
+        ) {
+          const top = resolveViewerStackTopAngleId(s);
+          player = syncPlayerRefs.current[top] ?? null;
+        } else {
+          player = playerRef.current?.getInternalPlayer() as
+            | YouTubePlayer
+            | null
+            | undefined;
+        }
+      }
+      if (!player) return;
+
+      syncLog("coach jumped to mark", {
+        seekTo,
+        angleId: mark.angleId ?? null,
+        isHost: isHostRef.current,
+      });
+
+      try {
+        await player.seekTo?.(seekTo, true);
+      } catch {
+        try {
+          player.seekTo?.(seekTo, true);
+        } catch {
+          /* YouTube API */
+        }
+      }
+
+      if (!isHostRef.current) {
+        viewerPlaybackUnlockedRef.current = true;
+        setViewerPlaybackUnlocked(true);
+      }
+
+      try {
+        if (isHostRef.current) {
+          if (s?.sourceType === "live") {
+            const angleForLog = s?.angles.find(
+              (a) => syncPlayerRefs.current[a.id] === player,
+            )?.id;
+            forceYouTubePlay(
+              player,
+              "mark-jump-replay",
+              angleForLog ?? undefined,
+              { delayedUnmute: true },
+            );
+            void forceLiveBootstrapPlay(player, "mark-jump-replay");
+          } else {
+            player.playVideo?.();
+          }
+        } else {
+          await ensureViewerPlaybackIntent(
+            player,
+            true,
+            viewerPlaybackUnlockedRef,
+            { liveViewerKick: s?.sourceType === "live" },
+          );
+        }
+      } catch {
+        /* YouTube API */
+      }
+    },
+    [setViewerPlaybackUnlocked],
+  );
+
+  const handleCreateGameMark = useCallback(
+    async (label: string) => {
+      const trimmed = label.trim();
+      if (!trimmed || !roomId) return;
+      const s = roomStateRef.current;
+      if (!s) return;
+      setGameMarksBusy(true);
+      try {
+        let player: YouTubePlayer | null | undefined;
+        if (isHostRef.current) {
+          player = getPlayer() ?? null;
+        } else if (
+          isSyncLayoutMode(roomViewModeRef.current) &&
+          s.angles.length > 1
+        ) {
+          const top = resolveViewerStackTopAngleId(s);
+          player = syncPlayerRefs.current[top] ?? null;
+        } else {
+          player = playerRef.current?.getInternalPlayer() as
+            | YouTubePlayer
+            | null
+            | undefined;
+        }
+        const fb = s.currentTime ?? 0;
+        const syncAnchorTime = s.syncAnchorTime ?? 0;
+        const fallbackClock = Math.max(fb, syncAnchorTime);
+        const rawT = await readYoutubeCurrentTime(player ?? null, fallbackClock);
+        const timestamp =
+          s.sourceType === "live" ? rawT : Math.max(rawT, fallbackClock);
+
+        let angleId: string | undefined;
+        if (s.angles.length > 0) {
+          if (isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 1) {
+            angleId = isHostRef.current
+              ? s.currentAngleId
+              : resolveViewerStackTopAngleId(s);
+          } else {
+            angleId = pickAngle(s.angles, s.currentAngleId).id;
+          }
+        }
+
+        const createdByRole: RoomGameMarkRole = isHostRef.current
+          ? "host"
+          : "viewer";
+        const createdByName =
+          typeof user?.displayName === "string" && user.displayName.trim() !== ""
+            ? user.displayName.trim()
+            : undefined;
+
+        const createdAt = Date.now();
+        const marksRoot = ref(db, `rooms/${roomId}/marks`);
+        const newMarkRef = push(marksRoot);
+        const markId = newMarkRef.key;
+        if (!markId) return;
+
+        const markPayload: RoomGameMark = {
+          id: markId,
+          label: trimmed,
+          timestamp,
+          createdAt,
+          createdByRole,
+          ...(angleId ? { angleId } : {}),
+          ...(createdByName ? { createdByName } : {}),
+        };
+
+        const alertId = `alert_${markId}_${createdAt}`;
+        const alertPayload: CoachAlertLatest = {
+          id: alertId,
+          markId,
+          label: trimmed,
+          timestamp,
+          createdAt,
+          ...(angleId ? { angleId } : {}),
+          ...(createdByName ? { createdByName } : {}),
+        };
+
+        await set(newMarkRef, markPayload);
+        await set(ref(db, `rooms/${roomId}/coachAlerts/latest`), alertPayload);
+
+        syncLog("mark created", {
+          markId,
+          label: trimmed,
+          timestamp,
+          angleId: angleId ?? null,
+          createdByRole,
+        });
+      } catch (e) {
+        window.alert(
+          e instanceof Error ? e.message : "Could not save mark. Try again.",
+        );
+      } finally {
+        setGameMarksBusy(false);
+      }
+    },
+    [roomId, user?.displayName],
+  );
+
+  const handleGameMarkCustomPrompt = useCallback(() => {
+    const raw = window.prompt("Custom mark label");
+    if (raw == null) return;
+    const t = raw.trim();
+    if (!t) return;
+    void handleCreateGameMark(t);
+  }, [handleCreateGameMark]);
 
   /** Push room transport state to one mounted Sync View player (seek/rate/play + mute). */
   const applySyncStateToAnglePlayer = useCallback(
@@ -6648,6 +7014,48 @@ function RoomContent() {
           </div>
         ) : null}
 
+        <div className="mb-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm">
+          <GameMarksToolbar
+            busy={gameMarksBusy}
+            onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+            onCustomMark={handleGameMarkCustomPrompt}
+          />
+          {gameMarks.length > 0 ? (
+            <div className="mt-3 max-h-44 overflow-y-auto border-t border-white/[0.08] pt-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Recent marks
+              </div>
+              <ul className="mt-1.5 space-y-1.5">
+                {gameMarks.slice(0, 40).map((m) => (
+                  <li
+                    key={m.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/[0.06] bg-black/25 px-2 py-1.5 text-[11px]"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="font-medium text-zinc-100">{m.label}</span>
+                      <span className="ml-2 font-mono text-zinc-400 tabular-nums">
+                        {formatCountdownMmSs(m.timestamp)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-blue-500/40 bg-blue-950/50 px-2 py-0.5 text-[10px] font-semibold text-blue-100 transition hover:bg-blue-900/55"
+                      onClick={() => {
+                        void handleJumpToMarkReplay({
+                          timestamp: m.timestamp,
+                          angleId: m.angleId,
+                        });
+                      }}
+                    >
+                      Jump
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
         <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
           <div className="md:col-span-2">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
@@ -7509,6 +7917,19 @@ function RoomContent() {
           Session copied
         </div>
       ) : null}
+      {coachAlertToast ? (
+        <CoachAlertToastOverlay
+          alert={coachAlertToast}
+          onJump={() => {
+            void handleJumpToMarkReplay({
+              timestamp: coachAlertToast.timestamp,
+              angleId: coachAlertToast.angleId,
+            });
+            handleDismissCoachAlert();
+          }}
+          onDismiss={handleDismissCoachAlert}
+        />
+      ) : null}
       {leaveConfirmOpen ? (
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
@@ -7771,6 +8192,50 @@ function RoomContent() {
                 </button>
               )}
             </div>
+          </div>
+        ) : null}
+
+        {!cleanMode && roomState ? (
+          <div className={`${frPanel} mb-3`}>
+            <GameMarksToolbar
+              busy={gameMarksBusy}
+              onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+              onCustomMark={handleGameMarkCustomPrompt}
+            />
+            {gameMarks.length > 0 ? (
+              <div className="mt-3 max-h-40 overflow-y-auto border-t border-white/[0.08] pt-2">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Recent marks
+                </div>
+                <ul className="mt-1.5 space-y-1.5">
+                  {gameMarks.slice(0, 40).map((m) => (
+                    <li
+                      key={m.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/[0.06] bg-black/25 px-2 py-1.5 text-[11px]"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="font-medium text-zinc-100">{m.label}</span>
+                        <span className="ml-2 font-mono text-zinc-400 tabular-nums">
+                          {formatCountdownMmSs(m.timestamp)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md border border-blue-500/40 bg-blue-950/50 px-2 py-0.5 text-[10px] font-semibold text-blue-100 transition hover:bg-blue-900/55"
+                        onClick={() => {
+                          void handleJumpToMarkReplay({
+                            timestamp: m.timestamp,
+                            angleId: m.angleId,
+                          });
+                        }}
+                      >
+                        Jump
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -9137,6 +9602,19 @@ function RoomContent() {
       >
         Session copied
       </div>
+    ) : null}
+    {coachAlertToast ? (
+      <CoachAlertToastOverlay
+        alert={coachAlertToast}
+        onJump={() => {
+          void handleJumpToMarkReplay({
+            timestamp: coachAlertToast.timestamp,
+            angleId: coachAlertToast.angleId,
+          });
+          handleDismissCoachAlert();
+        }}
+        onDismiss={handleDismissCoachAlert}
+      />
     ) : null}
     {saveSessionOpen ? (
       <div
