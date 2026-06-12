@@ -54,7 +54,9 @@ service cloud.firestore {
                        request.resource.data.ownerId == request.auth.uid &&
                        request.resource.data.contributors[request.auth.uid] == 'owner';
 
-      // Update/delete: owners only (role/membership changes are owner-gated).
+      // Update/delete: owners only. Because `contributors` and `memberUids`
+      // live on this doc, only owners can add/remove people or change roles —
+      // editors/viewers cannot escalate their own role.
       allow update, delete: if request.auth != null && isOwner(request.auth.uid);
 
       // Sub-collections: sources, events, cuts.
@@ -67,7 +69,14 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && isEditor(request.auth.uid);
       }
       match /cuts/{cutId} {
-        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        // Read: the author always; everyone else only for non-private cuts they
+        // can see. Clients MUST list with constrained queries (createdBy == me,
+        // or visibility in ['game','team']) — an unconstrained list is denied
+        // because private cuts owned by others fail this rule.
+        allow read: if request.auth != null &&
+                       (resource.data.createdBy == request.auth.uid ||
+                        (canReadGame(request.auth.uid) &&
+                         resource.data.visibility != 'private'));
         // Editors can create cuts; only the cut's author or an owner can change it.
         allow create: if request.auth != null && isEditor(request.auth.uid) &&
                          request.resource.data.createdBy == request.auth.uid;

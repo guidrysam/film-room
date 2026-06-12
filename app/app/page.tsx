@@ -19,6 +19,7 @@ import {
   type SavedSessionKind,
 } from "@/lib/saved-sessions";
 import { listMyGames, type Game } from "@/lib/games";
+import GameDetails from "@/components/GameDetails";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const inputClass =
@@ -126,6 +127,7 @@ export default function DashboardPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [creatingGameId, setCreatingGameId] = useState<string | null>(null);
+  const [openGameId, setOpenGameId] = useState<string | null>(null);
 
   const filteredSessions = useMemo(
     () =>
@@ -458,25 +460,46 @@ export default function DashboardPage() {
             </p>
           ) : (
             <ul className="space-y-2">
-              {games.map((g) => (
-                <li
-                  key={g.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-white">
-                      {g.title}
-                    </p>
-                    <p className="text-xs text-zinc-500">
-                      {[g.sport, g.date].filter(Boolean).join(" · ") ||
-                        "Game container"}
-                    </p>
-                  </div>
-                  <span className="font-mono text-[10px] text-zinc-500">
-                    {g.id}
-                  </span>
-                </li>
-              ))}
+              {games.map((g) => {
+                const open = openGameId === g.id;
+                return (
+                  <li
+                    key={g.id}
+                    className="rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-white">
+                          {g.title}
+                        </p>
+                        <p className="text-xs text-zinc-500">
+                          {[g.sport, g.date].filter(Boolean).join(" · ") ||
+                            "Game container"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOpenGameId(open ? null : g.id)}
+                          className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08]"
+                        >
+                          {open ? "Close" : "Manage"}
+                        </button>
+                        <span className="font-mono text-[10px] text-zinc-500">
+                          {g.id}
+                        </span>
+                      </div>
+                    </div>
+                    {open && user ? (
+                      <GameDetails
+                        game={g}
+                        currentUid={user.uid}
+                        onChanged={() => void refreshGames()}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

@@ -101,13 +101,13 @@ export default function CutStudio({
     }
     setLoading(true);
     try {
-      setCuts(await listDirectorTracks(gameId));
+      setCuts(await listDirectorTracks(gameId, userId));
     } catch {
       /* Listing failed (rules / network) — leave existing list. */
     } finally {
       setLoading(false);
     }
-  }, [gameId]);
+  }, [gameId, userId]);
 
   useEffect(() => {
     void refresh();

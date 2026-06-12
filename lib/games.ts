@@ -1,5 +1,8 @@
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -297,6 +300,97 @@ export async function updateGame(
     ...(patch.homeTeam !== undefined ? { homeTeam: patch.homeTeam.trim() } : {}),
     ...(patch.awayTeam !== undefined ? { awayTeam: patch.awayTeam.trim() } : {}),
     ...(patch.visibility !== undefined ? { visibility: patch.visibility } : {}),
+  });
+}
+
+// ---- Contributors / permissions ----------------------------------------
+
+export type GameContributorEntry = {
+  uid: string;
+  role: GameRole;
+};
+
+function roleRank(role: GameRole): number {
+  return role === "owner" ? 0 : role === "editor" ? 1 : 2;
+}
+
+/** Owners can manage contributors and game settings. */
+export function canManageGame(game: Game, uid: string): boolean {
+  if (!uid) return false;
+  return game.ownerId === uid || game.contributors[uid] === "owner";
+}
+
+/** Editors (and owners) can add sources / events / cuts. */
+export function canEditGame(game: Game, uid: string): boolean {
+  if (!uid) return false;
+  return canManageGame(game, uid) || game.contributors[uid] === "editor";
+}
+
+/** Members can read; link/public games are also viewable by anyone. */
+export function canViewGame(game: Game, uid: string): boolean {
+  if (game.visibility === "link" || game.visibility === "public") return true;
+  if (!uid) return false;
+  return game.ownerId === uid || game.contributors[uid] != null;
+}
+
+/** All contributors for a game, sorted owner → editor → viewer then by uid. */
+export async function getGameContributors(
+  gameId: string,
+): Promise<GameContributorEntry[]> {
+  const game = await getGame(gameId);
+  if (!game) return [];
+  return Object.entries(game.contributors)
+    .map(([uid, role]) => ({ uid, role }))
+    .sort(
+      (a, b) => roleRank(a.role) - roleRank(b.role) || a.uid.localeCompare(b.uid),
+    );
+}
+
+/**
+ * Add or change a contributor's role. Writes both the `contributors` map and
+ * the `memberUids` mirror. Rules restrict this to owners.
+ */
+export async function updateGameContributor(
+  gameId: string,
+  targetUid: string,
+  role: GameRole,
+): Promise<void> {
+  const uid = targetUid.trim();
+  if (!uid) throw new Error("A user id is required.");
+  if (role !== "owner" && role !== "editor" && role !== "viewer") {
+    throw new Error(`Invalid role: ${role}`);
+  }
+  await updateDoc(doc(gamesCol(), gameId), {
+    [`contributors.${uid}`]: role,
+    memberUids: arrayUnion(uid),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Remove a contributor, clearing both the `contributors` map entry and the
+ * `memberUids` mirror. Refuses to strip the last owner (so a game always keeps
+ * at least one manager). Rules restrict this to owners.
+ */
+export async function removeGameContributor(
+  gameId: string,
+  targetUid: string,
+): Promise<void> {
+  const uid = targetUid.trim();
+  if (!uid) throw new Error("A user id is required.");
+  const game = await getGame(gameId);
+  if (!game) throw new Error("Game not found.");
+  if (!(uid in game.contributors)) return;
+  const ownerCount = Object.values(game.contributors).filter(
+    (r) => r === "owner",
+  ).length;
+  if (game.contributors[uid] === "owner" && ownerCount <= 1) {
+    throw new Error("Cannot remove the only owner of this game.");
+  }
+  await updateDoc(doc(gamesCol(), gameId), {
+    [`contributors.${uid}`]: deleteField(),
+    memberUids: arrayRemove(uid),
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -616,14 +710,37 @@ function parseDirectorTrack(
   };
 }
 
+/**
+ * List director tracks a user is allowed to see. When `uid` is provided this
+ * runs two rule-satisfiable queries — the user's own cuts (any visibility) and
+ * shared cuts (game/team) — and merges them, matching the hardened cut read
+ * rule (an unconstrained list would be denied while private cuts exist). When
+ * `uid` is omitted it falls back to an unconstrained read (legacy / open data).
+ */
 export async function listDirectorTracks(
   gameId: string,
+  uid?: string,
 ): Promise<DirectorTrack[]> {
-  const snap = await getDocs(cutsCol(gameId));
-  const out: DirectorTrack[] = [];
-  snap.forEach((d) =>
-    out.push(parseDirectorTrack(d.id, d.data() as Record<string, unknown>)),
-  );
+  const col = cutsCol(gameId);
+  const byId = new Map<string, DirectorTrack>();
+  const collect = (snap: Awaited<ReturnType<typeof getDocs>>) =>
+    snap.forEach((d) => {
+      const t = parseDirectorTrack(d.id, d.data() as Record<string, unknown>);
+      byId.set(t.id, t);
+    });
+
+  if (uid) {
+    const [mine, shared] = await Promise.all([
+      getDocs(query(col, where("createdBy", "==", uid))),
+      getDocs(query(col, where("visibility", "in", ["game", "team"]))),
+    ]);
+    collect(mine);
+    collect(shared);
+  } else {
+    collect(await getDocs(col));
+  }
+
+  const out = Array.from(byId.values());
   out.sort(
     (a, b) =>
       (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0),
