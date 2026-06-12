@@ -107,13 +107,26 @@ export type DirectorTrackEvent = {
   note?: string;
 };
 
+/**
+ * Visibility for a Director Track / User Cut (distinct from Game visibility):
+ *   private = only the creator sees it
+ *   game    = anyone with access to the Game sees it
+ *   team    = future team-wide visibility (behaves like `game` until teams exist)
+ */
+export type CutVisibility = "private" | "game" | "team";
+
 export type DirectorTrack = {
   id: string;
+  /** Back-link to the owning Game (denormalized for portability). */
+  gameId?: string;
   name: string;
-  visibility?: GameVisibility;
+  description?: string;
+  visibility?: CutVisibility;
   /** Ordered view/layout/camera-switch instructions (NOT rendered video). */
   track: DirectorTrackEvent[];
   createdBy?: string;
+  /** Display name of the creator, captured at save time. */
+  createdByName?: string;
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
 };
@@ -475,6 +488,8 @@ const DIRECTOR_EVENT_TYPES: DirectorTrackEventType[] = [
   "note",
 ];
 
+const CUT_VISIBILITIES: CutVisibility[] = ["private", "game", "team"];
+
 export async function createDirectorTrack(
   gameId: string,
   data: DirectorTrackInput,
@@ -503,18 +518,49 @@ export async function createDirectorTrack(
           ...(trimOrUndef(e.note) ? { note: e.note!.trim() } : {}),
         }))
     : [];
+  const visibility = CUT_VISIBILITIES.includes(data.visibility as CutVisibility)
+    ? (data.visibility as CutVisibility)
+    : "private";
   await setDoc(ref, {
     id: ref.id,
+    gameId,
     name: data.name.trim() || "Cut",
     track,
-    visibility: data.visibility ?? "private",
+    visibility,
     createdAt: now,
     updatedAt: now,
+    ...(trimOrUndef(data.description)
+      ? { description: data.description!.trim() }
+      : {}),
     ...(trimOrUndef(data.createdBy)
       ? { createdBy: data.createdBy!.trim() }
       : {}),
+    ...(trimOrUndef(data.createdByName)
+      ? { createdByName: data.createdByName!.trim() }
+      : {}),
   });
   return ref.id;
+}
+
+/**
+ * Duplicate an existing cut into a new one owned by `uid`. Copies the track and
+ * description; the copy defaults to private so the new author opts in to
+ * sharing. Returns the new cut id.
+ */
+export async function duplicateDirectorTrack(
+  gameId: string,
+  source: DirectorTrack,
+  uid: string,
+  opts?: { name?: string; createdByName?: string; visibility?: CutVisibility },
+): Promise<string> {
+  return createDirectorTrack(gameId, {
+    name: opts?.name?.trim() || `${source.name} (copy)`,
+    visibility: opts?.visibility ?? "private",
+    track: source.track.map((e) => ({ ...e })),
+    createdBy: uid,
+    ...(opts?.createdByName ? { createdByName: opts.createdByName } : {}),
+    ...(source.description ? { description: source.description } : {}),
+  });
 }
 
 function parseDirectorTrack(
@@ -543,17 +589,27 @@ function parseDirectorTrack(
     });
   }
   track.sort((a, b) => a.t - b.t);
-  const visibility =
-    raw.visibility === "link" || raw.visibility === "public"
+  // Coerce to CutVisibility; legacy link/public cuts read as game-visible.
+  const visibility: CutVisibility =
+    raw.visibility === "game" || raw.visibility === "team"
       ? raw.visibility
-      : "private";
+      : raw.visibility === "link" || raw.visibility === "public"
+        ? "game"
+        : "private";
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : "Cut",
     visibility,
     track,
+    ...(trimOrUndef(raw.gameId) ? { gameId: (raw.gameId as string).trim() } : {}),
+    ...(trimOrUndef(raw.description)
+      ? { description: (raw.description as string).trim() }
+      : {}),
     ...(trimOrUndef(raw.createdBy)
       ? { createdBy: (raw.createdBy as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.createdByName)
+      ? { createdByName: (raw.createdByName as string).trim() }
       : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,

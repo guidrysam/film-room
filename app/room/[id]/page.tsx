@@ -8320,6 +8320,7 @@ function RoomContent() {
             <CutStudio
               gameId={gameIdFromUrl}
               userId={user.uid}
+              userName={user.displayName ?? undefined}
               getSnapshot={getCutSnapshot}
               getTime={getCutGameTime}
               applyLayout={cutApplyLayout}

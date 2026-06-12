@@ -201,6 +201,41 @@ export function getTrackEventAtTime(
   return hit;
 }
 
+/** Summary metadata computed from a track (for cut cards / discovery). */
+export type DirectorTrackSummary = {
+  /** Total number of timeline events in the track. */
+  eventCount: number;
+  /** Span from the first to the last event, in seconds. */
+  durationSec: number;
+  /** Game time of the first event, or 0 when empty. */
+  firstT: number;
+  /** Game time of the last event, or 0 when empty. */
+  lastT: number;
+};
+
+/** Compute display summary metadata from a track's events. */
+export function directorTrackSummary(
+  events: DirectorTrackEvent[],
+): DirectorTrackSummary {
+  if (!Array.isArray(events) || events.length === 0) {
+    return { eventCount: 0, durationSec: 0, firstT: 0, lastT: 0 };
+  }
+  let firstT = Number.POSITIVE_INFINITY;
+  let lastT = 0;
+  for (const ev of events) {
+    if (typeof ev.t !== "number" || !Number.isFinite(ev.t)) continue;
+    if (ev.t < firstT) firstT = ev.t;
+    if (ev.t > lastT) lastT = ev.t;
+  }
+  if (!Number.isFinite(firstT)) firstT = 0;
+  return {
+    eventCount: events.length,
+    durationSec: Math.max(0, lastT - firstT),
+    firstT,
+    lastT,
+  };
+}
+
 /** Events strictly after `t`, in time order (optionally limited to `limit`). */
 export function getUpcomingTrackEvents(
   events: DirectorTrackEvent[],

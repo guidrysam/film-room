@@ -6,7 +6,7 @@ import {
   compactDirectorTrackEvents,
   type DirectorTrackEvent,
 } from "@/lib/director-track";
-import { createDirectorTrack } from "@/lib/games";
+import { createDirectorTrack, type CutVisibility } from "@/lib/games";
 
 /** A point-in-time snapshot of what the recorder should capture. */
 export type CutSnapshot = {
@@ -29,6 +29,8 @@ export type CutRecorderProps = {
   gameId: string | null;
   /** Author uid (passed to the saved cut). */
   userId: string;
+  /** Author display name (captured on the saved cut for attribution). */
+  userName?: string;
   /** Reads the current viewing state. Resolved on each sample tick. */
   getSnapshot: () => Promise<CutSnapshot> | CutSnapshot;
   /** Called after a cut is saved to Firestore (newCutId). */
@@ -44,6 +46,7 @@ export type CutRecorderProps = {
 export default function CutRecorder({
   gameId,
   userId,
+  userName,
   getSnapshot,
   onSaved,
 }: CutRecorderProps) {
@@ -52,6 +55,7 @@ export default function CutRecorder({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedCount, setSavedCount] = useState(0);
+  const [visibility, setVisibility] = useState<CutVisibility>("private");
 
   const sampleInFlight = useRef(false);
 
@@ -147,9 +151,10 @@ export default function CutRecorder({
     try {
       const cutId = await createDirectorTrack(gameId, {
         name,
-        visibility: "private",
+        visibility,
         track: compacted,
         createdBy: userId,
+        ...(userName ? { createdByName: userName } : {}),
       });
       setSavedCount(compacted.length);
       setStatus("saved");
@@ -159,7 +164,7 @@ export default function CutRecorder({
     } finally {
       setSaving(false);
     }
-  }, [events, gameId, userId, onSaved]);
+  }, [events, gameId, userId, userName, visibility, onSaved]);
 
   const isRecording = status === "recording";
   const isPaused = status === "paused";
@@ -200,6 +205,35 @@ export default function CutRecorder({
           </span>
         ) : null}
       </div>
+
+      {isActive ? (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+            Visibility
+          </span>
+          <div className="flex gap-1">
+            {(
+              [
+                ["private", "Private"],
+                ["game", "Game Visible"],
+              ] as const
+            ).map(([val, lbl]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setVisibility(val)}
+                className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition ${
+                  visibility === val
+                    ? "border border-blue-500/55 bg-blue-600/25 text-white"
+                    : "border border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.07]"
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-2 flex flex-wrap gap-1.5">
         {status === "idle" || status === "saved" ? (
