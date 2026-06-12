@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import GameContributors from "@/components/GameContributors";
+import GameInvites from "@/components/GameInvites";
 import {
   listDirectorTracks,
   listGameSources,
@@ -66,6 +67,10 @@ export default function GameDetails({
             {cutCount ?? "…"} perspective{cutCount === 1 ? "" : "s"}
           </span>
         </div>
+      </div>
+
+      <div className="mb-4 border-b border-white/[0.06] pb-4">
+        <GameInvites game={game} currentUid={currentUid} />
       </div>
 
       <GameContributors

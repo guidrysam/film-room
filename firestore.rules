@@ -53,6 +53,19 @@ service cloud.firestore {
              gameData().visibility == 'link';
     }
 
+    // Owner check for a game referenced by id in data (used by gameInvites,
+    // where the gameId is a field rather than the document path).
+    function isGameOwnerOf(gid) {
+      return request.auth != null &&
+             (get(/databases/$(database)/documents/games/$(gid)).data.ownerId == request.auth.uid ||
+              get(/databases/$(database)/documents/games/$(gid)).data.contributors[request.auth.uid] == 'owner');
+    }
+
+    // Invite referenced by the transient `joinCode` on a self-join write.
+    function joinInviteData() {
+      return get(/databases/$(database)/documents/gameInvites/$(request.resource.data.joinCode)).data;
+    }
+
     match /games/{gameId} {
       // Read: members always; non-members only if link/public.
       allow read: if request.auth != null && canReadGame(request.auth.uid);
@@ -66,6 +79,37 @@ service cloud.firestore {
       // live on this doc, only owners can add/remove people or change roles —
       // editors/viewers cannot escalate their own role.
       allow update, delete: if request.auth != null && isOwner(request.auth.uid);
+
+      // Self-join via an invite link. A signed-in user may add ONLY themselves
+      // to contributors + memberUids at the invite's role, and nothing else.
+      // The `!(uid in contributors)` guard means an existing member can never
+      // use this path to change their own role (no escalation).
+      allow update: if request.auth != null
+        && !(request.auth.uid in resource.data.contributors)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['contributors', 'memberUids', 'updatedAt', 'joinCode'])
+        && request.resource.data.contributors.diff(resource.data.contributors)
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.memberUids.hasAll([request.auth.uid])
+        && request.resource.data.memberUids.toSet()
+             .difference(resource.data.memberUids.toSet()).hasOnly([request.auth.uid])
+        && resource.data.memberUids.toSet()
+             .difference(request.resource.data.memberUids.toSet()).size() == 0
+        && (request.resource.data.contributors[request.auth.uid] == 'editor' ||
+            request.resource.data.contributors[request.auth.uid] == 'viewer')
+        && 'joinCode' in request.resource.data
+        && joinInviteData().gameId == gameId
+        && joinInviteData().active == true
+        && joinInviteData().role == request.resource.data.contributors[request.auth.uid]
+        && (!('expiresAt' in joinInviteData()) ||
+            joinInviteData().expiresAt > request.time);
+
+      // Cleanup: a member may remove the transient `joinCode` field (only that
+      // field) so the code does not linger on the game doc.
+      allow update: if request.auth != null
+        && (request.auth.uid in resource.data.contributors)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joinCode'])
+        && !('joinCode' in request.resource.data);
 
       // Sub-collections: sources, events, cuts.
       match /sources/{sourceId} {
@@ -92,6 +136,26 @@ service cloud.firestore {
                                  (isOwner(request.auth.uid) ||
                                   resource.data.createdBy == request.auth.uid);
       }
+    }
+
+    // ---- Game invites (join links) ------------------------------------
+    // Codes are long and unguessable, so invite docs are publicly readable
+    // (the join landing page resolves the code before sign-in). Only the
+    // owner of the referenced game can create/modify/revoke them.
+    match /gameInvites/{code} {
+      allow read: if true;
+
+      allow create: if request.auth != null
+        && request.resource.data.code == code
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.gameId is string
+        && (request.resource.data.role == 'editor' ||
+            request.resource.data.role == 'viewer')
+        && request.resource.data.active is bool
+        && isGameOwnerOf(request.resource.data.gameId);
+
+      allow update, delete: if request.auth != null
+        && isGameOwnerOf(resource.data.gameId);
     }
 
     // Default deny: no public writes, nothing else readable.
