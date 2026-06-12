@@ -14,6 +14,7 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
+import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 /**
  * Phase 0 durable Game model (Firestore).
@@ -478,6 +479,42 @@ export async function listGameSources(
       (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0),
   );
   return out;
+}
+
+export type AddYouTubeSourceInput = {
+  /** Full YouTube URL or a raw 11-character video id. */
+  urlOrId: string;
+  label?: string;
+  /** Seconds added to game time to reach this source's playback time. */
+  offsetFromGameTime?: number;
+};
+
+/**
+ * Convenience: parse a YouTube URL/id and attach it as a `youtube` source.
+ * Throws if the input is not a recognizable YouTube video. Rules require the
+ * caller to be an editor/owner of the game.
+ */
+export async function addYouTubeSourceToGame(
+  gameId: string,
+  uid: string,
+  input: AddYouTubeSourceInput,
+): Promise<string> {
+  const videoId = extractYouTubeVideoId(input.urlOrId ?? "");
+  if (!videoId) {
+    throw new Error("Enter a valid YouTube URL or 11-character video ID.");
+  }
+  const offset =
+    typeof input.offsetFromGameTime === "number" &&
+    Number.isFinite(input.offsetFromGameTime)
+      ? input.offsetFromGameTime
+      : 0;
+  return addGameSource(gameId, {
+    kind: "youtube",
+    label: input.label?.trim() || "YouTube source",
+    videoId,
+    offsetFromGameTime: offset,
+    ...(uid ? { createdBy: uid } : {}),
+  });
 }
 
 // ---- Timeline events ---------------------------------------------------
