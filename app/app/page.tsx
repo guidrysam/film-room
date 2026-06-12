@@ -31,6 +31,15 @@ const primaryBtn =
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
 
+const worldCardClass =
+  "flex h-full flex-col justify-between gap-4 rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
+
+const worldBtnPrimary =
+  "inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70";
+
+const worldBtnGhost =
+  "inline-flex w-full items-center justify-center rounded-lg border border-white/12 bg-white/[0.05] px-4 py-2 text-sm font-semibold text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
@@ -372,14 +381,14 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen px-4 py-10 text-zinc-50">
-      <div className="mx-auto w-full max-w-lg">
+      <div className="mx-auto w-full max-w-3xl">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-3 border-b border-white/[0.06] pb-6">
           <div>
             <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-              Film Room
+              Film Room Sports
             </p>
             <h1 className="text-xl font-semibold tracking-tight text-white">
-              Your sessions
+              Dashboard
             </h1>
           </div>
           <div className="flex items-center gap-2 text-xs">
@@ -395,6 +404,70 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {/* Three product worlds: capture, broadcast, review. */}
+        <section className="mb-10 grid gap-3 sm:grid-cols-3">
+          <div className={worldCardClass}>
+            <div>
+              <div className="mb-1 flex items-center gap-2">
+                <h2 className="text-base font-semibold text-white">Game Cap</h2>
+                <span className="rounded-full border border-amber-500/40 bg-amber-950/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200">
+                  Early
+                </span>
+              </div>
+              <p className="text-xs leading-relaxed text-zinc-400">
+                Record games, create timelines, and send footage into a Game.
+              </p>
+              <p className="mt-2 text-[10px] text-zinc-500">
+                Recording workflow coming next
+              </p>
+            </div>
+            <Link href="/game-cap" className={worldBtnGhost}>
+              Open Game Cap
+            </Link>
+          </div>
+
+          <div className={worldCardClass}>
+            <div>
+              <h2 className="mb-1 text-base font-semibold text-white">
+                Stream Room
+              </h2>
+              <p className="text-xs leading-relaxed text-zinc-400">
+                Go live to YouTube and create a stream-backed Game source.
+              </p>
+            </div>
+            <Link href="/stream" className={worldBtnGhost}>
+              Open Stream Room
+            </Link>
+          </div>
+
+          <div className={`${worldCardClass} ring-blue-500/20`}>
+            <div>
+              <h2 className="mb-1 text-base font-semibold text-white">
+                Film Room
+              </h2>
+              <p className="text-xs leading-relaxed text-zinc-400">
+                Review games, sync angles, add Coach Marks, and create
+                Perspectives.
+              </p>
+            </div>
+            <a href="#film-room" className={worldBtnPrimary}>
+              Open Film Room
+            </a>
+          </div>
+        </section>
+
+        {/* Film Room: review, games, perspectives, contributors, saved sessions. */}
+        <section id="film-room" className="scroll-mt-6">
+          <div className="mb-4 border-b border-white/[0.06] pb-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-200">
+              Film Room
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Review games, sync angles, add Coach Marks, and create
+              Perspectives.
+            </p>
+          </div>
 
         <div className={`${panelClass} mb-8`}>
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -428,12 +501,6 @@ export default function DashboardPage() {
               className="inline-flex items-center justify-center rounded-lg border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10]"
             >
               Timeline Sync — attach a timeline to a video
-            </Link>
-            <Link
-              href="/stream"
-              className="inline-flex items-center justify-center rounded-lg border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10]"
-            >
-              Stream Room
             </Link>
           </div>
         </div>
@@ -507,7 +574,7 @@ export default function DashboardPage() {
         <div>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-              Saved sessions
+              Saved Film Sessions
             </p>
             <button
               type="button"
@@ -696,6 +763,7 @@ export default function DashboardPage() {
             </>
           )}
         </div>
+        </section>
 
         <Link href="/" className={`${linkBack} mt-12 inline-block`}>
           ← Home
