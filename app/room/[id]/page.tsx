@@ -55,6 +55,7 @@ import {
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
 import { addGameEvent } from "@/lib/games";
+import CutStudio from "@/components/CutStudio";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -5144,6 +5145,58 @@ function RoomContent() {
     ],
   );
 
+  // ---- Director Track / User Cut glue (Phase 3A) -------------------------
+  // Reads current playback time using the same player-resolution as marks.
+  const getCutGameTime = useCallback(async () => {
+    const s = roomStateRef.current;
+    if (!s) return 0;
+    let player: YouTubePlayer | null | undefined;
+    if (isHostRef.current) {
+      player = getPlayer() ?? null;
+    } else if (isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 1) {
+      const top = resolveViewerStackTopAngleId(s);
+      player = syncPlayerRefs.current[top] ?? null;
+    } else {
+      player = playerRef.current?.getInternalPlayer() as
+        | YouTubePlayer
+        | null
+        | undefined;
+    }
+    const fallbackClock = Math.max(s.currentTime ?? 0, s.syncAnchorTime ?? 0);
+    const rawT = await readYoutubeCurrentTime(player ?? null, fallbackClock);
+    return s.sourceType === "live" ? rawT : Math.max(rawT, fallbackClock);
+  }, []);
+
+  // Snapshot of the current viewing state for the cut recorder.
+  const getCutSnapshot = useCallback(async () => {
+    const s = roomStateRef.current;
+    const t = await getCutGameTime();
+    return {
+      t,
+      layout: coachViewModeRef.current,
+      ...(s?.currentAngleId ? { activeSource: s.currentAngleId } : {}),
+      ...(s?.playerViewAngleId ? { playerView: s.playerViewAngleId } : {}),
+    };
+  }, [getCutGameTime]);
+
+  // Apply callbacks for cut playback. These reuse existing setters and
+  // self-guard (host-only angle writes are no-ops for viewers).
+  const cutApplyLayout = useCallback((layout: string) => {
+    setCoachViewMode(layout === "multi" ? "multi" : "single");
+  }, []);
+  const cutApplyActiveSource = useCallback(
+    (sourceId: string) => {
+      void handleSelectAngle(sourceId);
+    },
+    [handleSelectAngle],
+  );
+  const cutApplyPlayerView = useCallback(
+    (sourceId: string) => {
+      handleSetPlayerViewAngleId(sourceId);
+    },
+    [handleSetPlayerViewAngleId],
+  );
+
   const hostLoadVideoAndPlay = useCallback(
     (
       videoId: string,
@@ -8259,6 +8312,20 @@ function RoomContent() {
                 </ul>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {!cleanMode && user && roomState && roomState.angles.length > 1 ? (
+          <div className={`${frPanel} mb-3`}>
+            <CutStudio
+              gameId={gameIdFromUrl}
+              userId={user.uid}
+              getSnapshot={getCutSnapshot}
+              getTime={getCutGameTime}
+              applyLayout={cutApplyLayout}
+              applyActiveSource={cutApplyActiveSource}
+              applyPlayerView={cutApplyPlayerView}
+            />
           </div>
         ) : null}
 

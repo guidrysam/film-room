@@ -85,13 +85,26 @@ export type GameTimelineEvent = {
   createdAt?: Timestamp | null;
 };
 
+/** Discriminator for the kind of viewing instruction (optional / additive). */
+export type DirectorTrackEventType =
+  | "layout"
+  | "camera_switch"
+  | "player_view"
+  | "note";
+
 export type DirectorTrackEvent = {
   /** Canonical game time in seconds. */
   t: number;
-  /** Layout name, e.g. "single" | "quad" | "stacked". */
+  /** Optional discriminator. Older cuts omit this; readers infer from fields. */
+  type?: DirectorTrackEventType;
+  /** Layout name, e.g. "single" | "multi" | "quad" | "stacked". */
   layout?: string;
   /** Source id to make active/primary at this time. */
   activeSource?: string;
+  /** Source id to focus in the dedicated player view (multi-angle rooms). */
+  playerView?: string;
+  /** Free-form annotation attached to this point in time. */
+  note?: string;
 };
 
 export type DirectorTrack = {
@@ -455,6 +468,13 @@ export async function listGameEvents(
 
 // ---- Director tracks / cuts -------------------------------------------
 
+const DIRECTOR_EVENT_TYPES: DirectorTrackEventType[] = [
+  "layout",
+  "camera_switch",
+  "player_view",
+  "note",
+];
+
 export async function createDirectorTrack(
   gameId: string,
   data: DirectorTrackInput,
@@ -470,10 +490,17 @@ export async function createDirectorTrack(
         )
         .map((e) => ({
           t: Math.max(0, e.t),
+          ...(DIRECTOR_EVENT_TYPES.includes(e.type as DirectorTrackEventType)
+            ? { type: e.type }
+            : {}),
           ...(trimOrUndef(e.layout) ? { layout: e.layout!.trim() } : {}),
           ...(trimOrUndef(e.activeSource)
             ? { activeSource: e.activeSource!.trim() }
             : {}),
+          ...(trimOrUndef(e.playerView)
+            ? { playerView: e.playerView!.trim() }
+            : {}),
+          ...(trimOrUndef(e.note) ? { note: e.note!.trim() } : {}),
         }))
     : [];
   await setDoc(ref, {
@@ -502,10 +529,17 @@ function parseDirectorTrack(
     if (typeof o.t !== "number" || !Number.isFinite(o.t)) continue;
     track.push({
       t: o.t,
+      ...(DIRECTOR_EVENT_TYPES.includes(o.type as DirectorTrackEventType)
+        ? { type: o.type as DirectorTrackEventType }
+        : {}),
       ...(trimOrUndef(o.layout) ? { layout: (o.layout as string).trim() } : {}),
       ...(trimOrUndef(o.activeSource)
         ? { activeSource: (o.activeSource as string).trim() }
         : {}),
+      ...(trimOrUndef(o.playerView)
+        ? { playerView: (o.playerView as string).trim() }
+        : {}),
+      ...(trimOrUndef(o.note) ? { note: (o.note as string).trim() } : {}),
     });
   }
   track.sort((a, b) => a.t - b.t);
