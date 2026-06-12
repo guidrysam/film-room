@@ -62,36 +62,15 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="flex w-full flex-col items-center gap-3 rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-5 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-white/55">
-            Coaching tools
-          </p>
-          <Link
-            href="/coach-mark"
-            className="inline-flex w-full max-w-xs items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-950/40 px-5 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-400/55 hover:bg-emerald-950/60"
-          >
-            Coach Mark — mark a game live
-          </Link>
-          <Link
-            href="/timeline-sync"
-            className="inline-flex w-full max-w-xs items-center justify-center rounded-xl border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.10]"
-          >
-            Timeline Sync — attach a timeline to a video
-          </Link>
-        </div>
-
         <div className="flex flex-col items-center space-y-4">
           <Link href="/about" className={ghostLink}>
             What is Film Room?
-          </Link>
-          <Link href="/stream" className={ghostLink}>
-            Stream Room
           </Link>
           <Link
             href="/app"
             className={`${ghostLink} text-xs text-white hover:text-white/85`}
           >
-            Sign in
+            Sign in to Film Room Sports
           </Link>
         </div>
       </div>

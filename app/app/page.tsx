@@ -372,6 +372,32 @@ export default function DashboardPage() {
           </button>
         </div>
 
+        <div className={`${panelClass} mb-8`}>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+            Coaching tools
+          </p>
+          <div className="flex flex-col gap-2.5">
+            <Link
+              href="/coach-mark"
+              className="inline-flex items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:border-emerald-400/55 hover:bg-emerald-950/60"
+            >
+              Coach Mark — mark a game live
+            </Link>
+            <Link
+              href="/timeline-sync"
+              className="inline-flex items-center justify-center rounded-lg border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10]"
+            >
+              Timeline Sync — attach a timeline to a video
+            </Link>
+            <Link
+              href="/stream"
+              className="inline-flex items-center justify-center rounded-lg border border-white/12 bg-white/[0.05] px-4 py-2.5 text-sm font-semibold text-zinc-50 transition hover:border-white/20 hover:bg-white/[0.10]"
+            >
+              Stream Room
+            </Link>
+          </div>
+        </div>
+
         <div>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
