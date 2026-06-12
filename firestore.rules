@@ -9,18 +9,26 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ---- Per-user saved session templates -----------------------------
-    // Owner-only read/write. Shared templates are read via collection-group
-    // queries that match on `isShared == true`.
+    // Owner read/write requires auth + uid ownership. Shared templates are
+    // publicly readable (including signed-out) only when explicitly shared
+    // with a non-empty shareId — this powers the /shared/[shareId] links.
+    function isPublicSharedSession() {
+      return resource.data.isShared == true &&
+             resource.data.shareId is string &&
+             resource.data.shareId.size() > 0;
+    }
+
     match /users/{userId}/savedSessions/{sessionId} {
-      allow read: if request.auth != null &&
-                     (request.auth.uid == userId ||
-                      resource.data.isShared == true);
+      allow read: if (request.auth != null && request.auth.uid == userId) ||
+                     isPublicSharedSession();
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Collection-group reads for shared templates (link sharing).
+    // Collection-group reads for shared templates (link sharing). Signed-out
+    // viewers can open a valid share link; the client query is constrained to
+    // `shareId == <id>` and `isShared == true`, which satisfies this rule.
     match /{path=**}/savedSessions/{sessionId} {
-      allow read: if request.auth != null && resource.data.isShared == true;
+      allow read: if isPublicSharedSession();
     }
 
     // ---- Games --------------------------------------------------------
