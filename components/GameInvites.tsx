@@ -22,6 +22,13 @@ const ROLE_BADGE: Record<GameInviteRole, string> = {
   viewer: "border-zinc-600/50 bg-zinc-800/50 text-zinc-300",
 };
 
+const LABEL_SUGGESTIONS = [
+  "Parent camera",
+  "Assistant coach",
+  "Players",
+  "View only",
+] as const;
+
 /**
  * Owner-only invite-link manager. Generates editor/viewer join links, lists
  * existing invites, copies the join URL, and activates/deactivates (revokes)
@@ -35,6 +42,7 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
+  const [label, setLabel] = useState("");
 
   const isOwner = canManageGame(game, currentUid);
 
@@ -68,9 +76,12 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
       setCreating(role);
       setError(null);
       try {
+        const trimmed = label.trim();
         await createGameInvite(game, currentUid, role, {
-          label: role === "editor" ? "Editor link" : "Viewer link",
+          label:
+            trimmed || (role === "editor" ? "Editor link" : "Viewer link"),
         });
+        setLabel("");
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not create invite.");
@@ -78,7 +89,7 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
         setCreating(null);
       }
     },
-    [game, currentUid, refresh],
+    [game, currentUid, label, refresh],
   );
 
   const handleToggle = useCallback(
@@ -128,13 +139,43 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
         Invite links
       </p>
-      <p className="mb-2 text-[10px] leading-snug text-zinc-500">
-        Editor link = contributors can add sources, marks &amp; perspectives.
-        Viewer link = watch-only. Anyone with a link can join — deactivate to
-        revoke.
-      </p>
+      <div className="mb-3 space-y-1.5">
+        <p className="rounded-md border border-amber-500/30 bg-amber-950/25 px-2 py-1.5 text-[10px] leading-snug text-amber-200">
+          <span className="font-semibold">Editor links</span> let anyone with
+          the link add sources, marks, and perspectives. Share only with trusted
+          contributors.
+        </p>
+        <p className="text-[10px] leading-snug text-zinc-500">
+          <span className="font-semibold text-zinc-300">Viewer links</span> are
+          watch-only.
+        </p>
+      </div>
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <label className="mb-1 block text-[10px] font-medium text-zinc-400">
+        Label (optional)
+      </label>
+      <input
+        type="text"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="e.g. Parent camera"
+        maxLength={60}
+        className="mb-1.5 w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
+      />
+      <div className="mb-3 flex flex-wrap gap-1">
+        {LABEL_SUGGESTIONS.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setLabel(s)}
+            className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] text-zinc-300 transition hover:bg-white/[0.09]"
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-2 flex flex-wrap gap-1.5">
         <button
           type="button"
           onClick={() => void handleCreate("editor")}
@@ -152,6 +193,12 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
           {creating === "viewer" ? "Creating…" : "Generate viewer link"}
         </button>
       </div>
+
+      <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+        Anyone with an active link can join. Deactivating a link only prevents
+        future joins — anyone who already joined keeps their role (remove them
+        in Contributors below).
+      </p>
 
       {loading ? (
         <p className="text-[11px] text-zinc-500">Loading invites…</p>
