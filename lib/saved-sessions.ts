@@ -15,7 +15,18 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
-import { parseVideoAngles, type VideoAngle } from "@/lib/video-angle";
+import {
+  parseVideoAngles,
+  videoAngleToGameSource,
+  type VideoAngle,
+} from "@/lib/video-angle";
+import {
+  addGameEvent,
+  addGameSource,
+  createGame,
+  type GameVideoSourceInput,
+} from "@/lib/games";
+import { chapterToTimelineEvent } from "@/lib/game-events";
 
 export type SavedClip = { videoId: string; label?: string };
 
@@ -60,6 +71,8 @@ export type SavedSessionDoc = {
   /** Present when `isShared` is true — link-based template sharing. */
   shareId?: string;
   isShared?: boolean;
+  /** Phase 0 bridge: durable Game created from this session (if any). */
+  gameId?: string;
 };
 
 function sessionsCol(ownerUserId: string) {
@@ -239,6 +252,10 @@ function parseSavedSessionFields(
   const playerViewValid =
     !playerViewAngleId ||
     (angles.length > 0 && angles.some((a) => a.id === playerViewAngleId));
+  const gameId =
+    typeof v.gameId === "string" && v.gameId.trim() !== ""
+      ? v.gameId.trim()
+      : undefined;
   return {
     name: typeof v.name === "string" ? v.name : "Session",
     ...(folder ? { folder } : {}),
@@ -262,6 +279,7 @@ function parseSavedSessionFields(
     createdAt: v.createdAt instanceof Timestamp ? v.createdAt : undefined,
     updatedAt: v.updatedAt instanceof Timestamp ? v.updatedAt : undefined,
     ...(shareId ? { shareId, isShared: true as const } : {}),
+    ...(gameId ? { gameId } : {}),
   };
 }
 
@@ -421,6 +439,7 @@ export async function listSavedSessions(
         createdAt: v.createdAt ?? null,
         updatedAt: v.updatedAt ?? null,
         ...(v.shareId && v.isShared ? { shareId: v.shareId, isShared: true } : {}),
+        ...(v.gameId ? { gameId: v.gameId } : {}),
       },
     });
   });
@@ -465,6 +484,7 @@ export async function getSavedSession(
     createdAt: v.createdAt ?? null,
     updatedAt: v.updatedAt ?? null,
     ...(v.shareId && v.isShared ? { shareId: v.shareId, isShared: true } : {}),
+    ...(v.gameId ? { gameId: v.gameId } : {}),
   };
 }
 
@@ -699,4 +719,77 @@ export async function duplicateSessionToMyLibrary(
       : {}),
     ...(source.folderId !== undefined ? { folderId: source.folderId } : {}),
   });
+}
+
+/**
+ * Phase 0 bridge: create a durable Game from an existing saved session, migrating
+ * its angles → Game video sources and chapters → timeline events. The saved
+ * session is NOT deleted or restructured; we only set a `gameId` back-link on it.
+ *
+ * Returns the new gameId. Only YouTube-backed sources are migrated (current
+ * player is YouTube-only); chapters are linked to a source by matching videoId.
+ */
+export async function createGameFromSavedSession(
+  sessionId: string,
+  uid: string,
+): Promise<string> {
+  const session = await getSavedSession(uid, sessionId);
+  if (!session) throw new Error("Saved session not found.");
+
+  const gameId = await createGame(uid, {
+    title: session.name || "Game",
+    sourceSavedSessionId: sessionId,
+  });
+
+  // Build sources from angles, or a single source from the active clip.
+  const sourceInputs: GameVideoSourceInput[] = [];
+  if (Array.isArray(session.angles) && session.angles.length > 0) {
+    for (const angle of session.angles) {
+      sourceInputs.push({ ...videoAngleToGameSource(angle), createdBy: uid });
+    }
+  } else {
+    const idx = Math.min(
+      Math.max(0, session.currentClipIndex),
+      Math.max(0, session.clips.length - 1),
+    );
+    const videoId = session.clips[idx]?.videoId ?? session.clips[0]?.videoId;
+    if (videoId) {
+      sourceInputs.push({
+        id: "a0",
+        kind: "youtube",
+        label: session.clips[idx]?.label?.trim() || "Main",
+        videoId,
+        offsetFromGameTime: 0,
+        createdBy: uid,
+      });
+    }
+  }
+
+  // videoId -> sourceId, so chapters can be linked to the right source.
+  const sourceIdByVideoId = new Map<string, string>();
+  for (const input of sourceInputs) {
+    const sourceId = await addGameSource(gameId, input);
+    if (input.videoId) sourceIdByVideoId.set(input.videoId, sourceId);
+  }
+
+  // Migrate chapters -> coach_mark timeline events.
+  for (const chapter of session.chapters ?? []) {
+    const sourceId = sourceIdByVideoId.get(chapter.videoId);
+    await addGameEvent(
+      gameId,
+      chapterToTimelineEvent(chapter, sourceId ? { sourceId } : undefined),
+    );
+  }
+
+  // Non-destructive back-link on the saved session.
+  try {
+    await updateDoc(doc(sessionsCol(uid), sessionId), {
+      gameId,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn("[saved-sessions] could not set gameId back-link:", err);
+  }
+
+  return gameId;
 }

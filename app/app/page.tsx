@@ -7,6 +7,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import {
+  createGameFromSavedSession,
   deleteSavedSession,
   ensureSessionSharing,
   inferSavedSessionKind,
@@ -17,6 +18,7 @@ import {
   type SavedSessionFilterTab,
   type SavedSessionKind,
 } from "@/lib/saved-sessions";
+import { listMyGames, type Game } from "@/lib/games";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const inputClass =
@@ -121,6 +123,9 @@ export default function DashboardPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [sessionFilter, setSessionFilter] =
     useState<SavedSessionFilterTab>("all");
+  const [games, setGames] = useState<Game[]>([]);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [creatingGameId, setCreatingGameId] = useState<string | null>(null);
 
   const filteredSessions = useMemo(
     () =>
@@ -149,6 +154,39 @@ export default function DashboardPage() {
   useEffect(() => {
     void refreshList();
   }, [refreshList]);
+
+  const refreshGames = useCallback(async () => {
+    if (!user) return;
+    setGamesLoading(true);
+    try {
+      setGames(await listMyGames(user.uid));
+    } finally {
+      setGamesLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void refreshGames();
+  }, [refreshGames]);
+
+  const handleCreateGameFromSession = useCallback(
+    async (sessionId: string) => {
+      if (!user) return;
+      setCreatingGameId(sessionId);
+      try {
+        await createGameFromSavedSession(sessionId, user.uid);
+        await Promise.all([refreshGames(), refreshList()]);
+        alert("Game created from this session.");
+      } catch (err) {
+        alert(
+          `Could not create game: ${errorMessage(err, "Unknown error while creating game.")}`,
+        );
+      } finally {
+        setCreatingGameId(null);
+      }
+    },
+    [user, refreshGames, refreshList],
+  );
 
   const startNewSession = () => {
     const videoId = extractYouTubeVideoId(url);
@@ -398,6 +436,51 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        <div className={`${panelClass} mb-8`}>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Games
+            </p>
+            <button
+              type="button"
+              onClick={() => void refreshGames()}
+              className="text-xs font-medium text-zinc-400 transition hover:text-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm"
+            >
+              Refresh
+            </button>
+          </div>
+          {gamesLoading ? (
+            <p className="text-sm text-zinc-400">Loading games…</p>
+          ) : games.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center text-sm text-zinc-400">
+              No games yet. Use “Create Game” on a saved session below to start a
+              durable Game (sources + timeline).
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {games.map((g) => (
+                <li
+                  key={g.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-white">
+                      {g.title}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {[g.sport, g.date].filter(Boolean).join(" · ") ||
+                        "Game container"}
+                    </p>
+                  </div>
+                  <span className="font-mono text-[10px] text-zinc-500">
+                    {g.id}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <div>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -547,6 +630,27 @@ export default function DashboardPage() {
                                 className="rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-100 transition hover:border-rose-400/50 hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
                               >
                                 Delete
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleCreateGameFromSession(id)
+                                }
+                                disabled={
+                                  creatingGameId === id || Boolean(data.gameId)
+                                }
+                                className={ghostBtn}
+                                title={
+                                  data.gameId
+                                    ? "A Game already exists for this session."
+                                    : "Create a durable Game from this session."
+                                }
+                              >
+                                {data.gameId
+                                  ? "Game ✓"
+                                  : creatingGameId === id
+                                    ? "Creating…"
+                                    : "Create Game"}
                               </button>
                               <button
                                 type="button"

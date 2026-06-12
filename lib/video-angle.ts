@@ -1,3 +1,5 @@
+import type { GameVideoSource } from "@/lib/games";
+
 /** One camera / feed; offsets are playback-time deltas vs the session active angle (archive model). */
 export type VideoAngle = {
   id: string;
@@ -131,4 +133,36 @@ export function parseVideoAngles(
 export function pickAngle(angles: VideoAngle[], currentAngleId: string): VideoAngle {
   const hit = angles.find((a) => a.id === currentAngleId);
   return hit ?? angles[0]!;
+}
+
+// ---- Game source bridge (Phase 0) -------------------------------------
+// Conversion is YouTube-only for now (uploads / external URLs come later).
+
+/** A YouTube angle → a durable Game video source (preserves id + sync offset). */
+export function videoAngleToGameSource(angle: VideoAngle): GameVideoSource {
+  return {
+    id: angle.id,
+    kind: "youtube",
+    label: angle.name,
+    videoId: angle.videoId,
+    offsetFromGameTime: angle.offsetFromGameTime ?? 0,
+  };
+}
+
+/**
+ * A Game video source → a VideoAngle, or null when the source is not a
+ * YouTube-backed, valid 11-char id (uploads / external URLs are unsupported
+ * by the current YouTube-only player and must be handled in a later phase).
+ */
+export function gameSourceToVideoAngle(source: GameVideoSource): VideoAngle | null {
+  const isYouTube = source.kind === "youtube" || source.kind === "youtube_live";
+  if (!isYouTube) return null;
+  const videoId = typeof source.videoId === "string" ? source.videoId.trim() : "";
+  if (!YT_ID.test(videoId)) return null;
+  return {
+    id: source.id,
+    name: source.label.trim() || "Angle",
+    videoId,
+    offsetFromGameTime: source.offsetFromGameTime ?? 0,
+  };
 }

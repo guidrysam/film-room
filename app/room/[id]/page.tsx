@@ -54,6 +54,7 @@ import {
   parseCoachAlertLatest,
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
+import { addGameEvent } from "@/lib/games";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -1692,6 +1693,8 @@ function RoomContent() {
   const searchParams = useSearchParams();
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
+  /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
+  const gameIdFromUrl = searchParams.get("gameId");
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
   const videoIdFromUrl = useMemo(() => {
     const raw = videoFromUrl?.trim();
@@ -3100,6 +3103,26 @@ function RoomContent() {
           angleId: angleId ?? null,
           createdByRole,
         });
+
+        // Phase 0 bridge (best-effort, isolated): if this room is tied to a
+        // durable Game, mirror the mark as a `coach_mark` timeline event.
+        // Never blocks or fails mark creation.
+        if (gameIdFromUrl && user?.uid) {
+          try {
+            await addGameEvent(gameIdFromUrl, {
+              type: "coach_mark",
+              t: timestamp,
+              label: trimmed,
+              createdBy: user.uid,
+              createdByRole,
+              ...(angleId ? { sourceId: angleId } : {}),
+              ...(createdByName ? { createdByName } : {}),
+              ...(angleId ? { payload: { angleId } } : {}),
+            });
+          } catch (gameErr) {
+            console.warn("[room] game coach_mark write-through failed:", gameErr);
+          }
+        }
       } catch (e) {
         window.alert(
           e instanceof Error ? e.message : "Could not save mark. Try again.",
@@ -3108,7 +3131,7 @@ function RoomContent() {
         setGameMarksBusy(false);
       }
     },
-    [roomId, user?.displayName],
+    [roomId, user?.displayName, user?.uid, gameIdFromUrl],
   );
 
   const handleGameMarkCustomPrompt = useCallback(() => {

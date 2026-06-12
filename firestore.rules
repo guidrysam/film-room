@@ -1,0 +1,82 @@
+rules_version = '2';
+
+// Film Room Firestore security rules.
+//
+// Conservative owner/editor/viewer model for Games (Phase 0) plus the existing
+// per-user savedSessions. Realtime Database rooms are NOT covered here (they use
+// RTDB rules separately).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Per-user saved session templates -----------------------------
+    // Owner-only read/write. Shared templates are read via collection-group
+    // queries that match on `isShared == true`.
+    match /users/{userId}/savedSessions/{sessionId} {
+      allow read: if request.auth != null &&
+                     (request.auth.uid == userId ||
+                      resource.data.isShared == true);
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Collection-group reads for shared templates (link sharing).
+    match /{path=**}/savedSessions/{sessionId} {
+      allow read: if request.auth != null && resource.data.isShared == true;
+    }
+
+    // ---- Games --------------------------------------------------------
+    function gameData() {
+      return get(/databases/$(database)/documents/games/$(gameId)).data;
+    }
+    function roleOf(uid) {
+      return gameData().contributors[uid];
+    }
+    function isOwner(uid) {
+      return gameData().ownerId == uid || roleOf(uid) == 'owner';
+    }
+    function isEditor(uid) {
+      return roleOf(uid) == 'editor' || isOwner(uid);
+    }
+    function isMember(uid) {
+      return roleOf(uid) != null || isOwner(uid);
+    }
+    function canReadGame(uid) {
+      return isMember(uid) ||
+             gameData().visibility == 'public' ||
+             gameData().visibility == 'link';
+    }
+
+    match /games/{gameId} {
+      // Read: members always; non-members only if link/public.
+      allow read: if request.auth != null && canReadGame(request.auth.uid);
+
+      // Create: the creator must make themselves the owner.
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerId == request.auth.uid &&
+                       request.resource.data.contributors[request.auth.uid] == 'owner';
+
+      // Update/delete: owners only (role/membership changes are owner-gated).
+      allow update, delete: if request.auth != null && isOwner(request.auth.uid);
+
+      // Sub-collections: sources, events, cuts.
+      match /sources/{sourceId} {
+        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        allow create, update, delete: if request.auth != null && isEditor(request.auth.uid);
+      }
+      match /events/{eventId} {
+        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        allow create, update, delete: if request.auth != null && isEditor(request.auth.uid);
+      }
+      match /cuts/{cutId} {
+        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        // Editors can create cuts; only the cut's author or an owner can change it.
+        allow create: if request.auth != null && isEditor(request.auth.uid) &&
+                         request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if request.auth != null &&
+                                 (isOwner(request.auth.uid) ||
+                                  resource.data.createdBy == request.auth.uid);
+      }
+    }
+
+    // Default deny: no public writes, nothing else readable.
+  }
+}
