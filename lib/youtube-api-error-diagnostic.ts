@@ -125,6 +125,14 @@ export function logYoutubeApiErrorDiagnostic(
 }
 
 /**
+ * Extract the Google API `errors[].reason` from a raw error body (e.g.
+ * "invalidEmbedSetting", "quotaExceeded"). Returns null when absent.
+ */
+export function youtubeErrorReason(rawBody: unknown): string | null {
+  return parseGoogleYoutubeErrorBody(rawBody).reason;
+}
+
+/**
  * Parse Google JSON error body, log a single diagnostic line, return a NextResponse.
  */
 export function youtubeApiErrorNextResponse(args: {

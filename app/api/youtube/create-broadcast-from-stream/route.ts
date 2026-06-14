@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
+import {
+  youtubeApiErrorNextResponse,
+  youtubeErrorReason,
+} from "@/lib/youtube-api-error-diagnostic";
 
 const ROUTE = "/api/youtube/create-broadcast-from-stream";
 
@@ -118,6 +121,15 @@ export async function POST(request: Request) {
   const broadcastUrl =
     "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
     "?part=snippet,status,contentDetails";
+  // Make Film Room-created broadcasts embeddable + archived from the start.
+  // `recordFromStart` + `enableDvr` give immediate post-broadcast playback.
+  // (There is no `enableArchive` field in the Data API v3 insert; archiving is
+  // controlled by `recordFromStart` + `enableDvr`.)
+  const baseContentDetails = {
+    enableDvr: true,
+    recordFromStart: true,
+    latencyPreference: "low",
+  };
   const broadcastBody = {
     snippet: {
       title,
@@ -129,23 +141,44 @@ export async function POST(request: Request) {
       selfDeclaredMadeForKids: false,
     },
     contentDetails: {
-      enableDvr: true,
-      latencyPreference: "low",
+      ...baseContentDetails,
+      enableEmbed: true,
     },
   };
 
+  type LiveBroadcastContentDetails = {
+    enableEmbed?: boolean;
+    enableDvr?: boolean;
+    recordFromStart?: boolean;
+  };
   type LiveBroadcastInsertResponse = {
     id?: string;
     snippet?: { channelId?: string };
+    contentDetails?: LiveBroadcastContentDetails;
   };
   let broadcastId: string;
   let insertSnippetChannelId: string | undefined;
+  let insertContentDetails: LiveBroadcastContentDetails | undefined;
+  let embedRequested = true;
+  let embedRejected = false;
   try {
-    const b = await ytPostJson<LiveBroadcastInsertResponse>({
+    let b = await ytPostJson<LiveBroadcastInsertResponse>({
       url: broadcastUrl,
       token,
       body: broadcastBody,
     });
+    // If YouTube refuses embedding for this channel/broadcast, retry once
+    // WITHOUT enableEmbed so the broadcast is still created (non-embeddable
+    // fallback). enableEmbed is only set at insert — never updated later.
+    if (!b.ok && youtubeErrorReason(b.error) === "invalidEmbedSetting") {
+      embedRejected = true;
+      embedRequested = false;
+      b = await ytPostJson<LiveBroadcastInsertResponse>({
+        url: broadcastUrl,
+        token,
+        body: { ...broadcastBody, contentDetails: baseContentDetails },
+      });
+    }
     if (!b.ok) {
       return youtubeApiErrorNextResponse({
         route: ROUTE,
@@ -163,6 +196,7 @@ export async function POST(request: Request) {
       );
     }
     broadcastId = id.trim();
+    insertContentDetails = b.data?.contentDetails;
     const chRaw = b.data?.snippet?.channelId;
     if (typeof chRaw === "string" && CHANNEL_ID_RE.test(chRaw.trim())) {
       insertSnippetChannelId = chRaw.trim();
@@ -212,7 +246,12 @@ export async function POST(request: Request) {
 
   type BroadcastGetResponse = {
     items?: Array<{
-      contentDetails?: { boundStreamId?: string };
+      contentDetails?: {
+        boundStreamId?: string;
+        enableEmbed?: boolean;
+        enableDvr?: boolean;
+        recordFromStart?: boolean;
+      };
       status?: { privacyStatus?: string };
       snippet?: { channelId?: string };
     }>;
@@ -385,6 +424,22 @@ export async function POST(request: Request) {
     persistentLiveUrl = `https://www.youtube.com/@${channelHandle}/live`;
   }
 
+  // Verification: prefer the authoritative post-bind GET, fall back to the
+  // insert echo. undefined → reported as "Unknown" by the client.
+  const verifyCd =
+    broadcastGet.data?.items?.[0]?.contentDetails ?? insertContentDetails;
+  const embeddable = embedRejected
+    ? false
+    : typeof verifyCd?.enableEmbed === "boolean"
+      ? verifyCd.enableEmbed
+      : undefined;
+  const dvr =
+    typeof verifyCd?.enableDvr === "boolean" ? verifyCd.enableDvr : undefined;
+  const archive =
+    typeof verifyCd?.recordFromStart === "boolean"
+      ? verifyCd.recordFromStart
+      : undefined;
+
   return NextResponse.json({
     ok: true,
     broadcastId,
@@ -392,6 +447,11 @@ export async function POST(request: Request) {
     watchUrl,
     standardWatchUrl,
     embedUrl,
+    embeddable,
+    dvr,
+    archive,
+    embedRequested,
+    embedRejected,
     streamId,
     boundStreamId,
     boundMatchesRequested,

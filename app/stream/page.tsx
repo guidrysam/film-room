@@ -18,6 +18,23 @@ import {
   parsePersistentLiveUrlTarget,
 } from "@/lib/youtube-id";
 
+const EMBED_NOT_ALLOWED_MESSAGE =
+  "YouTube did not allow this channel/broadcast to be embedded. Open YouTube Studio and enable embedding for the live broadcast/channel, or use fallback sideline link.";
+
+/** Verification flags echoed back from a created broadcast (undefined = Unknown). */
+type BroadcastVerification = {
+  embeddable?: boolean;
+  dvr?: boolean;
+  archive?: boolean;
+  embedRejected?: boolean;
+};
+
+function triState(v: boolean | undefined): "Yes" | "No" | "Unknown" {
+  if (v === true) return "Yes";
+  if (v === false) return "No";
+  return "Unknown";
+}
+
 type AngleStatus =
   | "idle"
   | "ready"
@@ -365,6 +382,8 @@ export default function StreamRoomPage() {
     lastWatchUrl?: string;
   } | null>(null);
   const [ytCreateError, setYtCreateError] = useState<string | null>(null);
+  const [broadcastVerification, setBroadcastVerification] =
+    useState<BroadcastVerification | null>(null);
   const [cameraPresetName, setCameraPresetName] = useState("Practice Cam");
   const [savedCameras, setSavedCameras] = useState<YouTubeCameraPreset[]>([]);
   const [apiCallCounts, setApiCallCounts] = useState<{
@@ -1295,14 +1314,26 @@ export default function StreamRoomPage() {
           boundMatchesRequested?: boolean;
           boundStreamId?: string;
           streamId?: string;
+          embeddable?: boolean;
+          dvr?: boolean;
+          archive?: boolean;
+          embedRejected?: boolean;
           error?: string;
+          reason?: string;
+          message?: string;
         };
         if (!createRes.ok || createdJson.ok !== true) {
-          window.alert(
-            typeof createdJson.error === "string" && createdJson.error.trim() !== ""
-              ? createdJson.error.trim()
-              : `create-broadcast-from-stream failed (HTTP ${createRes.status}).`,
-          );
+          const alertMsg =
+            createdJson.reason === "invalidEmbedSetting"
+              ? EMBED_NOT_ALLOWED_MESSAGE
+              : typeof createdJson.error === "string" &&
+                  createdJson.error.trim() !== ""
+                ? createdJson.error.trim()
+                : typeof createdJson.message === "string" &&
+                    createdJson.message.trim() !== ""
+                  ? createdJson.message.trim()
+                  : `create-broadcast-from-stream failed (HTTP ${createRes.status}).`;
+          window.alert(alertMsg);
           setCameraActiveLinkStatus(null);
           return;
         }
@@ -1318,11 +1349,31 @@ export default function StreamRoomPage() {
           setCameraActiveLinkStatus(null);
           return;
         }
-        const finalUrl = `https://youtube.com/live/${vid}`;
-        setCameraActiveLinkStatus({
-          kind: "success",
-          message: "Created today’s broadcast.",
+        setBroadcastVerification({
+          embeddable:
+            typeof createdJson.embeddable === "boolean"
+              ? createdJson.embeddable
+              : undefined,
+          dvr: typeof createdJson.dvr === "boolean" ? createdJson.dvr : undefined,
+          archive:
+            typeof createdJson.archive === "boolean"
+              ? createdJson.archive
+              : undefined,
+          embedRejected: createdJson.embedRejected === true,
         });
+        const finalUrl = `https://youtube.com/live/${vid}`;
+        if (createdJson.embedRejected === true) {
+          window.alert(EMBED_NOT_ALLOWED_MESSAGE);
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message: EMBED_NOT_ALLOWED_MESSAGE,
+          });
+        } else {
+          setCameraActiveLinkStatus({
+            kind: "success",
+            message: "Created today’s broadcast.",
+          });
+        }
         setAngles((prev) => {
           if (prev.length === 0) return prev;
           const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
@@ -1415,6 +1466,7 @@ export default function StreamRoomPage() {
     setCreatingYt(true);
     setYtCreateResult(null);
     setYtCreateError(null);
+    setBroadcastVerification(null);
     try {
       const { accessToken } = await getYouTubeOAuthAccessToken();
       const res = await fetch("/api/youtube/create-live-stream", {
@@ -1437,6 +1489,9 @@ export default function StreamRoomPage() {
       }
       if (!res.ok) {
         const e = data as { error?: unknown; reason?: unknown; status?: unknown };
+        if (e?.reason === "invalidEmbedSetting") {
+          throw new Error(EMBED_NOT_ALLOWED_MESSAGE);
+        }
         const msg =
           typeof e?.error === "string" && e.error.trim() !== ""
             ? e.error.trim()
@@ -1460,10 +1515,20 @@ export default function StreamRoomPage() {
         channelHandle?: string;
         persistentLiveUrl?: string;
         lastWatchUrl?: string;
+        embeddable?: boolean;
+        dvr?: boolean;
+        archive?: boolean;
+        embedRejected?: boolean;
       };
       if (ok.ok !== true) {
         throw new Error("YouTube create-live-stream returned ok=false.");
       }
+      setBroadcastVerification({
+        embeddable: typeof ok.embeddable === "boolean" ? ok.embeddable : undefined,
+        dvr: typeof ok.dvr === "boolean" ? ok.dvr : undefined,
+        archive: typeof ok.archive === "boolean" ? ok.archive : undefined,
+        embedRejected: ok.embedRejected === true,
+      });
       if (
         typeof ok.watchUrl !== "string" ||
         typeof ok.embedUrl !== "string" ||
@@ -1615,6 +1680,47 @@ export default function StreamRoomPage() {
           {ytCreateError ? (
             <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {ytCreateError}
+            </div>
+          ) : null}
+
+          {broadcastVerification ? (
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-sm">
+              <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
+                Broadcast settings
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-zinc-200">
+                <span>
+                  Embeddable:{" "}
+                  <span
+                    className={
+                      broadcastVerification.embeddable === true
+                        ? "text-emerald-300"
+                        : broadcastVerification.embeddable === false
+                          ? "text-rose-300"
+                          : "text-zinc-400"
+                    }
+                  >
+                    {triState(broadcastVerification.embeddable)}
+                  </span>
+                </span>
+                <span>
+                  DVR:{" "}
+                  <span className="text-zinc-300">
+                    {triState(broadcastVerification.dvr)}
+                  </span>
+                </span>
+                <span>
+                  Archive:{" "}
+                  <span className="text-zinc-300">
+                    {triState(broadcastVerification.archive)}
+                  </span>
+                </span>
+              </div>
+              {broadcastVerification.embedRejected ? (
+                <p className="mt-2 text-xs text-amber-200">
+                  {EMBED_NOT_ALLOWED_MESSAGE}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

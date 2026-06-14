@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
+import {
+  youtubeApiErrorNextResponse,
+  youtubeErrorReason,
+} from "@/lib/youtube-api-error-diagnostic";
 
 function bearerTokenFromRequest(req: Request): string | null {
   const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -147,6 +150,17 @@ export async function POST(request: Request) {
   const broadcastUrl =
     "https://www.googleapis.com/youtube/v3/liveBroadcasts" +
     "?part=snippet,status,contentDetails";
+  // Make Film Room-created broadcasts embeddable + archived from the start.
+  // `recordFromStart` + `enableDvr` give immediate post-broadcast playback.
+  // (There is no `enableArchive` field on Data API v3 insert.)
+  const baseContentDetails = {
+    enableDvr: true,
+    recordFromStart: true,
+    // These flags are supported for many channels; if unsupported YouTube may ignore them.
+    enableAutoStart: true,
+    enableAutoStop: true,
+    latencyPreference: "low",
+  };
   const broadcastBody = {
     snippet: {
       title,
@@ -158,24 +172,42 @@ export async function POST(request: Request) {
       selfDeclaredMadeForKids: false,
     },
     contentDetails: {
-      enableDvr: true,
-      // These flags are supported for many channels; if unsupported YouTube may ignore them.
-      enableAutoStart: true,
-      enableAutoStop: true,
-      latencyPreference: "low",
+      ...baseContentDetails,
+      enableEmbed: true,
     },
   };
 
+  type LiveBroadcastContentDetails = {
+    enableEmbed?: boolean;
+    enableDvr?: boolean;
+    recordFromStart?: boolean;
+  };
   type LiveBroadcastInsertResponse = {
     id?: string;
+    contentDetails?: LiveBroadcastContentDetails;
   };
   let broadcastId: string;
+  let insertContentDetails: LiveBroadcastContentDetails | undefined;
+  let embedRequested = true;
+  let embedRejected = false;
   try {
-    const b = await ytPostJson<LiveBroadcastInsertResponse>({
+    let b = await ytPostJson<LiveBroadcastInsertResponse>({
       url: broadcastUrl,
       token,
       body: broadcastBody,
     });
+    // If YouTube refuses embedding for this channel/broadcast, retry once
+    // WITHOUT enableEmbed so the broadcast is still created (non-embeddable
+    // fallback). enableEmbed is only set at insert — never updated later.
+    if (!b.ok && youtubeErrorReason(b.error) === "invalidEmbedSetting") {
+      embedRejected = true;
+      embedRequested = false;
+      b = await ytPostJson<LiveBroadcastInsertResponse>({
+        url: broadcastUrl,
+        token,
+        body: { ...broadcastBody, contentDetails: baseContentDetails },
+      });
+    }
     if (!b.ok) {
       return youtubeApiErrorNextResponse({
         route: ROUTE,
@@ -193,6 +225,7 @@ export async function POST(request: Request) {
       );
     }
     broadcastId = id.trim();
+    insertContentDetails = b.data?.contentDetails;
   } catch (err) {
     return NextResponse.json(
       {
@@ -310,6 +343,20 @@ export async function POST(request: Request) {
   const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
 
+  const embeddable = embedRejected
+    ? false
+    : typeof insertContentDetails?.enableEmbed === "boolean"
+      ? insertContentDetails.enableEmbed
+      : undefined;
+  const dvr =
+    typeof insertContentDetails?.enableDvr === "boolean"
+      ? insertContentDetails.enableDvr
+      : undefined;
+  const archive =
+    typeof insertContentDetails?.recordFromStart === "boolean"
+      ? insertContentDetails.recordFromStart
+      : undefined;
+
   return NextResponse.json({
     ok: true,
     broadcastId,
@@ -317,6 +364,11 @@ export async function POST(request: Request) {
     videoId: broadcastId,
     watchUrl,
     embedUrl,
+    embeddable,
+    dvr,
+    archive,
+    embedRequested,
+    embedRejected,
     ingestionAddress,
     streamName,
     ...(channelId ? { channelId } : {}),
