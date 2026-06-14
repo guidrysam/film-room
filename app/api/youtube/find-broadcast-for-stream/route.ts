@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { youtubeApiErrorNextResponse } from "@/lib/youtube-api-error-diagnostic";
+import { ensureBroadcastEmbeddable } from "@/lib/youtube-ensure-embeddable";
 
 const ROUTE = "/api/youtube/find-broadcast-for-stream";
 
@@ -338,6 +339,10 @@ export async function POST(request: Request) {
   const isLiveOrStarting = n === "live" || n === "livestarting";
 
   const { broadcastId, boundStreamId, lifeCycleStatus } = preferred;
+
+  // Repair embedding on the reused broadcast while it is still pre-live.
+  const embedResult = await ensureBroadcastEmbeddable(authToken, broadcastId);
+
   return NextResponse.json({
     ok: true,
     found: true,
@@ -358,6 +363,10 @@ export async function POST(request: Request) {
     selectedActualStartTime: preferred.actualStartTime,
     lifeCycleStatus,
     boundStreamId,
+    embeddable: embedResult.embeddable ?? undefined,
+    embedRejected: embedResult.embedRejected,
+    embedRepairReason: embedResult.reason,
+    embedRepairLifeCycleStatus: embedResult.lifeCycleStatus,
     boundCandidates,
     currentCandidates: currentCandidatesOut,
     staleCandidates: staleCandidatesOut,

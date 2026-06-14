@@ -27,6 +27,8 @@ type BroadcastVerification = {
   dvr?: boolean;
   archive?: boolean;
   embedRejected?: boolean;
+  /** Watch URL for the "Open on YouTube" fallback when not embeddable. */
+  watchUrl?: string;
 };
 
 function triState(v: boolean | undefined): "Yes" | "No" | "Unknown" {
@@ -1004,6 +1006,9 @@ export default function StreamRoomPage() {
           selectedBroadcastId?: string | null;
           selectedVideoId?: string | null;
           boundStreamId?: string;
+          embeddable?: boolean;
+          embedRejected?: boolean;
+          embedRepairReason?: string;
           staleCandidates?: Array<{
             id: string;
             lifeCycleStatus: string;
@@ -1081,6 +1086,9 @@ export default function StreamRoomPage() {
               ok?: boolean;
               reason?: string;
               message?: string;
+              embeddable?: boolean;
+              embedRejected?: boolean;
+              embedRepairReason?: string;
               streamStatus?: string | null;
               healthStatus?: string | null;
               streamReceiving?: boolean;
@@ -1098,6 +1106,13 @@ export default function StreamRoomPage() {
               reachedLive?: boolean;
               pollAttempts?: number;
             };
+            if (r.ok && j && typeof j.embeddable === "boolean") {
+              setBroadcastVerification((prev) => ({
+                ...prev,
+                embeddable: j.embeddable,
+                embedRejected: j.embedRejected === true,
+              }));
+            }
             if (r.ok && j) {
               setCameraTransitionDebug({
                 transitionAttempted: true,
@@ -1235,6 +1250,15 @@ export default function StreamRoomPage() {
             message: "Using today’s existing broadcast.",
           });
 
+          setBroadcastVerification({
+            embeddable:
+              typeof existingJson.embeddable === "boolean"
+                ? existingJson.embeddable
+                : undefined,
+            embedRejected: existingJson.embedRejected === true,
+            watchUrl: finalUrl,
+          });
+
           setAngles((prev) => {
             if (prev.length === 0) return prev;
             const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
@@ -1349,6 +1373,7 @@ export default function StreamRoomPage() {
           setCameraActiveLinkStatus(null);
           return;
         }
+        const finalUrl = `https://youtube.com/live/${vid}`;
         setBroadcastVerification({
           embeddable:
             typeof createdJson.embeddable === "boolean"
@@ -1360,8 +1385,8 @@ export default function StreamRoomPage() {
               ? createdJson.archive
               : undefined,
           embedRejected: createdJson.embedRejected === true,
+          watchUrl: finalUrl,
         });
-        const finalUrl = `https://youtube.com/live/${vid}`;
         if (createdJson.embedRejected === true) {
           window.alert(EMBED_NOT_ALLOWED_MESSAGE);
           setCameraActiveLinkStatus({
@@ -1528,6 +1553,10 @@ export default function StreamRoomPage() {
         dvr: typeof ok.dvr === "boolean" ? ok.dvr : undefined,
         archive: typeof ok.archive === "boolean" ? ok.archive : undefined,
         embedRejected: ok.embedRejected === true,
+        watchUrl:
+          typeof ok.watchUrl === "string" && ok.watchUrl.trim() !== ""
+            ? ok.watchUrl.trim()
+            : undefined,
       });
       if (
         typeof ok.watchUrl !== "string" ||
@@ -1716,10 +1745,23 @@ export default function StreamRoomPage() {
                   </span>
                 </span>
               </div>
-              {broadcastVerification.embedRejected ? (
-                <p className="mt-2 text-xs text-amber-200">
-                  {EMBED_NOT_ALLOWED_MESSAGE}
-                </p>
+              {broadcastVerification.embeddable === false ? (
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-amber-200">
+                    This stream can still be archived on YouTube, but cannot be
+                    embedded in Stream Room until YouTube allows embedding.
+                  </p>
+                  {broadcastVerification.watchUrl ? (
+                    <a
+                      href={broadcastVerification.watchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={`${ghostBtn} inline-flex`}
+                    >
+                      Open on YouTube
+                    </a>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           ) : null}

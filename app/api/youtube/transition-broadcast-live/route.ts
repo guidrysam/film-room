@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { youtubeApiErrorNextResponseFromFetch } from "@/lib/youtube-api-error-diagnostic";
+import { ensureBroadcastEmbeddable } from "@/lib/youtube-ensure-embeddable";
 
 const ROUTE = "/api/youtube/transition-broadcast-live";
 
@@ -237,6 +238,11 @@ export async function POST(request: Request) {
     };
   };
 
+  // 1b) Repair embedding while the broadcast is still pre-live. Once it is in
+  // testing/live the API can no longer change enableEmbed, so this must run
+  // before the transitions below.
+  const embedResult = await ensureBroadcastEmbeddable(token, broadcastId);
+
   // 2) Read lifecycle before any transitions (to decide if we need testing → live)
   const beforeRead = await readBroadcastLifecycle();
   const lifecycleBeforeTesting = beforeRead.lifeCycleStatus;
@@ -418,6 +424,10 @@ export async function POST(request: Request) {
     streamStatus,
     healthStatus,
     streamReceiving,
+    embeddable: embedResult.embeddable ?? undefined,
+    embedRejected: embedResult.embedRejected,
+    embedRepairReason: embedResult.reason,
+    embedRepairLifeCycleStatus: embedResult.lifeCycleStatus,
     attemptedTestingTransition,
     testingTransitionSucceeded,
     lifecycleBeforeTesting,

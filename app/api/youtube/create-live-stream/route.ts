@@ -4,6 +4,7 @@ import {
   youtubeApiErrorNextResponse,
   youtubeErrorReason,
 } from "@/lib/youtube-api-error-diagnostic";
+import { ensureBroadcastEmbeddable } from "@/lib/youtube-ensure-embeddable";
 
 function bearerTokenFromRequest(req: Request): string | null {
   const h = req.headers.get("authorization") ?? req.headers.get("Authorization");
@@ -343,11 +344,18 @@ export async function POST(request: Request) {
   const watchUrl = `https://www.youtube.com/watch?v=${broadcastId}`;
   const embedUrl = `https://www.youtube.com/embed/${broadcastId}`;
 
-  const embeddable = embedRejected
-    ? false
-    : typeof insertContentDetails?.enableEmbed === "boolean"
-      ? insertContentDetails.enableEmbed
-      : undefined;
+  // Verification + repair: ensure enableEmbed is on while still pre-live.
+  const embedResult = await ensureBroadcastEmbeddable(token, broadcastId);
+  if (embedResult.embedRejected) embedRejected = true;
+
+  const embeddable =
+    embedResult.embeddable !== null
+      ? embedResult.embeddable
+      : embedRejected
+        ? false
+        : typeof insertContentDetails?.enableEmbed === "boolean"
+          ? insertContentDetails.enableEmbed
+          : undefined;
   const dvr =
     typeof insertContentDetails?.enableDvr === "boolean"
       ? insertContentDetails.enableDvr
@@ -369,6 +377,8 @@ export async function POST(request: Request) {
     archive,
     embedRequested,
     embedRejected,
+    embedRepairReason: embedResult.reason,
+    embedRepairLifeCycleStatus: embedResult.lifeCycleStatus,
     ingestionAddress,
     streamName,
     ...(channelId ? { channelId } : {}),

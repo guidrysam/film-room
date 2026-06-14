@@ -4,6 +4,7 @@ import {
   youtubeApiErrorNextResponse,
   youtubeErrorReason,
 } from "@/lib/youtube-api-error-diagnostic";
+import { ensureBroadcastEmbeddable } from "@/lib/youtube-ensure-embeddable";
 
 const ROUTE = "/api/youtube/create-broadcast-from-stream";
 
@@ -424,15 +425,20 @@ export async function POST(request: Request) {
     persistentLiveUrl = `https://www.youtube.com/@${channelHandle}/live`;
   }
 
-  // Verification: prefer the authoritative post-bind GET, fall back to the
-  // insert echo. undefined → reported as "Unknown" by the client.
+  // Verification + repair: ensure enableEmbed is on while still pre-live.
+  const embedResult = await ensureBroadcastEmbeddable(token, broadcastId);
+  if (embedResult.embedRejected) embedRejected = true;
+
   const verifyCd =
     broadcastGet.data?.items?.[0]?.contentDetails ?? insertContentDetails;
-  const embeddable = embedRejected
-    ? false
-    : typeof verifyCd?.enableEmbed === "boolean"
-      ? verifyCd.enableEmbed
-      : undefined;
+  const embeddable =
+    embedResult.embeddable !== null
+      ? embedResult.embeddable
+      : embedRejected
+        ? false
+        : typeof verifyCd?.enableEmbed === "boolean"
+          ? verifyCd.enableEmbed
+          : undefined;
   const dvr =
     typeof verifyCd?.enableDvr === "boolean" ? verifyCd.enableDvr : undefined;
   const archive =
@@ -452,6 +458,8 @@ export async function POST(request: Request) {
     archive,
     embedRequested,
     embedRejected,
+    embedRepairReason: embedResult.reason,
+    embedRepairLifeCycleStatus: embedResult.lifeCycleStatus,
     streamId,
     boundStreamId,
     boundMatchesRequested,
