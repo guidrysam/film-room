@@ -18,6 +18,14 @@ export type GameSourcesProps = {
   onChanged?: () => void;
 };
 
+const LABEL_SUGGESTIONS = [
+  "Main sideline",
+  "Goal cam",
+  "Parent cam",
+  "End zone",
+  "Opposite sideline",
+] as const;
+
 function kindLabel(kind: GameVideoSource["kind"]): string {
   switch (kind) {
     case "youtube":
@@ -196,12 +204,24 @@ export default function GameSources({
             placeholder="YouTube URL or video ID"
             className="mb-1.5 w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
           />
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {LABEL_SUGGESTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setLabel(s)}
+                className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] text-zinc-300 transition hover:bg-white/[0.09]"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
           <div className="mb-1.5 flex gap-1.5">
             <input
               type="text"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Label (e.g. Sideline)"
+              placeholder="Label (e.g. Main sideline)"
               maxLength={60}
               className="min-w-0 flex-1 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
             />
