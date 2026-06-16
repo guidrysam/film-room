@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
 import TeamInvites from "@/components/TeamInvites";
 import TeamSetup from "@/components/TeamSetup";
@@ -35,6 +36,11 @@ const primaryBtn =
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
+type SourceMode = "paste" | "upload" | "record";
+
+const modeTab =
+  "rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
 export default function GameCapPage() {
   const { user, loading } = useAuth();
 
@@ -53,6 +59,8 @@ export default function GameCapPage() {
   const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
+  const [sourcesKey, setSourcesKey] = useState(0);
 
   const teamRole = useMemo(() => {
     if (!selectedTeam || !user) return null;
@@ -146,6 +154,10 @@ export default function GameCapPage() {
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
   const canCreateGames =
     selectedTeam && user ? canCoachTeam(selectedTeam, user.uid) : false;
+  const canAttachSources =
+    selectedGame && user
+      ? canContributeGameSources(selectedGame, user.uid, teamRole)
+      : false;
 
   if (loading) {
     return (
@@ -195,9 +207,9 @@ export default function GameCapPage() {
             Game Cap
           </h1>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-zinc-300">
-            Select your team, create or pick a game, attach a YouTube video as a
-            source, then open it in Film Room. Camera recording and upload come
-            later — for now, sources are YouTube-backed.
+            Select your team, create or pick a game, then attach a source by
+            pasting a YouTube link or uploading to your own channel. Open in
+            Film Room for review and sync.
           </p>
         </div>
 
@@ -361,16 +373,66 @@ export default function GameCapPage() {
             </p>
           ) : (
             <div>
-              {!canContributeGameSources(selectedGame, user.uid, teamRole) ? (
+              {!canAttachSources ? (
                 <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-xs leading-snug text-amber-200">
                   You can view this game but cannot attach sources with your
                   current team role ({teamRole ?? "none"}).
                 </p>
+              ) : (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSourceMode("paste")}
+                    className={`${modeTab} ${
+                      sourceMode === "paste"
+                        ? "border-blue-500/50 bg-blue-950/35 text-white"
+                        : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    Paste YouTube link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSourceMode("upload")}
+                    className={`${modeTab} ${
+                      sourceMode === "upload"
+                        ? "border-blue-500/50 bg-blue-950/35 text-white"
+                        : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    Upload to YouTube
+                  </button>
+                  <span
+                    className={`${modeTab} cursor-not-allowed border-white/[0.06] bg-white/[0.02] text-zinc-500`}
+                    title="Coming soon"
+                  >
+                    Record locally — coming soon
+                  </span>
+                </div>
+              )}
+
+              {canAttachSources && sourceMode === "upload" ? (
+                <div className="mb-4">
+                  <GameCapUpload
+                    game={selectedGame}
+                    team={selectedTeam}
+                    currentUid={user.uid}
+                    currentDisplayName={user.displayName}
+                    onComplete={() => {
+                      setSourcesKey((k) => k + 1);
+                      void refreshGames();
+                    }}
+                    onSwitchToPaste={() => setSourceMode("paste")}
+                  />
+                </div>
               ) : null}
+
               <GameSources
+                key={`${selectedGame.id}-${sourcesKey}`}
                 game={selectedGame}
                 currentUid={user.uid}
                 teamRole={teamRole}
+                showPasteForm={canAttachSources && sourceMode === "paste"}
                 onChanged={() => void refreshGames()}
               />
             </div>

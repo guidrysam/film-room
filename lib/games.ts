@@ -62,6 +62,19 @@ export type GameVideoSource = {
   offsetFromGameTime?: number;
   durationSec?: number;
   createdBy?: string;
+  createdByName?: string;
+  /** Who owns the YouTube upload (team channel vs parent device). */
+  uploadOwner?: "team" | "parent";
+  uploadedBy?: string;
+  youtubeChannelId?: string;
+  youtubeChannelTitle?: string;
+  youtubePrivacyStatus?: "private" | "unlisted" | "public";
+  syncStatus?: "unsynced" | "clock_synced" | "manually_synced" | "audio_synced";
+  syncConfidence?: "low" | "medium" | "high";
+  recordedStartTime?: string;
+  recordedEndTime?: string;
+  deviceClockStart?: string;
+  uploadedAt?: Timestamp | null;
   createdAt?: Timestamp | null;
 };
 
@@ -525,6 +538,47 @@ export async function addGameSource(
     ...(trimOrUndef(source.createdBy)
       ? { createdBy: source.createdBy!.trim() }
       : {}),
+    ...(trimOrUndef(source.createdByName)
+      ? { createdByName: source.createdByName!.trim() }
+      : {}),
+    ...(source.uploadOwner === "team" || source.uploadOwner === "parent"
+      ? { uploadOwner: source.uploadOwner }
+      : {}),
+    ...(trimOrUndef(source.uploadedBy)
+      ? { uploadedBy: source.uploadedBy!.trim() }
+      : {}),
+    ...(trimOrUndef(source.uploadedBy) ? { uploadedAt: serverTimestamp() } : {}),
+    ...(trimOrUndef(source.youtubeChannelId)
+      ? { youtubeChannelId: source.youtubeChannelId!.trim() }
+      : {}),
+    ...(trimOrUndef(source.youtubeChannelTitle)
+      ? { youtubeChannelTitle: source.youtubeChannelTitle!.trim() }
+      : {}),
+    ...(source.youtubePrivacyStatus === "private" ||
+    source.youtubePrivacyStatus === "unlisted" ||
+    source.youtubePrivacyStatus === "public"
+      ? { youtubePrivacyStatus: source.youtubePrivacyStatus }
+      : {}),
+    ...(source.syncStatus === "unsynced" ||
+    source.syncStatus === "clock_synced" ||
+    source.syncStatus === "manually_synced" ||
+    source.syncStatus === "audio_synced"
+      ? { syncStatus: source.syncStatus }
+      : {}),
+    ...(source.syncConfidence === "low" ||
+    source.syncConfidence === "medium" ||
+    source.syncConfidence === "high"
+      ? { syncConfidence: source.syncConfidence }
+      : {}),
+    ...(trimOrUndef(source.recordedStartTime)
+      ? { recordedStartTime: source.recordedStartTime!.trim() }
+      : {}),
+    ...(trimOrUndef(source.recordedEndTime)
+      ? { recordedEndTime: source.recordedEndTime!.trim() }
+      : {}),
+    ...(trimOrUndef(source.deviceClockStart)
+      ? { deviceClockStart: source.deviceClockStart!.trim() }
+      : {}),
   });
   return ref.id;
 }
@@ -561,6 +615,47 @@ function parseSource(
     ...(trimOrUndef(raw.createdBy)
       ? { createdBy: (raw.createdBy as string).trim() }
       : {}),
+    ...(trimOrUndef(raw.createdByName)
+      ? { createdByName: (raw.createdByName as string).trim() }
+      : {}),
+    ...(raw.uploadOwner === "team" || raw.uploadOwner === "parent"
+      ? { uploadOwner: raw.uploadOwner }
+      : {}),
+    ...(trimOrUndef(raw.uploadedBy)
+      ? { uploadedBy: (raw.uploadedBy as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.youtubeChannelId)
+      ? { youtubeChannelId: (raw.youtubeChannelId as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.youtubeChannelTitle)
+      ? { youtubeChannelTitle: (raw.youtubeChannelTitle as string).trim() }
+      : {}),
+    ...(raw.youtubePrivacyStatus === "private" ||
+    raw.youtubePrivacyStatus === "unlisted" ||
+    raw.youtubePrivacyStatus === "public"
+      ? { youtubePrivacyStatus: raw.youtubePrivacyStatus }
+      : {}),
+    ...(raw.syncStatus === "unsynced" ||
+    raw.syncStatus === "clock_synced" ||
+    raw.syncStatus === "manually_synced" ||
+    raw.syncStatus === "audio_synced"
+      ? { syncStatus: raw.syncStatus }
+      : {}),
+    ...(raw.syncConfidence === "low" ||
+    raw.syncConfidence === "medium" ||
+    raw.syncConfidence === "high"
+      ? { syncConfidence: raw.syncConfidence }
+      : {}),
+    ...(trimOrUndef(raw.recordedStartTime)
+      ? { recordedStartTime: (raw.recordedStartTime as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.recordedEndTime)
+      ? { recordedEndTime: (raw.recordedEndTime as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.deviceClockStart)
+      ? { deviceClockStart: (raw.deviceClockStart as string).trim() }
+      : {}),
+    uploadedAt: raw.uploadedAt instanceof Timestamp ? raw.uploadedAt : null,
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
   };
 }
@@ -614,6 +709,55 @@ export async function addYouTubeSourceToGame(
     videoId,
     offsetFromGameTime: offset,
     ...(uid ? { createdBy: uid } : {}),
+  });
+}
+
+export type AddGameSourceFromYouTubeUploadInput = {
+  videoId: string;
+  label: string;
+  createdByName?: string;
+  durationSec?: number;
+  youtubeChannelId?: string;
+  youtubeChannelTitle?: string;
+};
+
+/**
+ * Attach a Game Cap YouTube upload as a `youtube` source on the user's channel.
+ */
+export async function addGameSourceFromYouTubeUpload(
+  gameId: string,
+  uid: string,
+  input: AddGameSourceFromYouTubeUploadInput,
+): Promise<string> {
+  const videoId = input.videoId.trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    throw new Error("Invalid YouTube video id.");
+  }
+  const label = input.label.trim() || "Camera";
+  return addGameSource(gameId, {
+    kind: "youtube",
+    label,
+    videoId,
+    offsetFromGameTime: 0,
+    uploadOwner: "parent",
+    uploadedBy: uid,
+    createdBy: uid,
+    youtubePrivacyStatus: "unlisted",
+    syncStatus: "unsynced",
+    ...(trimOrUndef(input.createdByName)
+      ? { createdByName: input.createdByName!.trim() }
+      : {}),
+    ...(typeof input.durationSec === "number" &&
+    Number.isFinite(input.durationSec) &&
+    input.durationSec > 0
+      ? { durationSec: input.durationSec }
+      : {}),
+    ...(trimOrUndef(input.youtubeChannelId)
+      ? { youtubeChannelId: input.youtubeChannelId!.trim() }
+      : {}),
+    ...(trimOrUndef(input.youtubeChannelTitle)
+      ? { youtubeChannelTitle: input.youtubeChannelTitle!.trim() }
+      : {}),
   });
 }
 

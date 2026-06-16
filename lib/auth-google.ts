@@ -44,3 +44,29 @@ export async function getYouTubeOAuthAccessToken(): Promise<{
   }
   return { user: result.user, accessToken: accessToken.trim() };
 }
+
+/**
+ * OAuth access token scoped for uploading videos to the signed-in user's YouTube
+ * channel (`youtube.upload`). Separate from the live-stream helper above.
+ */
+export async function getYouTubeUploadAccessToken(): Promise<{
+  user: User;
+  accessToken: string;
+}> {
+  const ytProvider = new GoogleAuthProvider();
+  ytProvider.addScope("https://www.googleapis.com/auth/youtube.upload");
+  ytProvider.setCustomParameters({
+    prompt: "consent",
+    include_granted_scopes: "true",
+  });
+
+  const result = await signInWithPopup(auth, ytProvider);
+  const cred = GoogleAuthProvider.credentialFromResult(result);
+  const accessToken = (cred as { accessToken?: unknown } | null)?.accessToken;
+  if (typeof accessToken !== "string" || accessToken.trim() === "") {
+    throw new Error(
+      "Missing Google OAuth access token. Ensure the YouTube upload scope was granted.",
+    );
+  }
+  return { user: result.user, accessToken: accessToken.trim() };
+}

@@ -17,6 +17,8 @@ export type GameSourcesProps = {
   currentUid: string;
   /** Team role when the game is team-scoped (enables parent source attach). */
   teamRole?: GameTeamRole | null;
+  /** Show the paste-link attach form (default true). */
+  showPasteForm?: boolean;
   /** Called after a source is added (parent may refresh counts). */
   onChanged?: () => void;
 };
@@ -58,6 +60,7 @@ export default function GameSources({
   game,
   currentUid,
   teamRole,
+  showPasteForm = true,
   onChanged,
 }: GameSourcesProps) {
   const router = useRouter();
@@ -196,7 +199,7 @@ export default function GameSources({
         </ul>
       )}
 
-      {canEdit ? (
+      {canEdit && showPasteForm ? (
         <div className="mt-2.5 rounded-md border border-white/[0.07] bg-white/[0.02] p-2">
           <p className="mb-1.5 text-[10px] font-medium text-zinc-400">
             Attach YouTube source
