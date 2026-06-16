@@ -811,6 +811,49 @@ export async function updateGameSourceYouTubeMetadata(
   });
 }
 
+export type GameSourceSyncPatch = {
+  offsetFromGameTime?: number;
+  recordedStartTime?: string;
+  deviceClockStart?: string;
+  syncStatus?: GameVideoSource["syncStatus"];
+  syncConfidence?: GameVideoSource["syncConfidence"];
+};
+
+/** Update sync / timeline fields on a game source. */
+export async function updateGameSourceSync(
+  gameId: string,
+  sourceId: string,
+  patch: GameSourceSyncPatch,
+): Promise<void> {
+  await updateDoc(doc(sourcesCol(gameId), sourceId), {
+    ...(typeof patch.offsetFromGameTime === "number" &&
+    Number.isFinite(patch.offsetFromGameTime)
+      ? { offsetFromGameTime: patch.offsetFromGameTime }
+      : {}),
+    ...(patch.recordedStartTime !== undefined
+      ? patch.recordedStartTime.trim()
+        ? { recordedStartTime: patch.recordedStartTime.trim() }
+        : { recordedStartTime: deleteField() }
+      : {}),
+    ...(patch.deviceClockStart !== undefined
+      ? patch.deviceClockStart.trim()
+        ? { deviceClockStart: patch.deviceClockStart.trim() }
+        : { deviceClockStart: deleteField() }
+      : {}),
+    ...(patch.syncStatus === "unsynced" ||
+    patch.syncStatus === "clock_synced" ||
+    patch.syncStatus === "manually_synced" ||
+    patch.syncStatus === "audio_synced"
+      ? { syncStatus: patch.syncStatus }
+      : {}),
+    ...(patch.syncConfidence === "low" ||
+    patch.syncConfidence === "medium" ||
+    patch.syncConfidence === "high"
+      ? { syncConfidence: patch.syncConfidence }
+      : {}),
+  });
+}
+
 // ---- Timeline events ---------------------------------------------------
 
 const EVENT_TYPES: GameTimelineEventType[] = [

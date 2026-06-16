@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import GameSourceDetail from "@/components/GameSourceDetail";
 import {
   addYouTubeSourceToGame,
   canContributeGameSources,
@@ -11,6 +12,10 @@ import {
   type GameTeamRole,
   type GameVideoSource,
 } from "@/lib/games";
+import {
+  syncStatusBadgeClass,
+  syncStatusLabel,
+} from "@/lib/game-timeline";
 import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
 import {
   fetchYouTubeVideoMeta,
@@ -92,6 +97,7 @@ export default function GameSources({
   const [adding, setAdding] = useState(false);
   const [opening, setOpening] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -223,37 +229,70 @@ export default function GameSources({
         <ul className="space-y-1.5">
           {sources.map((s) => {
             const duration = formatDuration(s.durationSec);
+            const open = selectedId === s.id;
             return (
             <li
               key={s.id}
               className="rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2"
             >
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
-                <span className="truncate text-[12px] font-medium text-zinc-200">
-                  {s.label}
-                </span>
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold text-zinc-300">
-                  {kindLabel(s.kind)}
-                </span>
-              </div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
-                {s.videoId ? (
-                  <span className="font-mono">{s.videoId}</span>
-                ) : null}
-                {duration ? <span>{duration}</span> : null}
-                <span>offset {s.offsetFromGameTime ?? 0}s</span>
-                <span>by {shortUid(s.createdBy)}</span>
-                {canEdit && isYouTubeKind(s.kind) && s.videoId ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleRefreshMetadata(s)}
-                    disabled={refreshingId === s.id}
-                    className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-300 transition hover:bg-white/[0.08] disabled:opacity-40"
-                  >
-                    {refreshingId === s.id ? "Refreshing…" : "Refresh metadata"}
-                  </button>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedId(open ? null : s.id)}
+                className="w-full text-left"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <span className="truncate text-[12px] font-medium text-zinc-200">
+                    {s.label}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span
+                      className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${syncStatusBadgeClass(s.syncStatus)}`}
+                    >
+                      {syncStatusLabel(s.syncStatus)}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold text-zinc-300">
+                      {kindLabel(s.kind)}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+                  {s.videoId ? (
+                    <span className="font-mono">{s.videoId}</span>
+                  ) : null}
+                  {duration ? <span>{duration}</span> : null}
+                  <span>offset {s.offsetFromGameTime ?? 0}s</span>
+                  <span>by {shortUid(s.createdBy)}</span>
+                  {canEdit && isYouTubeKind(s.kind) && s.videoId ? (
+                    <span
+                      role="presentation"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void handleRefreshMetadata(s)}
+                        disabled={refreshingId === s.id}
+                        className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-300 transition hover:bg-white/[0.08] disabled:opacity-40"
+                      >
+                        {refreshingId === s.id ? "Refreshing…" : "Refresh metadata"}
+                      </button>
+                    </span>
+                  ) : null}
+                  <span className="text-zinc-600">{open ? "▲" : "▼"} sync</span>
+                </div>
+              </button>
+              {open ? (
+                <GameSourceDetail
+                  game={game}
+                  source={s}
+                  canEdit={canEdit}
+                  onSaved={() => {
+                    void refresh();
+                    onChanged?.();
+                  }}
+                  onClose={() => setSelectedId(null)}
+                />
+              ) : null}
             </li>
             );
           })}
