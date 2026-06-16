@@ -6,11 +6,16 @@ import {
   addYouTubeSourceToGame,
   canContributeGameSources,
   listGameSources,
+  updateGameSourceYouTubeMetadata,
   type Game,
   type GameTeamRole,
   type GameVideoSource,
 } from "@/lib/games";
 import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
+import {
+  fetchYouTubeVideoMeta,
+  metaToSourcePatch,
+} from "@/lib/youtube-video-meta-client";
 
 export type GameSourcesProps = {
   game: Game;
@@ -51,6 +56,17 @@ function shortUid(uid?: string): string {
   return uid.length > 10 ? `${uid.slice(0, 6)}…${uid.slice(-2)}` : uid;
 }
 
+function formatDuration(sec?: number): string | null {
+  if (typeof sec !== "number" || !Number.isFinite(sec) || sec <= 0) return null;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function isYouTubeKind(kind: GameVideoSource["kind"]): boolean {
+  return kind === "youtube" || kind === "youtube_live";
+}
+
 /**
  * Sources panel for a Game: lists attached YouTube sources, lets editors/owners
  * attach more, and opens the Game in the existing Film Room (single → clip,
@@ -75,6 +91,7 @@ export default function GameSources({
   const [offset, setOffset] = useState("");
   const [adding, setAdding] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -136,6 +153,36 @@ export default function GameSources({
     }
   }, [game, sources, currentUid, router]);
 
+  const handleRefreshMetadata = useCallback(
+    async (source: GameVideoSource) => {
+      if (!source.videoId) return;
+      setRefreshingId(source.id);
+      setError(null);
+      try {
+        const meta = await fetchYouTubeVideoMeta(source.videoId);
+        if (!meta) {
+          setError("Could not fetch YouTube metadata. Try again in a moment.");
+          return;
+        }
+        const patch = metaToSourcePatch(meta);
+        if (Object.keys(patch).length === 0) {
+          setError("No new metadata available yet.");
+          return;
+        }
+        await updateGameSourceYouTubeMetadata(game.id, source.id, patch);
+        await refresh();
+        onChanged?.();
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Could not refresh metadata.",
+        );
+      } finally {
+        setRefreshingId(null);
+      }
+    },
+    [game.id, refresh, onChanged],
+  );
+
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -174,7 +221,9 @@ export default function GameSources({
         </p>
       ) : (
         <ul className="space-y-1.5">
-          {sources.map((s) => (
+          {sources.map((s) => {
+            const duration = formatDuration(s.durationSec);
+            return (
             <li
               key={s.id}
               className="rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2"
@@ -187,15 +236,27 @@ export default function GameSources({
                   {kindLabel(s.kind)}
                 </span>
               </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-zinc-500">
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
                 {s.videoId ? (
                   <span className="font-mono">{s.videoId}</span>
                 ) : null}
+                {duration ? <span>{duration}</span> : null}
                 <span>offset {s.offsetFromGameTime ?? 0}s</span>
                 <span>by {shortUid(s.createdBy)}</span>
+                {canEdit && isYouTubeKind(s.kind) && s.videoId ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleRefreshMetadata(s)}
+                    disabled={refreshingId === s.id}
+                    className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-300 transition hover:bg-white/[0.08] disabled:opacity-40"
+                  >
+                    {refreshingId === s.id ? "Refreshing…" : "Refresh metadata"}
+                  </button>
+                ) : null}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 

@@ -4,6 +4,7 @@ import {
   logYoutubeApiErrorFromParts,
   youtubeApiErrorNextResponseFromFetch,
 } from "@/lib/youtube-api-error-diagnostic";
+import { parseIso8601DurationToSeconds } from "@/lib/youtube-duration";
 
 const YT_ID = /^[a-zA-Z0-9_-]{11}$/;
 const ROUTE = "/api/youtube-video-meta";
@@ -36,6 +37,10 @@ type YouTubeMeta = {
   publishedAt?: string;
   /** Broadcaster channel (for persistent /live URL hints). */
   channelId?: string;
+  /** From `snippet.channelTitle`. */
+  channelTitle?: string;
+  /** Parsed from `contentDetails.duration` (ISO 8601). */
+  durationSec?: number;
   /** From `channels.list` when `includeChannel=1` — use for `@handle/live` suggestions. */
   channelCustomUrl?: string;
 };
@@ -63,7 +68,7 @@ export async function GET(request: Request) {
 
   const url =
     "https://www.googleapis.com/youtube/v3/videos" +
-    `?part=snippet,liveStreamingDetails,status&id=${encodeURIComponent(videoId)}` +
+    `?part=snippet,contentDetails,status,liveStreamingDetails&id=${encodeURIComponent(videoId)}` +
     `&key=${encodeURIComponent(key)}`;
   const redactKey = (u: string) => u.replace(key, "<redacted>");
 
@@ -110,6 +115,10 @@ export async function GET(request: Request) {
         liveBroadcastContent?: string;
         publishedAt?: string;
         channelId?: string;
+        channelTitle?: string;
+      };
+      contentDetails?: {
+        duration?: string;
       };
       liveStreamingDetails?: {
         actualStartTime?: string;
@@ -212,6 +221,19 @@ export async function GET(request: Request) {
       ? snippetChannelIdRaw.trim()
       : undefined;
 
+  const snippetChannelTitleRaw = item.snippet?.channelTitle;
+  const channelTitle =
+    typeof snippetChannelTitleRaw === "string" &&
+    snippetChannelTitleRaw.trim() !== ""
+      ? snippetChannelTitleRaw.trim()
+      : undefined;
+
+  const durationRaw = item.contentDetails?.duration;
+  const durationSec =
+    typeof durationRaw === "string" && durationRaw.trim() !== ""
+      ? parseIso8601DurationToSeconds(durationRaw.trim())
+      : undefined;
+
   let channelCustomUrl: string | undefined;
   if (includeChannel && snippetChannelId && key) {
     const chUrl =
@@ -284,6 +306,8 @@ export async function GET(request: Request) {
       ? { publishedAt: item.snippet.publishedAt.trim() }
       : {}),
     ...(snippetChannelId ? { channelId: snippetChannelId } : {}),
+    ...(channelTitle ? { channelTitle } : {}),
+    ...(durationSec !== undefined ? { durationSec } : {}),
     ...(channelCustomUrl ? { channelCustomUrl } : {}),
   };
 

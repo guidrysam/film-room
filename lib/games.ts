@@ -69,6 +69,8 @@ export type GameVideoSource = {
   youtubeChannelId?: string;
   youtubeChannelTitle?: string;
   youtubePrivacyStatus?: "private" | "unlisted" | "public";
+  /** Whether YouTube allows embedding this video (from status.embeddable). */
+  youtubeEmbeddable?: boolean;
   syncStatus?: "unsynced" | "clock_synced" | "manually_synced" | "audio_synced";
   syncConfidence?: "low" | "medium" | "high";
   recordedStartTime?: string;
@@ -559,6 +561,9 @@ export async function addGameSource(
     source.youtubePrivacyStatus === "public"
       ? { youtubePrivacyStatus: source.youtubePrivacyStatus }
       : {}),
+    ...(typeof source.youtubeEmbeddable === "boolean"
+      ? { youtubeEmbeddable: source.youtubeEmbeddable }
+      : {}),
     ...(source.syncStatus === "unsynced" ||
     source.syncStatus === "clock_synced" ||
     source.syncStatus === "manually_synced" ||
@@ -634,6 +639,9 @@ function parseSource(
     raw.youtubePrivacyStatus === "unlisted" ||
     raw.youtubePrivacyStatus === "public"
       ? { youtubePrivacyStatus: raw.youtubePrivacyStatus }
+      : {}),
+    ...(typeof raw.youtubeEmbeddable === "boolean"
+      ? { youtubeEmbeddable: raw.youtubeEmbeddable }
       : {}),
     ...(raw.syncStatus === "unsynced" ||
     raw.syncStatus === "clock_synced" ||
@@ -719,6 +727,8 @@ export type AddGameSourceFromYouTubeUploadInput = {
   durationSec?: number;
   youtubeChannelId?: string;
   youtubeChannelTitle?: string;
+  youtubePrivacyStatus?: "private" | "unlisted" | "public";
+  youtubeEmbeddable?: boolean;
 };
 
 /**
@@ -742,7 +752,7 @@ export async function addGameSourceFromYouTubeUpload(
     uploadOwner: "parent",
     uploadedBy: uid,
     createdBy: uid,
-    youtubePrivacyStatus: "unlisted",
+    youtubePrivacyStatus: input.youtubePrivacyStatus ?? "unlisted",
     syncStatus: "unsynced",
     ...(trimOrUndef(input.createdByName)
       ? { createdByName: input.createdByName!.trim() }
@@ -757,6 +767,46 @@ export async function addGameSourceFromYouTubeUpload(
       : {}),
     ...(trimOrUndef(input.youtubeChannelTitle)
       ? { youtubeChannelTitle: input.youtubeChannelTitle!.trim() }
+      : {}),
+    ...(typeof input.youtubeEmbeddable === "boolean"
+      ? { youtubeEmbeddable: input.youtubeEmbeddable }
+      : {}),
+  });
+}
+
+export type GameSourceYouTubeMetadataPatch = {
+  durationSec?: number;
+  youtubeChannelId?: string;
+  youtubeChannelTitle?: string;
+  youtubePrivacyStatus?: "private" | "unlisted" | "public";
+  youtubeEmbeddable?: boolean;
+};
+
+/** Merge YouTube metadata onto an existing game source (refresh / post-upload). */
+export async function updateGameSourceYouTubeMetadata(
+  gameId: string,
+  sourceId: string,
+  patch: GameSourceYouTubeMetadataPatch,
+): Promise<void> {
+  await updateDoc(doc(sourcesCol(gameId), sourceId), {
+    ...(typeof patch.durationSec === "number" &&
+    Number.isFinite(patch.durationSec) &&
+    patch.durationSec > 0
+      ? { durationSec: patch.durationSec }
+      : {}),
+    ...(trimOrUndef(patch.youtubeChannelId)
+      ? { youtubeChannelId: patch.youtubeChannelId!.trim() }
+      : {}),
+    ...(trimOrUndef(patch.youtubeChannelTitle)
+      ? { youtubeChannelTitle: patch.youtubeChannelTitle!.trim() }
+      : {}),
+    ...(patch.youtubePrivacyStatus === "private" ||
+    patch.youtubePrivacyStatus === "unlisted" ||
+    patch.youtubePrivacyStatus === "public"
+      ? { youtubePrivacyStatus: patch.youtubePrivacyStatus }
+      : {}),
+    ...(typeof patch.youtubeEmbeddable === "boolean"
+      ? { youtubeEmbeddable: patch.youtubeEmbeddable }
       : {}),
   });
 }

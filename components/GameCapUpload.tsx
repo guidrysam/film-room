@@ -13,6 +13,11 @@ import {
   buildYouTubeUploadTitle,
   uploadVideoToYouTube,
 } from "@/lib/youtube-upload";
+import {
+  fetchYouTubeVideoMetaWithRetry,
+  isYouTubeVideoProcessing,
+  metaToSourcePatch,
+} from "@/lib/youtube-video-meta-client";
 
 export type GameCapUploadProps = {
   game: Game;
@@ -31,31 +36,15 @@ const LABEL_SUGGESTIONS = [
   "Opposite sideline",
 ] as const;
 
-type UploadPhase = "idle" | "authorizing" | "uploading" | "processing" | "complete" | "failed";
+const ONE_GB = 1024 * 1024 * 1024;
 
-async function fetchYouTubeMeta(videoId: string): Promise<{
-  channelId?: string;
-  privacyStatus?: string;
-  embeddable?: boolean;
-} | null> {
-  try {
-    const res = await fetch(
-      `/api/youtube-video-meta?videoId=${encodeURIComponent(videoId)}`,
-    );
-    const data = (await res.json()) as {
-      ok?: boolean;
-      meta?: {
-        channelId?: string;
-        privacyStatus?: string;
-        embeddable?: boolean;
-      };
-    };
-    if (data.ok && data.meta) return data.meta;
-  } catch {
-    /* metadata is best-effort */
-  }
-  return null;
-}
+type UploadPhase =
+  | "idle"
+  | "authorizing"
+  | "uploading"
+  | "processing"
+  | "complete"
+  | "failed";
 
 /**
  * Game Cap YouTube upload: pick a video file, upload to the signed-in user's
@@ -79,6 +68,7 @@ export default function GameCapUpload({
   const [error, setError] = useState<string | null>(null);
   const [resultVideoId, setResultVideoId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [youtubeStillProcessing, setYoutubeStillProcessing] = useState(false);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,6 +79,7 @@ export default function GameCapUpload({
         setPhase("idle");
         setResultVideoId(null);
         setProgressPct(0);
+        setYoutubeStillProcessing(false);
       }
     },
     [phase],
@@ -101,6 +92,7 @@ export default function GameCapUpload({
     }
     const trimmedLabel = label.trim() || "Parent cam";
     setError(null);
+    setYoutubeStillProcessing(false);
     setPhase("authorizing");
     setProgressPct(0);
 
@@ -156,27 +148,28 @@ export default function GameCapUpload({
         youtubeVideoId: uploadResult.videoId,
       });
 
-      const meta = await fetchYouTubeMeta(uploadResult.videoId);
+      const meta = await fetchYouTubeVideoMetaWithRetry(uploadResult.videoId);
+      const metaPatch = meta ? metaToSourcePatch(meta) : {};
+      const stillProcessing = isYouTubeVideoProcessing(meta);
 
-      const sourceId = await addGameSourceFromYouTubeUpload(
-        game.id,
-        currentUid,
-        {
-          videoId: uploadResult.videoId,
-          label: trimmedLabel,
-          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
-          ...(meta?.channelId ? { youtubeChannelId: meta.channelId } : {}),
-        },
-      );
+      await addGameSourceFromYouTubeUpload(game.id, currentUid, {
+        videoId: uploadResult.videoId,
+        label: trimmedLabel,
+        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+        ...metaPatch,
+        ...(metaPatch.youtubePrivacyStatus
+          ? {}
+          : { youtubePrivacyStatus: "unlisted" }),
+      });
 
       await updateUploadJob(currentUid, activeJobId, {
         status: "complete",
         progressPct: 100,
         youtubeVideoId: uploadResult.videoId,
-        sourceId,
       });
 
       setResultVideoId(uploadResult.videoId);
+      setYoutubeStillProcessing(stillProcessing);
       setPhase("complete");
       setFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -205,15 +198,22 @@ export default function GameCapUpload({
     onComplete,
   ]);
 
-  const busy = phase === "authorizing" || phase === "uploading" || phase === "processing";
+  const busy =
+    phase === "authorizing" ||
+    phase === "uploading" ||
+    phase === "processing";
 
   return (
     <div className="rounded-md border border-white/[0.07] bg-white/[0.02] p-2.5">
       <p className="mb-1.5 text-[10px] font-medium text-zinc-400">
         Upload to your YouTube channel
       </p>
-      <p className="mb-2 text-[10px] leading-snug text-amber-200/90">
+      <p className="mb-1 text-[10px] leading-snug text-amber-200/90">
         Keep this tab open while uploading. Large videos may take time.
+      </p>
+      <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+        YouTube upload quota is limited during beta. If upload fails, paste a
+        YouTube link instead.
       </p>
 
       <input
@@ -226,9 +226,17 @@ export default function GameCapUpload({
       />
 
       {file ? (
-        <p className="mb-2 text-[10px] text-zinc-500">
-          {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB
-        </p>
+        <>
+          <p className="mb-2 text-[10px] text-zinc-500">
+            {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB
+          </p>
+          {file.size > ONE_GB ? (
+            <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-950/25 px-2 py-1.5 text-[10px] leading-snug text-amber-200">
+              Large uploads may take a long time. Keep this tab open and use
+              Wi-Fi when possible.
+            </p>
+          ) : null}
+        </>
       ) : null}
 
       <div className="mb-2 flex flex-wrap gap-1">
@@ -279,13 +287,17 @@ export default function GameCapUpload({
       {phase === "complete" && resultVideoId ? (
         <div className="mb-2 rounded-md border border-emerald-500/35 bg-emerald-950/30 px-2.5 py-2">
           <p className="text-[11px] font-medium text-emerald-100">
-            Upload complete — source attached
+            {youtubeStillProcessing
+              ? "Uploaded. YouTube is still processing."
+              : "Upload complete — source attached"}
           </p>
           <p className="mt-0.5 font-mono text-[10px] text-emerald-200/80">
             {resultVideoId}
           </p>
           <p className="mt-1 text-[10px] text-emerald-200/70">
-            Unlisted on your YouTube channel. Open in Film Room below.
+            {youtubeStillProcessing
+              ? "Source attached — refresh metadata in Sources below once playback is ready."
+              : "Unlisted on your YouTube channel. Open in Film Room below."}
           </p>
         </div>
       ) : null}
@@ -321,7 +333,9 @@ export default function GameCapUpload({
       </button>
 
       {jobId && phase !== "idle" ? (
-        <p className="mt-1.5 text-[9px] text-zinc-600">Job {jobId.slice(0, 8)}…</p>
+        <p className="mt-1.5 text-[9px] text-zinc-600">
+          Job {jobId.slice(0, 8)}…
+        </p>
       ) : null}
 
       {error && phase !== "failed" ? (
