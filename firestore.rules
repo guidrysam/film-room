@@ -2,16 +2,13 @@ rules_version = '2';
 
 // Film Room Firestore security rules.
 //
-// Conservative owner/editor/viewer model for Games (Phase 0) plus the existing
-// per-user savedSessions. Realtime Database rooms are NOT covered here (they use
-// RTDB rules separately).
+// Conservative owner/editor/viewer model for Games (Phase 0) plus Teams (Phase 1–2)
+// and the existing per-user savedSessions. Realtime Database rooms are NOT
+// covered here (they use RTDB rules separately).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ---- Per-user saved session templates -----------------------------
-    // Owner read/write requires auth + uid ownership. Shared templates are
-    // publicly readable (including signed-out) only when explicitly shared
-    // with a non-empty shareId — this powers the /shared/[shareId] links.
     function isPublicSharedSession() {
       return resource.data.isShared == true &&
              resource.data.shareId is string &&
@@ -24,11 +21,101 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Collection-group reads for shared templates (link sharing). Signed-out
-    // viewers can open a valid share link; the client query is constrained to
-    // `shareId == <id>` and `isShared == true`, which satisfies this rule.
     match /{path=**}/savedSessions/{sessionId} {
       allow read: if isPublicSharedSession();
+    }
+
+    // ---- Teams --------------------------------------------------------
+    function teamData(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data;
+    }
+    function teamRoleOf(teamId, uid) {
+      return teamData(teamId).members[uid];
+    }
+    function isTeamMember(teamId, uid) {
+      return teamData(teamId).ownerId == uid || teamRoleOf(teamId, uid) != null;
+    }
+    function isTeamAdmin(teamId, uid) {
+      return teamData(teamId).ownerId == uid || teamRoleOf(teamId, uid) == 'admin';
+    }
+    function isTeamCoach(teamId, uid) {
+      let role = teamRoleOf(teamId, uid);
+      return isTeamAdmin(teamId, uid) || role == 'coach';
+    }
+    function canTeamContributeSources(teamId, uid) {
+      let role = teamRoleOf(teamId, uid);
+      return isTeamAdmin(teamId, uid) || role == 'coach' || role == 'parent';
+    }
+    function isTeamAdminOf(tid) {
+      return request.auth != null && isTeamAdmin(tid, request.auth.uid);
+    }
+    function teamJoinInviteData() {
+      return get(/databases/$(database)/documents/teamInvites/$(request.resource.data.joinCode)).data;
+    }
+
+    match /teams/{teamId} {
+      allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
+
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerId == request.auth.uid &&
+                       request.resource.data.members[request.auth.uid] == 'admin' &&
+                       request.resource.data.memberUids.hasAll([request.auth.uid]);
+
+      allow update, delete: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
+
+      // Self-join via team invite (no admin role; no role escalation for existing members).
+      allow update: if request.auth != null
+        && !(request.auth.uid in resource.data.members)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['members', 'memberUids', 'updatedAt', 'joinCode'])
+        && request.resource.data.members.diff(resource.data.members)
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.memberUids.hasAll([request.auth.uid])
+        && request.resource.data.memberUids.toSet()
+             .difference(resource.data.memberUids.toSet()).hasOnly([request.auth.uid])
+        && resource.data.memberUids.toSet()
+             .difference(request.resource.data.memberUids.toSet()).size() == 0
+        && request.resource.data.members[request.auth.uid] != 'admin'
+        && (request.resource.data.members[request.auth.uid] == 'coach' ||
+            request.resource.data.members[request.auth.uid] == 'parent' ||
+            request.resource.data.members[request.auth.uid] == 'player' ||
+            request.resource.data.members[request.auth.uid] == 'viewer')
+        && 'joinCode' in request.resource.data
+        && teamJoinInviteData().teamId == teamId
+        && teamJoinInviteData().active == true
+        && teamJoinInviteData().role == request.resource.data.members[request.auth.uid]
+        && (!('expiresAt' in teamJoinInviteData()) ||
+            teamJoinInviteData().expiresAt > request.time);
+
+      allow update: if request.auth != null
+        && (request.auth.uid in resource.data.members)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joinCode'])
+        && !('joinCode' in request.resource.data);
+
+      match /players/{playerId} {
+        allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
+        allow create, update, delete: if request.auth != null &&
+                                         isTeamCoach(teamId, request.auth.uid);
+      }
+    }
+
+    // ---- Team invites (join links) ------------------------------------
+    match /teamInvites/{code} {
+      allow read: if true;
+
+      allow create: if request.auth != null
+        && request.resource.data.code == code
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.teamId is string
+        && (request.resource.data.role == 'coach' ||
+            request.resource.data.role == 'parent' ||
+            request.resource.data.role == 'player' ||
+            request.resource.data.role == 'viewer')
+        && request.resource.data.active is bool
+        && isTeamAdminOf(request.resource.data.teamId);
+
+      allow update, delete: if request.auth != null
+        && isTeamAdminOf(resource.data.teamId);
     }
 
     // ---- Games --------------------------------------------------------
@@ -47,43 +134,44 @@ service cloud.firestore {
     function isMember(uid) {
       return roleOf(uid) != null || isOwner(uid);
     }
+    function gameTeamId() {
+      return 'teamId' in gameData() && gameData().teamId is string
+        ? gameData().teamId
+        : null;
+    }
+    function gameHasTeam() {
+      return gameTeamId() != null;
+    }
     function canReadGame(uid) {
       return isMember(uid) ||
              gameData().visibility == 'public' ||
-             gameData().visibility == 'link';
+             gameData().visibility == 'link' ||
+             (gameHasTeam() && isTeamMember(gameTeamId(), uid));
     }
 
-    // Owner check for a game referenced by id in data (used by gameInvites,
-    // where the gameId is a field rather than the document path).
     function isGameOwnerOf(gid) {
       return request.auth != null &&
              (get(/databases/$(database)/documents/games/$(gid)).data.ownerId == request.auth.uid ||
               get(/databases/$(database)/documents/games/$(gid)).data.contributors[request.auth.uid] == 'owner');
     }
 
-    // Invite referenced by the transient `joinCode` on a self-join write.
     function joinInviteData() {
       return get(/databases/$(database)/documents/gameInvites/$(request.resource.data.joinCode)).data;
     }
 
     match /games/{gameId} {
-      // Read: members always; non-members only if link/public.
       allow read: if request.auth != null && canReadGame(request.auth.uid);
 
-      // Create: the creator must make themselves the owner.
+      // Standalone games (no teamId) or team games created by admin/coach.
       allow create: if request.auth != null &&
                        request.resource.data.ownerId == request.auth.uid &&
-                       request.resource.data.contributors[request.auth.uid] == 'owner';
+                       request.resource.data.contributors[request.auth.uid] == 'owner' &&
+                       (!('teamId' in request.resource.data) ||
+                        (request.resource.data.teamId is string &&
+                         isTeamCoach(request.resource.data.teamId, request.auth.uid)));
 
-      // Update/delete: owners only. Because `contributors` and `memberUids`
-      // live on this doc, only owners can add/remove people or change roles —
-      // editors/viewers cannot escalate their own role.
       allow update, delete: if request.auth != null && isOwner(request.auth.uid);
 
-      // Self-join via an invite link. A signed-in user may add ONLY themselves
-      // to contributors + memberUids at the invite's role, and nothing else.
-      // The `!(uid in contributors)` guard means an existing member can never
-      // use this path to change their own role (no escalation).
       allow update: if request.auth != null
         && !(request.auth.uid in resource.data.contributors)
         && request.resource.data.diff(resource.data).affectedKeys()
@@ -104,34 +192,32 @@ service cloud.firestore {
         && (!('expiresAt' in joinInviteData()) ||
             joinInviteData().expiresAt > request.time);
 
-      // Cleanup: a member may remove the transient `joinCode` field (only that
-      // field) so the code does not linger on the game doc.
       allow update: if request.auth != null
         && (request.auth.uid in resource.data.contributors)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joinCode'])
         && !('joinCode' in request.resource.data);
 
-      // Sub-collections: sources, events, cuts.
       match /sources/{sourceId} {
         allow read: if request.auth != null && canReadGame(request.auth.uid);
-        allow create, update, delete: if request.auth != null && isEditor(request.auth.uid);
+        allow create, update, delete: if request.auth != null &&
+          (isEditor(request.auth.uid) ||
+           (gameHasTeam() && canTeamContributeSources(gameTeamId(), request.auth.uid)));
       }
       match /events/{eventId} {
         allow read: if request.auth != null && canReadGame(request.auth.uid);
-        allow create, update, delete: if request.auth != null && isEditor(request.auth.uid);
+        allow create, update, delete: if request.auth != null &&
+          (isEditor(request.auth.uid) ||
+           (gameHasTeam() && isTeamCoach(gameTeamId(), request.auth.uid)));
       }
       match /cuts/{cutId} {
-        // Read: the author always; everyone else only for non-private cuts they
-        // can see. Clients MUST list with constrained queries (createdBy == me,
-        // or visibility in ['game','team']) — an unconstrained list is denied
-        // because private cuts owned by others fail this rule.
         allow read: if request.auth != null &&
                        (resource.data.createdBy == request.auth.uid ||
                         (canReadGame(request.auth.uid) &&
                          resource.data.visibility != 'private'));
-        // Editors can create cuts; only the cut's author or an owner can change it.
-        allow create: if request.auth != null && isEditor(request.auth.uid) &&
-                         request.resource.data.createdBy == request.auth.uid;
+        allow create: if request.auth != null &&
+                         request.resource.data.createdBy == request.auth.uid &&
+                         (isEditor(request.auth.uid) ||
+                          (gameHasTeam() && isTeamMember(gameTeamId(), request.auth.uid)));
         allow update, delete: if request.auth != null &&
                                  (isOwner(request.auth.uid) ||
                                   resource.data.createdBy == request.auth.uid);
@@ -139,9 +225,6 @@ service cloud.firestore {
     }
 
     // ---- Game invites (join links) ------------------------------------
-    // Codes are long and unguessable, so invite docs are publicly readable
-    // (the join landing page resolves the code before sign-in). Only the
-    // owner of the referenced game can create/modify/revoke them.
     match /gameInvites/{code} {
       allow read: if true;
 
@@ -157,7 +240,5 @@ service cloud.firestore {
       allow update, delete: if request.auth != null
         && isGameOwnerOf(resource.data.gameId);
     }
-
-    // Default deny: no public writes, nothing else readable.
   }
 }

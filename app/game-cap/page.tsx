@@ -1,11 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import GameSources from "@/components/GameSources";
+import TeamInvites from "@/components/TeamInvites";
+import TeamSetup from "@/components/TeamSetup";
 import { signInWithGoogle } from "@/lib/auth-google";
-import { canEditGame, createGame, listMyGames, type Game } from "@/lib/games";
+import {
+  canContributeGameSources,
+  type Game,
+} from "@/lib/games";
+import {
+  canCoachTeam,
+  createTeamGame,
+  getTeam,
+  listTeamGames,
+  teamRoleFor,
+  type Team,
+} from "@/lib/teams";
 
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
@@ -22,44 +35,72 @@ const primaryBtn =
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
-function roleFor(game: Game, uid: string): string {
-  if (game.ownerId === uid) return "owner";
-  return game.contributors[uid] ?? "viewer";
-}
-
 export default function GameCapPage() {
   const { user, loading } = useAuth();
 
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
   const [title, setTitle] = useState("");
   const [sport, setSport] = useState("");
   const [date, setDate] = useState("");
   const [opponent, setOpponent] = useState("");
+  const [season, setSeason] = useState("");
+  const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const teamRole = useMemo(() => {
+    if (!selectedTeam || !user) return null;
+    return teamRoleFor(selectedTeam, user.uid);
+  }, [selectedTeam, user]);
+
+  const refreshTeam = useCallback(async () => {
+    if (!selectedTeamId) {
+      setSelectedTeam(null);
+      return;
+    }
+    try {
+      setSelectedTeam(await getTeam(selectedTeamId));
+    } catch {
+      setSelectedTeam(null);
+    }
+  }, [selectedTeamId]);
+
+  useEffect(() => {
+    void refreshTeam();
+  }, [refreshTeam]);
+
   const refreshGames = useCallback(async () => {
-    if (!user) return;
+    if (!user || !selectedTeamId) {
+      setGames([]);
+      return;
+    }
     setGamesLoading(true);
     try {
-      setGames(await listMyGames(user.uid));
+      setGames(await listTeamGames(user.uid, selectedTeamId));
     } catch {
       /* best-effort */
     } finally {
       setGamesLoading(false);
     }
-  }, [user]);
+  }, [user, selectedTeamId]);
 
   useEffect(() => {
     void refreshGames();
+    setSelectedGameId(null);
   }, [refreshGames]);
 
   const handleCreate = useCallback(async () => {
-    if (!user) return;
+    if (!user || !selectedTeamId || !selectedTeam) return;
+    if (!canCoachTeam(selectedTeam, user.uid)) {
+      setError("Only team admins and coaches can create games.");
+      return;
+    }
     if (!title.trim()) {
       setError("Give the game a title.");
       return;
@@ -67,27 +108,44 @@ export default function GameCapPage() {
     setCreating(true);
     setError(null);
     try {
-      const id = await createGame(user.uid, {
+      const id = await createTeamGame(user.uid, selectedTeamId, {
         title,
         ...(sport.trim() ? { sport } : {}),
         ...(date.trim() ? { date } : {}),
-        ...(opponent.trim() ? { awayTeam: opponent } : {}),
+        ...(opponent.trim() ? { opponent, awayTeam: opponent } : {}),
+        ...(season.trim() ? { season } : {}),
+        ...(scheduledStartAt.trim() ? { scheduledStartAt } : {}),
       });
       setTitle("");
       setSport("");
       setDate("");
       setOpponent("");
+      setSeason("");
+      setScheduledStartAt("");
       setShowCreate(false);
       await refreshGames();
-      setSelectedId(id);
+      setSelectedGameId(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create game.");
     } finally {
       setCreating(false);
     }
-  }, [user, title, sport, date, opponent, refreshGames]);
+  }, [
+    user,
+    selectedTeamId,
+    selectedTeam,
+    title,
+    sport,
+    date,
+    opponent,
+    season,
+    scheduledStartAt,
+    refreshGames,
+  ]);
 
-  const selectedGame = games.find((g) => g.id === selectedId) ?? null;
+  const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
+  const canCreateGames =
+    selectedTeam && user ? canCoachTeam(selectedTeam, user.uid) : false;
 
   if (loading) {
     return (
@@ -108,8 +166,8 @@ export default function GameCapPage() {
             Game Cap
           </h1>
           <p className="mb-8 text-sm leading-relaxed text-zinc-300">
-            Sign in to create a Game, attach a YouTube source, and open it in
-            Film Room.
+            Sign in to select your team, create games, attach YouTube sources,
+            and open Film Room.
           </p>
           <button
             type="button"
@@ -137,37 +195,58 @@ export default function GameCapPage() {
             Game Cap
           </h1>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-zinc-300">
-            Create or pick a Game, attach a YouTube video as a source, then open
-            it in Film Room for review and sync. Camera recording comes later —
-            for now, sources are YouTube-backed.
+            Select your team, create or pick a game, attach a YouTube video as a
+            source, then open it in Film Room. Camera recording and upload come
+            later — for now, sources are YouTube-backed.
           </p>
         </div>
 
-        {/* Step 1: pick or create a Game */}
+        <section className={`${panelClass} mb-5`}>
+          <TeamSetup
+            currentUid={user.uid}
+            selectedTeamId={selectedTeamId}
+            onSelectTeam={setSelectedTeamId}
+            onTeamsChanged={() => void refreshTeam()}
+          />
+          {selectedTeam ? (
+            <div className="mt-4 border-t border-white/[0.06] pt-4">
+              <TeamInvites team={selectedTeam} currentUid={user.uid} />
+            </div>
+          ) : null}
+        </section>
+
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">
-              1 · Choose a Game
+              2 · Choose a Game
             </h2>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => void refreshGames()}
-                className={ghostBtn}
-              >
-                Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCreate((s) => !s)}
-                className={ghostBtn}
-              >
-                {showCreate ? "Cancel" : "New Game"}
-              </button>
-            </div>
+            {selectedTeamId ? (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void refreshGames()}
+                  className={ghostBtn}
+                >
+                  Refresh
+                </button>
+                {canCreateGames ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowCreate((s) => !s)}
+                    className={ghostBtn}
+                  >
+                    {showCreate ? "Cancel" : "New Game"}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
-          {showCreate ? (
+          {!selectedTeamId ? (
+            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
+              Select a team above to see its games.
+            </p>
+          ) : showCreate && canCreateGames ? (
             <div className="mb-4 rounded-lg border border-white/[0.08] bg-black/25 p-3">
               <div className="space-y-2">
                 <input
@@ -177,6 +256,22 @@ export default function GameCapPage() {
                   placeholder="Title (e.g. U14 vs Rangers)"
                   className={inputClass}
                 />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    value={opponent}
+                    onChange={(e) => setOpponent(e.target.value)}
+                    placeholder="Opponent (optional)"
+                    className={inputClass}
+                  />
+                  <input
+                    type="text"
+                    value={season}
+                    onChange={(e) => setSeason(e.target.value)}
+                    placeholder="Season (optional)"
+                    className={inputClass}
+                  />
+                </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <input
                     type="text"
@@ -192,11 +287,11 @@ export default function GameCapPage() {
                     className={inputClass}
                   />
                   <input
-                    type="text"
-                    value={opponent}
-                    onChange={(e) => setOpponent(e.target.value)}
-                    placeholder="Opponent (optional)"
+                    type="datetime-local"
+                    value={scheduledStartAt}
+                    onChange={(e) => setScheduledStartAt(e.target.value)}
                     className={inputClass}
+                    title="Scheduled start (for clock sync later)"
                   />
                 </div>
                 <button
@@ -211,21 +306,23 @@ export default function GameCapPage() {
             </div>
           ) : null}
 
-          {gamesLoading ? (
+          {!selectedTeamId ? null : gamesLoading ? (
             <p className="text-sm text-zinc-400">Loading games…</p>
           ) : games.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              No games yet. Create one above to get started.
+              {canCreateGames
+                ? "No games yet for this team. Create one above."
+                : "No games yet for this team."}
             </p>
           ) : (
             <ul className="space-y-1.5">
               {games.map((g) => {
-                const active = g.id === selectedId;
+                const active = g.id === selectedGameId;
                 return (
                   <li key={g.id}>
                     <button
                       type="button"
-                      onClick={() => setSelectedId(active ? null : g.id)}
+                      onClick={() => setSelectedGameId(active ? null : g.id)}
                       className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition ${
                         active
                           ? "border-blue-500/50 bg-blue-950/30"
@@ -237,13 +334,10 @@ export default function GameCapPage() {
                           {g.title}
                         </span>
                         <span className="block text-xs text-zinc-500">
-                          {[g.sport, g.date, g.awayTeam]
+                          {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
                             .filter(Boolean)
-                            .join(" · ") || "Game container"}
+                            .join(" · ") || "Game"}
                         </span>
-                      </span>
-                      <span className="shrink-0 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium text-zinc-300">
-                        {roleFor(g, user.uid)}
                       </span>
                     </button>
                   </li>
@@ -257,26 +351,26 @@ export default function GameCapPage() {
           ) : null}
         </section>
 
-        {/* Step 2: attach source + open */}
         <section className={panelClass}>
           <h2 className="mb-3 text-sm font-semibold text-white">
-            2 · Attach a source &amp; open
+            3 · Attach a source &amp; open
           </h2>
           {!selectedGame ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              Select a Game above to attach a YouTube source.
+              Select a game above to attach a YouTube source.
             </p>
           ) : (
             <div>
-              {!canEditGame(selectedGame, user.uid) ? (
+              {!canContributeGameSources(selectedGame, user.uid, teamRole) ? (
                 <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-xs leading-snug text-amber-200">
-                  You&apos;re a viewer on this Game. Only owners and editors can
-                  attach sources — you can still open it in Film Room.
+                  You can view this game but cannot attach sources with your
+                  current team role ({teamRole ?? "none"}).
                 </p>
               ) : null}
               <GameSources
                 game={selectedGame}
                 currentUid={user.uid}
+                teamRole={teamRole}
                 onChanged={() => void refreshGames()}
               />
             </div>

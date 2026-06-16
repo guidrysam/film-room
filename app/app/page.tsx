@@ -19,6 +19,7 @@ import {
   type SavedSessionKind,
 } from "@/lib/saved-sessions";
 import { listMyGames, type Game } from "@/lib/games";
+import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
 import GameDetails from "@/components/GameDetails";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
@@ -137,6 +138,8 @@ export default function DashboardPage() {
   const [gamesLoading, setGamesLoading] = useState(false);
   const [creatingGameId, setCreatingGameId] = useState<string | null>(null);
   const [openGameId, setOpenGameId] = useState<string | null>(null);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
 
   const filteredSessions = useMemo(
     () =>
@@ -176,9 +179,23 @@ export default function DashboardPage() {
     }
   }, [user]);
 
+  const refreshTeams = useCallback(async () => {
+    if (!user) return;
+    setTeamsLoading(true);
+    try {
+      setTeams(await listMyTeams(user.uid));
+    } finally {
+      setTeamsLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     void refreshGames();
   }, [refreshGames]);
+
+  useEffect(() => {
+    void refreshTeams();
+  }, [refreshTeams]);
 
   const handleCreateGameFromSession = useCallback(
     async (sessionId: string) => {
@@ -455,6 +472,67 @@ export default function DashboardPage() {
               Open Film Room
             </a>
           </div>
+        </section>
+
+        {/* Teams: lightweight org layer for Game Cap. */}
+        <section className={`${panelClass} mb-10`}>
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Teams
+              </p>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Organize Game Cap uploads by team and role.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void refreshTeams()}
+                className="text-xs font-medium text-zinc-400 transition hover:text-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm"
+              >
+                Refresh
+              </button>
+              <Link href="/game-cap" className={ghostBtn}>
+                Game Cap
+              </Link>
+            </div>
+          </div>
+          {teamsLoading ? (
+            <p className="text-sm text-zinc-400">Loading teams…</p>
+          ) : teams.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
+              No teams yet.{" "}
+              <Link href="/game-cap" className="text-blue-300 hover:underline">
+                Create one in Game Cap
+              </Link>
+              .
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {teams.map((t) => {
+                const role = user ? teamRoleFor(t, user.uid) : null;
+                return (
+                  <li
+                    key={t.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-white">
+                        {t.name}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {[t.sport, role].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    <Link href="/game-cap" className={ghostBtn}>
+                      Open
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
 
         {/* Film Room: review, games, perspectives, contributors, saved sessions. */}

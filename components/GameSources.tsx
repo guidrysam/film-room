@@ -4,9 +4,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addYouTubeSourceToGame,
-  canEditGame,
+  canContributeGameSources,
   listGameSources,
   type Game,
+  type GameTeamRole,
   type GameVideoSource,
 } from "@/lib/games";
 import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
@@ -14,6 +15,8 @@ import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
 export type GameSourcesProps = {
   game: Game;
   currentUid: string;
+  /** Team role when the game is team-scoped (enables parent source attach). */
+  teamRole?: GameTeamRole | null;
   /** Called after a source is added (parent may refresh counts). */
   onChanged?: () => void;
 };
@@ -54,10 +57,11 @@ function shortUid(uid?: string): string {
 export default function GameSources({
   game,
   currentUid,
+  teamRole,
   onChanged,
 }: GameSourcesProps) {
   const router = useRouter();
-  const canEdit = canEditGame(game, currentUid);
+  const canEdit = canContributeGameSources(game, currentUid, teamRole);
 
   const [sources, setSources] = useState<GameVideoSource[]>([]);
   const [loading, setLoading] = useState(false);

@@ -143,6 +143,14 @@ export type Game = {
   date?: string;
   homeTeam?: string;
   awayTeam?: string;
+  /** Back-link to a Team (optional — standalone games omit this). */
+  teamId?: string;
+  /** Future club scope (optional). */
+  clubId?: string;
+  season?: string;
+  opponent?: string;
+  /** ISO-8601 scheduled kickoff (optional, for clock sync). */
+  scheduledStartAt?: string;
   ownerId: string;
   /** uid -> role. Owner is always present. */
   contributors: Record<string, GameRole>;
@@ -162,6 +170,11 @@ export type CreateGameInput = {
   date?: string;
   homeTeam?: string;
   awayTeam?: string;
+  teamId?: string;
+  clubId?: string;
+  season?: string;
+  opponent?: string;
+  scheduledStartAt?: string;
   visibility?: GameVisibility;
   sourceSavedSessionId?: string;
 };
@@ -220,6 +233,13 @@ export async function createGame(
     ...(trimOrUndef(data.date) ? { date: data.date!.trim() } : {}),
     ...(trimOrUndef(data.homeTeam) ? { homeTeam: data.homeTeam!.trim() } : {}),
     ...(trimOrUndef(data.awayTeam) ? { awayTeam: data.awayTeam!.trim() } : {}),
+    ...(trimOrUndef(data.teamId) ? { teamId: data.teamId!.trim() } : {}),
+    ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
+    ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
+    ...(trimOrUndef(data.opponent) ? { opponent: data.opponent!.trim() } : {}),
+    ...(trimOrUndef(data.scheduledStartAt)
+      ? { scheduledStartAt: data.scheduledStartAt!.trim() }
+      : {}),
     ...(trimOrUndef(data.sourceSavedSessionId)
       ? { sourceSavedSessionId: data.sourceSavedSessionId!.trim() }
       : {}),
@@ -259,6 +279,15 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
       : {}),
     ...(trimOrUndef(raw.awayTeam)
       ? { awayTeam: (raw.awayTeam as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.teamId) ? { teamId: (raw.teamId as string).trim() } : {}),
+    ...(trimOrUndef(raw.clubId) ? { clubId: (raw.clubId as string).trim() } : {}),
+    ...(trimOrUndef(raw.season) ? { season: (raw.season as string).trim() } : {}),
+    ...(trimOrUndef(raw.opponent)
+      ? { opponent: (raw.opponent as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.scheduledStartAt)
+      ? { scheduledStartAt: (raw.scheduledStartAt as string).trim() }
       : {}),
     ...(trimOrUndef(raw.sourceSavedSessionId)
       ? { sourceSavedSessionId: (raw.sourceSavedSessionId as string).trim() }
@@ -300,8 +329,30 @@ export async function updateGame(
     ...(patch.date !== undefined ? { date: patch.date.trim() } : {}),
     ...(patch.homeTeam !== undefined ? { homeTeam: patch.homeTeam.trim() } : {}),
     ...(patch.awayTeam !== undefined ? { awayTeam: patch.awayTeam.trim() } : {}),
+    ...(patch.teamId !== undefined ? { teamId: patch.teamId.trim() } : {}),
+    ...(patch.clubId !== undefined ? { clubId: patch.clubId.trim() } : {}),
+    ...(patch.season !== undefined ? { season: patch.season.trim() } : {}),
+    ...(patch.opponent !== undefined ? { opponent: patch.opponent.trim() } : {}),
+    ...(patch.scheduledStartAt !== undefined
+      ? { scheduledStartAt: patch.scheduledStartAt.trim() }
+      : {}),
     ...(patch.visibility !== undefined ? { visibility: patch.visibility } : {}),
   });
+}
+
+/** All games linked to a team, newest first. */
+export async function listGamesForTeam(teamId: string): Promise<Game[]> {
+  const q = query(gamesCol(), where("teamId", "==", teamId));
+  const snap = await getDocs(q);
+  const out: Game[] = [];
+  snap.forEach((d) =>
+    out.push(parseGame(d.id, d.data() as Record<string, unknown>)),
+  );
+  out.sort(
+    (a, b) =>
+      (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0),
+  );
+  return out;
 }
 
 // ---- Contributors / permissions ----------------------------------------
@@ -321,6 +372,14 @@ export function canManageGame(game: Game, uid: string): boolean {
   return game.ownerId === uid || game.contributors[uid] === "owner";
 }
 
+/** Team member role (mirrors lib/teams.ts — kept here to avoid circular imports). */
+export type GameTeamRole =
+  | "admin"
+  | "coach"
+  | "parent"
+  | "player"
+  | "viewer";
+
 /** Editors (and owners) can add sources / events / cuts. */
 export function canEditGame(game: Game, uid: string): boolean {
   if (!uid) return false;
@@ -328,10 +387,51 @@ export function canEditGame(game: Game, uid: string): boolean {
 }
 
 /** Members can read; link/public games are also viewable by anyone. */
-export function canViewGame(game: Game, uid: string): boolean {
+export function canViewGame(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): boolean {
   if (game.visibility === "link" || game.visibility === "public") return true;
   if (!uid) return false;
-  return game.ownerId === uid || game.contributors[uid] != null;
+  if (game.ownerId === uid || game.contributors[uid] != null) return true;
+  if (game.teamId && teamRole) return true;
+  return false;
+}
+
+/** Source attach: game editor/owner OR team admin/coach/parent. */
+export function canContributeGameSources(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): boolean {
+  if (canEditGame(game, uid)) return true;
+  if (!game.teamId || !teamRole) return false;
+  return (
+    teamRole === "admin" || teamRole === "coach" || teamRole === "parent"
+  );
+}
+
+/** Timeline events / coach marks: game editor/owner OR team admin/coach. */
+export function canCoachGame(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): boolean {
+  if (canEditGame(game, uid)) return true;
+  if (!game.teamId || !teamRole) return false;
+  return teamRole === "admin" || teamRole === "coach";
+}
+
+/** Director cuts: game editor/owner OR any team member. */
+export function canCreateGameCut(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): boolean {
+  if (canEditGame(game, uid)) return true;
+  if (game.teamId && teamRole) return true;
+  return false;
 }
 
 /** All contributors for a game, sorted owner → editor → viewer then by uid. */
