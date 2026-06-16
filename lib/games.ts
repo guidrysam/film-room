@@ -134,10 +134,14 @@ export type DirectorTrackEvent = {
  */
 export type CutVisibility = "private" | "game" | "team";
 
+/** Discriminator for director tracks (default `cut`). */
+export type DirectorTrackKind = "cut" | "highlight";
+
 export type DirectorTrack = {
   id: string;
   /** Back-link to the owning Game (denormalized for portability). */
   gameId?: string;
+  kind?: DirectorTrackKind;
   name: string;
   description?: string;
   visibility?: CutVisibility;
@@ -989,9 +993,12 @@ export async function createDirectorTrack(
   const visibility = CUT_VISIBILITIES.includes(data.visibility as CutVisibility)
     ? (data.visibility as CutVisibility)
     : "private";
+  const kind =
+    data.kind === "highlight" || data.kind === "cut" ? data.kind : "cut";
   await setDoc(ref, {
     id: ref.id,
     gameId,
+    kind,
     name: data.name.trim() || "Cut",
     track,
     visibility,
@@ -1067,6 +1074,10 @@ function parseDirectorTrack(
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : "Cut",
+    kind:
+      raw.kind === "highlight" || raw.kind === "cut"
+        ? raw.kind
+        : undefined,
     visibility,
     track,
     ...(trimOrUndef(raw.gameId) ? { gameId: (raw.gameId as string).trim() } : {}),
@@ -1120,4 +1131,61 @@ export async function listDirectorTracks(
       (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0),
   );
   return out;
+}
+
+export async function getDirectorTrack(
+  gameId: string,
+  cutId: string,
+): Promise<DirectorTrack | null> {
+  const snap = await getDoc(doc(cutsCol(gameId), cutId));
+  if (!snap.exists()) return null;
+  return parseDirectorTrack(snap.id, snap.data() as Record<string, unknown>);
+}
+
+export type UpdateDirectorTrackPatch = {
+  name?: string;
+  description?: string;
+  track?: DirectorTrackEvent[];
+  visibility?: CutVisibility;
+};
+
+export async function updateDirectorTrack(
+  gameId: string,
+  cutId: string,
+  patch: UpdateDirectorTrackPatch,
+): Promise<void> {
+  await updateDoc(doc(cutsCol(gameId), cutId), {
+    updatedAt: serverTimestamp(),
+    ...(patch.name !== undefined ? { name: patch.name.trim() || "Cut" } : {}),
+    ...(patch.description !== undefined
+      ? { description: patch.description }
+      : {}),
+    ...(patch.visibility !== undefined ? { visibility: patch.visibility } : {}),
+    ...(patch.track !== undefined
+      ? {
+          track: patch.track
+            .filter(
+              (e) =>
+                e &&
+                typeof e === "object" &&
+                typeof e.t === "number" &&
+                Number.isFinite(e.t),
+            )
+            .map((e) => ({
+              t: Math.max(0, e.t),
+              ...(DIRECTOR_EVENT_TYPES.includes(e.type as DirectorTrackEventType)
+                ? { type: e.type }
+                : {}),
+              ...(trimOrUndef(e.layout) ? { layout: e.layout!.trim() } : {}),
+              ...(trimOrUndef(e.activeSource)
+                ? { activeSource: e.activeSource!.trim() }
+                : {}),
+              ...(trimOrUndef(e.playerView)
+                ? { playerView: e.playerView!.trim() }
+                : {}),
+              ...(trimOrUndef(e.note) ? { note: e.note!.trim() } : {}),
+            })),
+        }
+      : {}),
+  });
 }

@@ -54,5 +54,5 @@ export default function GameReviewPage() {
     );
   }
 
-  return <GameReview gameId={gameId} currentUid={user.uid} />;
+  return <GameReview gameId={gameId} currentUid={user.uid} currentDisplayName={user.displayName} />;
 }
