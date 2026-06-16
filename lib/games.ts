@@ -3,6 +3,7 @@ import {
   arrayUnion,
   collection,
   deleteField,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -1188,4 +1189,11 @@ export async function updateDirectorTrack(
         }
       : {}),
   });
+}
+
+export async function deleteDirectorTrack(
+  gameId: string,
+  cutId: string,
+): Promise<void> {
+  await deleteDoc(doc(cutsCol(gameId), cutId));
 }

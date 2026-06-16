@@ -1,5 +1,6 @@
 import {
   createDirectorTrack,
+  deleteDirectorTrack,
   getDirectorTrack,
   listDirectorTracks,
   updateDirectorTrack,
@@ -215,6 +216,41 @@ export async function appendHighlightMoment(
     track: highlightMomentsToTrackEvents(next),
     description: serializeHighlightDraftMeta(next),
   });
+}
+
+export async function removeHighlightMoment(
+  gameId: string,
+  draftId: string,
+  momentId: string,
+): Promise<void> {
+  const track = await getDirectorTrack(gameId, draftId);
+  if (!track || !isHighlightDraft(track)) {
+    throw new Error("Highlight draft not found.");
+  }
+  const meta = parseHighlightDraftMeta(track);
+  const moments = meta?.moments ?? [];
+  const next = moments.filter((m) => m.id !== momentId);
+  if (next.length === moments.length) {
+    throw new Error("Moment not found.");
+  }
+  if (next.length === 0) {
+    await deleteDirectorTrack(gameId, draftId);
+    return;
+  }
+  await updateDirectorTrack(gameId, draftId, {
+    track: highlightMomentsToTrackEvents(next),
+    description: serializeHighlightDraftMeta(next),
+  });
+}
+
+/** Playback point for a single saved moment (clip start). */
+export function highlightMomentPlayhead(
+  moment: HighlightMoment,
+): { gameTime: number; activeSourceId: string } {
+  return {
+    gameTime: Math.max(0, moment.gameTime + moment.startOffsetSec),
+    activeSourceId: moment.activeSourceId,
+  };
 }
 
 /** First playback point for a draft (clip start of earliest moment). */

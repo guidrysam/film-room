@@ -24,8 +24,11 @@ import {
   appendHighlightMoment,
   createHighlightDraft,
   highlightDraftPlayhead,
+  highlightMomentPlayhead,
   listHighlightDrafts,
+  removeHighlightMoment,
   type HighlightDraft,
+  type HighlightMoment,
 } from "@/lib/highlight-draft";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 
@@ -46,6 +49,13 @@ const inputClass =
 
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
+const dangerBtn =
+  "rounded-lg border border-rose-500/25 bg-rose-950/20 px-2 py-1 text-[10px] font-medium text-rose-200 transition hover:border-rose-500/40 hover:bg-rose-950/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/30 disabled:cursor-not-allowed disabled:opacity-50";
+
+function formatOffsetSec(sec: number): string {
+  return sec >= 0 ? `+${sec}s` : `${sec}s`;
+}
 
 function eventTypeLabel(type: GameTimelineEventType): string {
   switch (type) {
@@ -106,6 +116,8 @@ export default function GameReview({
   const [endOffsetSec, setEndOffsetSec] = useState(10);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
+  const [expandedDraftId, setExpandedDraftId] = useState<string | null>(null);
+  const [removingMomentKey, setRemovingMomentKey] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -138,6 +150,12 @@ export default function GameReview({
     [playableSources, momentSourceId, selectedSourceId],
   );
 
+  const sourceLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of playableSources) map.set(s.id, s.label);
+    return map;
+  }, [playableSources]);
+
   const refreshHighlightDrafts = useCallback(async () => {
     try {
       const drafts = await listHighlightDrafts(gameId, currentUid);
@@ -145,6 +163,10 @@ export default function GameReview({
       setSelectedDraftId((prev) => {
         if (prev && drafts.some((d) => d.id === prev)) return prev;
         return drafts[0]?.id ?? null;
+      });
+      setExpandedDraftId((prev) => {
+        if (prev && drafts.some((d) => d.id === prev)) return prev;
+        return null;
       });
     } catch {
       /* non-fatal */
@@ -305,6 +327,36 @@ export default function GameReview({
     },
     [seekToGameMoment],
   );
+
+  const handlePlayHighlightMoment = useCallback(
+    (moment: HighlightMoment) => {
+      const playhead = highlightMomentPlayhead(moment);
+      seekToGameMoment(playhead.gameTime, playhead.activeSourceId);
+    },
+    [seekToGameMoment],
+  );
+
+  const handleRemoveHighlightMoment = useCallback(
+    async (draftId: string, momentId: string) => {
+      const key = `${draftId}:${momentId}`;
+      setRemovingMomentKey(key);
+      setDraftMessage(null);
+      try {
+        await removeHighlightMoment(gameId, draftId, momentId);
+        await refreshHighlightDrafts();
+        setDraftMessage("Moment removed.");
+      } catch {
+        setDraftMessage("Could not remove moment.");
+      } finally {
+        setRemovingMomentKey(null);
+      }
+    },
+    [gameId, refreshHighlightDrafts],
+  );
+
+  const toggleDraftExpanded = useCallback((draftId: string) => {
+    setExpandedDraftId((prev) => (prev === draftId ? null : draftId));
+  }, []);
 
   const handleSelectSource = useCallback(
     (sourceId: string) => {
@@ -544,24 +596,34 @@ export default function GameReview({
               </section>
 
               <section className={panelClass}>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                  Highlight draft
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                  Highlight Draft
                 </p>
-                <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-                  Save the selected game moment as an instruction-based clip
-                  (no rendered video).
+                <p className="mb-4 text-[11px] leading-snug text-zinc-500">
+                  This saves instructions, not a rendered video yet.
+                </p>
+
+                {highlightDrafts.length === 0 ? (
+                  <p className="mb-4 rounded-lg border border-dashed border-white/[0.08] bg-black/15 px-3 py-2.5 text-[11px] leading-snug text-zinc-500">
+                    Click a coach mark or timeline event, choose an angle, then
+                    save it to a highlight draft.
+                  </p>
+                ) : null}
+
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Add moment
                 </p>
 
                 <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
                   <p className="text-[10px] uppercase tracking-wide text-zinc-500">
-                    Selected moment
+                    Selected game time
                   </p>
                   <p className="mt-0.5 font-mono text-xs text-zinc-200">
                     {formatTimelineSeconds(selectedGameTime)}
                     {selectedEvent?.label ? ` · ${selectedEvent.label}` : ""}
                   </p>
                   <p className="mt-0.5 text-[10px] text-zinc-500">
-                    Clip{" "}
+                    Clip window{" "}
                     {formatTimelineSeconds(
                       Math.max(0, selectedGameTime + startOffsetSec),
                     )}{" "}
@@ -571,7 +633,9 @@ export default function GameReview({
                         Math.max(0, selectedGameTime + startOffsetSec),
                         selectedGameTime + endOffsetSec,
                       ),
-                    )}
+                    )}{" "}
+                    ({formatOffsetSec(startOffsetSec)} /{" "}
+                    {formatOffsetSec(endOffsetSec)})
                   </p>
                 </div>
 
@@ -597,7 +661,7 @@ export default function GameReview({
                         : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.04]"
                     }`}
                   >
-                    Existing
+                    Existing draft
                   </button>
                 </div>
 
@@ -637,7 +701,7 @@ export default function GameReview({
 
                 <label className="mb-3 block">
                   <span className="mb-1 block text-[10px] text-zinc-500">
-                    Active angle
+                    Angle
                   </span>
                   <select
                     value={momentSourceId ?? selectedSourceId ?? ""}
@@ -687,40 +751,143 @@ export default function GameReview({
                   disabled={draftSaving || !momentSource}
                   className={`${primaryBtn} w-full`}
                 >
-                  {draftSaving ? "Saving…" : "Add to highlight draft"}
+                  {draftSaving ? "Saving…" : "Save to Highlight Draft"}
                 </button>
 
                 {draftMessage ? (
                   <p className="mt-2 text-[11px] text-zinc-400">{draftMessage}</p>
                 ) : null}
 
-                {highlightDrafts.length > 0 ? (
-                  <ul className="mt-4 space-y-2 border-t border-white/[0.06] pt-3">
-                    {highlightDrafts.map((draft) => (
-                      <li
-                        key={draft.id}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-zinc-200">
-                            {draft.name}
-                          </p>
-                          <p className="text-[10px] text-zinc-500">
-                            {draft.moments.length}{" "}
-                            {draft.moments.length === 1 ? "moment" : "moments"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handlePlayHighlightDraft(draft)}
-                          className={ghostBtn}
-                        >
-                          Play
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
+                <div className="mt-5 border-t border-white/[0.06] pt-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                    Moments
+                  </p>
+                  {highlightDrafts.length === 0 ? (
+                    <p className="text-[11px] text-zinc-500">
+                      No saved moments yet.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {highlightDrafts.map((draft) => {
+                        const expanded = expandedDraftId === draft.id;
+                        const sortedMoments = [...draft.moments].sort(
+                          (a, b) => a.gameTime - b.gameTime,
+                        );
+                        return (
+                          <li
+                            key={draft.id}
+                            className="rounded-lg border border-white/[0.06] bg-black/20"
+                          >
+                            <div className="flex items-center gap-2 px-2.5 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleDraftExpanded(draft.id)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <p className="truncate text-xs font-medium text-zinc-200">
+                                  {draft.name}
+                                </p>
+                                <p className="text-[10px] text-zinc-500">
+                                  {draft.moments.length}{" "}
+                                  {draft.moments.length === 1
+                                    ? "moment"
+                                    : "moments"}
+                                </p>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePlayHighlightDraft(draft)}
+                                disabled={draft.moments.length === 0}
+                                className={ghostBtn}
+                              >
+                                Play
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleDraftExpanded(draft.id)}
+                                className="rounded-lg border border-white/10 px-2 py-1 text-[10px] text-zinc-400"
+                                aria-expanded={expanded}
+                              >
+                                {expanded ? "−" : "+"}
+                              </button>
+                            </div>
+
+                            {expanded ? (
+                              <ul className="space-y-1.5 border-t border-white/[0.06] px-2.5 py-2">
+                                {sortedMoments.map((moment) => {
+                                  const removeKey = `${draft.id}:${moment.id}`;
+                                  const removing =
+                                    removingMomentKey === removeKey;
+                                  const clipStart = Math.max(
+                                    0,
+                                    moment.gameTime + moment.startOffsetSec,
+                                  );
+                                  const clipEnd = Math.max(
+                                    clipStart,
+                                    moment.gameTime + moment.endOffsetSec,
+                                  );
+                                  return (
+                                    <li
+                                      key={moment.id}
+                                      className="rounded-lg border border-white/[0.05] bg-black/25 px-2 py-2"
+                                    >
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <p className="text-[11px] font-medium text-zinc-200">
+                                            {moment.label?.trim() ||
+                                              "Highlight moment"}
+                                          </p>
+                                          <p className="mt-0.5 font-mono text-[10px] text-zinc-400">
+                                            {formatTimelineSeconds(moment.gameTime)}
+                                          </p>
+                                          <p className="mt-0.5 text-[10px] text-zinc-500">
+                                            {sourceLabelById.get(
+                                              moment.activeSourceId,
+                                            ) ?? moment.activeSourceId}
+                                          </p>
+                                          <p className="mt-0.5 text-[10px] text-zinc-500">
+                                            {formatOffsetSec(moment.startOffsetSec)}{" "}
+                                            / {formatOffsetSec(moment.endOffsetSec)}{" "}
+                                            · {formatTimelineSeconds(clipStart)} →{" "}
+                                            {formatTimelineSeconds(clipEnd)}
+                                          </p>
+                                        </div>
+                                        <div className="flex shrink-0 flex-col gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handlePlayHighlightMoment(moment)
+                                            }
+                                            className={ghostBtn}
+                                          >
+                                            Play moment
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              void handleRemoveHighlightMoment(
+                                                draft.id,
+                                                moment.id,
+                                              )
+                                            }
+                                            disabled={removing}
+                                            className={dangerBtn}
+                                          >
+                                            {removing ? "…" : "Remove"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
               </section>
             </div>
           </div>
