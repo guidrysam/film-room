@@ -1616,12 +1616,37 @@ export default function StreamRoomPage() {
               Set up live angles before starting a synced session.
             </p>
           </div>
-          <Link
-            href="/"
-            className="rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
-          >
-            ← Home
-          </Link>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <Link
+              href="/"
+              className="rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+            >
+              ← Home
+            </Link>
+            <Link
+              href="/stream/embed-diagnostics"
+              className="rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+            >
+              Embed diagnostics
+            </Link>
+          </div>
+        </div>
+
+        <div className={panelClass}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-white">
+                YouTube embed diagnostics
+              </h2>
+              <p className="text-xs leading-relaxed text-zinc-400">
+                Compare Studio vs API-created live streams on your channel. Test
+                whether manual Studio streams embed when API broadcasts do not.
+              </p>
+            </div>
+            <Link href="/stream/embed-diagnostics" className={ghostBtn}>
+              Open diagnostics
+            </Link>
+          </div>
         </div>
 
         <div className={panelClass}>
