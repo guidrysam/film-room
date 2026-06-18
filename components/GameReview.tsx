@@ -19,7 +19,8 @@ import {
   type GameTimelineEventType,
   type GameVideoSource,
 } from "@/lib/games";
-import { getTeam, teamRoleFor } from "@/lib/teams";
+import { getTeam, listTeamPlayers, teamRoleFor, type Player } from "@/lib/teams";
+import { getEventPlayerIds } from "@/lib/timeline-players";
 import {
   appendHighlightMoment,
   createHighlightDraft,
@@ -36,6 +37,8 @@ export type GameReviewProps = {
   gameId: string;
   currentUid: string;
   currentDisplayName?: string | null;
+  initialGameTime?: number;
+  initialSourceId?: string;
 };
 
 const panelClass =
@@ -96,6 +99,8 @@ export default function GameReview({
   gameId,
   currentUid,
   currentDisplayName,
+  initialGameTime,
+  initialSourceId,
 }: GameReviewProps) {
   const [game, setGame] = useState<Game | null>(null);
   const [sources, setSources] = useState<GameVideoSource[]>([]);
@@ -103,8 +108,14 @@ export default function GameReview({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const [selectedGameTime, setSelectedGameTime] = useState(0);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(
+    initialSourceId ?? null,
+  );
+  const [selectedGameTime, setSelectedGameTime] = useState(
+    typeof initialGameTime === "number" && Number.isFinite(initialGameTime)
+      ? Math.max(0, initialGameTime)
+      : 0,
+  );
   const [seekWarning, setSeekWarning] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [highlightDrafts, setHighlightDrafts] = useState<HighlightDraft[]>([]);
@@ -118,6 +129,8 @@ export default function GameReview({
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
   const [expandedDraftId, setExpandedDraftId] = useState<string | null>(null);
   const [removingMomentKey, setRemovingMomentKey] = useState<string | null>(null);
+  const [teamPlayers, setTeamPlayers] = useState<Player[]>([]);
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [playerReady, setPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -195,8 +208,20 @@ export default function GameReview({
       setGame(g);
       setSources(srcs);
       setEvents(evs);
+      if (g.teamId) {
+        try {
+          setTeamPlayers(await listTeamPlayers(g.teamId));
+        } catch {
+          setTeamPlayers([]);
+        }
+      } else {
+        setTeamPlayers([]);
+      }
       const playable = srcs.filter(isPlayableYouTubeSource);
       setSelectedSourceId((prev) => {
+        if (initialSourceId && playable.some((s) => s.id === initialSourceId)) {
+          return initialSourceId;
+        }
         if (prev && playable.some((s) => s.id === prev)) return prev;
         return playable[0]?.id ?? null;
       });
@@ -206,7 +231,7 @@ export default function GameReview({
     } finally {
       setLoading(false);
     }
-  }, [gameId, currentUid, refreshHighlightDrafts]);
+  }, [gameId, currentUid, refreshHighlightDrafts, initialSourceId]);
 
   useEffect(() => {
     void refresh();
@@ -231,6 +256,18 @@ export default function GameReview({
     },
     [playerReady],
   );
+
+  useEffect(() => {
+    if (
+      typeof initialGameTime === "number" &&
+      Number.isFinite(initialGameTime) &&
+      selectedSource &&
+      !loading
+    ) {
+      setSelectedGameTime(initialGameTime);
+      void applySeekForGameTime(initialGameTime, selectedSource);
+    }
+  }, [initialGameTime, selectedSource, loading, applySeekForGameTime]);
 
   const seekToGameMoment = useCallback(
     (gameTime: number, sourceId: string) => {
@@ -277,6 +314,9 @@ export default function GameReview({
         endOffsetSec,
         ...(selectedEvent?.label ? { label: selectedEvent.label } : {}),
         ...(selectedEvent?.id ? { timelineEventId: selectedEvent.id } : {}),
+        ...(selectedPlayerIds.length > 0
+          ? { playerIds: selectedPlayerIds }
+          : {}),
       };
       if (draftTarget === "new") {
         if (!newDraftName.trim()) {
@@ -286,6 +326,7 @@ export default function GameReview({
         await createHighlightDraft(gameId, currentUid, {
           name: newDraftName,
           moment: momentInput,
+          ...(selectedPlayerIds.length > 0 ? { playerIds: selectedPlayerIds } : {}),
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setDraftMessage("Moment saved to new draft.");
@@ -317,6 +358,7 @@ export default function GameReview({
     currentDisplayName,
     selectedDraftId,
     refreshHighlightDrafts,
+    selectedPlayerIds,
   ]);
 
   const handlePlayHighlightDraft = useCallback(
@@ -357,6 +399,20 @@ export default function GameReview({
   const toggleDraftExpanded = useCallback((draftId: string) => {
     setExpandedDraftId((prev) => (prev === draftId ? null : draftId));
   }, []);
+
+  const togglePlayerSelection = useCallback((playerId: string) => {
+    setSelectedPlayerIds((prev) =>
+      prev.includes(playerId)
+        ? prev.filter((id) => id !== playerId)
+        : [...prev, playerId],
+    );
+  }, []);
+
+  const playerNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of teamPlayers) map.set(p.id, p.name);
+    return map;
+  }, [teamPlayers]);
 
   const handleSelectSource = useCallback(
     (sourceId: string) => {
@@ -582,11 +638,18 @@ export default function GameReview({
                                 {ev.label}
                               </p>
                             ) : null}
-                            {ev.createdByName ? (
-                              <p className="mt-0.5 text-[10px] text-zinc-500">
-                                {ev.createdByName}
-                              </p>
-                            ) : null}
+                          {ev.createdByName ? (
+                            <p className="mt-0.5 text-[10px] text-zinc-500">
+                              {ev.createdByName}
+                            </p>
+                          ) : null}
+                          {getEventPlayerIds(ev).length > 0 ? (
+                            <p className="mt-0.5 text-[10px] text-violet-300">
+                              {getEventPlayerIds(ev)
+                                .map((id) => playerNameById.get(id) ?? id)
+                                .join(", ")}
+                            </p>
+                          ) : null}
                           </button>
                         </li>
                       );
@@ -715,6 +778,35 @@ export default function GameReview({
                     ))}
                   </select>
                 </label>
+
+                {teamPlayers.length > 0 ? (
+                  <div className="mb-3">
+                    <p className="mb-1.5 text-[10px] text-zinc-500">
+                      Tag player (optional)
+                    </p>
+                    <ul className="max-h-28 space-y-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-black/20 p-2">
+                      {teamPlayers.map((p) => {
+                        const active = selectedPlayerIds.includes(p.id);
+                        return (
+                          <li key={p.id}>
+                            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
+                              <input
+                                type="checkbox"
+                                checked={active}
+                                onChange={() => togglePlayerSelection(p.id)}
+                                className="rounded border-white/20"
+                              />
+                              <span>
+                                {p.name}
+                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
 
                 <div className="mb-3 grid grid-cols-2 gap-2">
                   <label className="block">

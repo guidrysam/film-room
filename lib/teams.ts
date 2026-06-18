@@ -398,6 +398,15 @@ export async function listTeamPlayers(teamId: string): Promise<Player[]> {
   return out;
 }
 
+export async function getTeamPlayer(
+  teamId: string,
+  playerId: string,
+): Promise<Player | null> {
+  const snap = await getDoc(doc(playersCol(teamId), playerId));
+  if (!snap.exists()) return null;
+  return parsePlayer(snap.id, snap.data() as Record<string, unknown>);
+}
+
 export async function upsertTeamPlayer(
   teamId: string,
   input: PlayerInput,

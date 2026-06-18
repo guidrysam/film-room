@@ -23,11 +23,15 @@ export type HighlightMoment = {
   activeSourceId: string;
   label?: string;
   timelineEventId?: string;
+  /** Players tagged on this moment (optional). */
+  playerIds?: string[];
 };
 
 export type HighlightDraftMeta = {
   schema: typeof HIGHLIGHT_DRAFT_SCHEMA;
   moments: HighlightMoment[];
+  /** Players assigned to the whole draft (optional). */
+  playerIds?: string[];
 };
 
 export type HighlightDraft = {
@@ -35,6 +39,7 @@ export type HighlightDraft = {
   name: string;
   gameId: string;
   moments: HighlightMoment[];
+  playerIds?: string[];
   createdBy?: string;
   createdByName?: string;
 };
@@ -46,6 +51,7 @@ export type AddHighlightMomentInput = {
   endOffsetSec?: number;
   label?: string;
   timelineEventId?: string;
+  playerIds?: string[];
 };
 
 function randomMomentId(): string {
@@ -56,12 +62,29 @@ export function isHighlightDraft(track: DirectorTrack): boolean {
   return track.kind === "highlight";
 }
 
+function parsePlayerIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (id): id is string => typeof id === "string" && id.trim() !== "",
+  );
+}
+
+function uniquePlayerIds(...groups: (string[] | undefined)[]): string[] {
+  const set = new Set<string>();
+  for (const g of groups) {
+    for (const id of g ?? []) set.add(id);
+  }
+  return [...set];
+}
+
 export function serializeHighlightDraftMeta(
   moments: HighlightMoment[],
+  playerIds?: string[],
 ): string {
   const meta: HighlightDraftMeta = {
     schema: HIGHLIGHT_DRAFT_SCHEMA,
     moments,
+    ...(playerIds && playerIds.length > 0 ? { playerIds } : {}),
   };
   return JSON.stringify(meta);
 }
@@ -93,9 +116,17 @@ export function parseHighlightDraftMeta(
         ...(typeof m.timelineEventId === "string"
           ? { timelineEventId: m.timelineEventId }
           : {}),
+        ...(parsePlayerIds(m.playerIds).length > 0
+          ? { playerIds: parsePlayerIds(m.playerIds) }
+          : {}),
       });
     }
-    return { schema: HIGHLIGHT_DRAFT_SCHEMA, moments };
+    const draftPlayerIds = parsePlayerIds(raw.playerIds);
+    return {
+      schema: HIGHLIGHT_DRAFT_SCHEMA,
+      moments,
+      ...(draftPlayerIds.length > 0 ? { playerIds: draftPlayerIds } : {}),
+    };
   } catch {
     return null;
   }
@@ -137,9 +168,37 @@ export function highlightDraftFromTrack(track: DirectorTrack): HighlightDraft | 
     name: track.name,
     gameId: track.gameId ?? "",
     moments: meta.moments,
+    ...(meta.playerIds && meta.playerIds.length > 0
+      ? { playerIds: meta.playerIds }
+      : {}),
     ...(track.createdBy ? { createdBy: track.createdBy } : {}),
     ...(track.createdByName ? { createdByName: track.createdByName } : {}),
   };
+}
+
+/** Whether a highlight draft is associated with a player (draft or moment level). */
+export function highlightDraftMatchesPlayer(
+  draft: HighlightDraft,
+  playerId: string,
+): boolean {
+  if (draft.playerIds?.includes(playerId)) return true;
+  return draft.moments.some((m) => m.playerIds?.includes(playerId));
+}
+
+/** Moments in a draft tagged for a specific player. */
+export function highlightMomentsForPlayer(
+  draft: HighlightDraft,
+  playerId: string,
+): HighlightMoment[] {
+  const draftLevel = draft.playerIds?.includes(playerId);
+  if (draftLevel && !draft.moments.some((m) => m.playerIds?.length)) {
+    return draft.moments;
+  }
+  return draft.moments.filter(
+    (m) =>
+      m.playerIds?.includes(playerId) ||
+      (draftLevel && (!m.playerIds || m.playerIds.length === 0)),
+  );
 }
 
 export async function listHighlightDrafts(
@@ -157,6 +216,28 @@ export async function listHighlightDrafts(
   return out;
 }
 
+/** Highlight drafts across all team games that reference a player. */
+export async function listHighlightDraftsForPlayer(
+  teamId: string,
+  playerId: string,
+  uid: string,
+): Promise<HighlightDraft[]> {
+  const { listGamesForTeam } = await import("@/lib/games");
+  const games = await listGamesForTeam(teamId);
+  const out: HighlightDraft[] = [];
+  for (const game of games) {
+    const tracks = await listDirectorTracks(game.id, uid);
+    for (const t of tracks) {
+      if (!isHighlightDraft(t)) continue;
+      const draft = highlightDraftFromTrack(t);
+      if (draft && highlightDraftMatchesPlayer(draft, playerId)) {
+        out.push({ ...draft, gameId: game.id });
+      }
+    }
+  }
+  return out;
+}
+
 export async function createHighlightDraft(
   gameId: string,
   uid: string,
@@ -164,8 +245,10 @@ export async function createHighlightDraft(
     name: string;
     moment: AddHighlightMomentInput;
     createdByName?: string;
+    playerIds?: string[];
   },
 ): Promise<string> {
+  const momentPlayerIds = parsePlayerIds(input.moment.playerIds);
   const moment: HighlightMoment = {
     id: randomMomentId(),
     gameTime: Math.max(0, input.moment.gameTime),
@@ -176,7 +259,9 @@ export async function createHighlightDraft(
     ...(input.moment.timelineEventId
       ? { timelineEventId: input.moment.timelineEventId }
       : {}),
+    ...(momentPlayerIds.length > 0 ? { playerIds: momentPlayerIds } : {}),
   };
+  const draftPlayerIds = uniquePlayerIds(input.playerIds, momentPlayerIds);
   return createDirectorTrack(gameId, {
     kind: "highlight",
     name: input.name.trim() || "Highlight draft",
@@ -184,7 +269,10 @@ export async function createHighlightDraft(
     gameId,
     createdBy: uid,
     track: highlightMomentsToTrackEvents([moment]),
-    description: serializeHighlightDraftMeta([moment]),
+    description: serializeHighlightDraftMeta(
+      [moment],
+      draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
+    ),
     ...(input.createdByName ? { createdByName: input.createdByName } : {}),
   });
 }
@@ -200,6 +288,7 @@ export async function appendHighlightMoment(
   }
   const meta = parseHighlightDraftMeta(track);
   const moments = meta?.moments ?? [];
+  const momentPlayerIds = parsePlayerIds(momentInput.playerIds);
   const moment: HighlightMoment = {
     id: randomMomentId(),
     gameTime: Math.max(0, momentInput.gameTime),
@@ -210,11 +299,16 @@ export async function appendHighlightMoment(
     ...(momentInput.timelineEventId
       ? { timelineEventId: momentInput.timelineEventId }
       : {}),
+    ...(momentPlayerIds.length > 0 ? { playerIds: momentPlayerIds } : {}),
   };
   const next = [...moments, moment];
+  const draftPlayerIds = uniquePlayerIds(meta?.playerIds, momentPlayerIds);
   await updateDirectorTrack(gameId, draftId, {
     track: highlightMomentsToTrackEvents(next),
-    description: serializeHighlightDraftMeta(next),
+    description: serializeHighlightDraftMeta(
+      next,
+      draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
+    ),
   });
 }
 
@@ -239,7 +333,10 @@ export async function removeHighlightMoment(
   }
   await updateDirectorTrack(gameId, draftId, {
     track: highlightMomentsToTrackEvents(next),
-    description: serializeHighlightDraftMeta(next),
+    description: serializeHighlightDraftMeta(
+      next,
+      meta?.playerIds,
+    ),
   });
 }
 

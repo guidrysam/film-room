@@ -1,4 +1,5 @@
 import type { GameTimelineEvent, GameTimelineEventInput } from "@/lib/games";
+import { withEventPlayerIds } from "@/lib/timeline-players";
 import type { RoomGameMark } from "@/lib/room-game-marks";
 // Type-only import: no runtime dependency on saved-sessions (avoids any cycle).
 import type { SavedChapter } from "@/lib/saved-sessions";
@@ -44,9 +45,14 @@ export function chapterToTimelineEvent(
 /** A live room mark → a `coach_mark` timeline event input. */
 export function roomGameMarkToTimelineEvent(
   mark: RoomGameMark,
-  opts?: { sourceId?: string },
+  opts?: { sourceId?: string; playerIds?: string[] },
 ): GameTimelineEventInput {
   const sourceId = opts?.sourceId ?? mark.angleId;
+  const basePayload = mark.angleId ? { angleId: mark.angleId } : undefined;
+  const payload =
+    opts?.playerIds && opts.playerIds.length > 0
+      ? withEventPlayerIds(basePayload, opts.playerIds)
+      : basePayload;
   return {
     type: "coach_mark",
     t: Math.max(0, mark.timestamp),
@@ -54,7 +60,7 @@ export function roomGameMarkToTimelineEvent(
     ...(sourceId ? { sourceId } : {}),
     ...(mark.createdByRole ? { createdByRole: mark.createdByRole } : {}),
     ...(mark.createdByName ? { createdByName: mark.createdByName } : {}),
-    ...(mark.angleId ? { payload: { angleId: mark.angleId } } : {}),
+    ...(payload ? { payload } : {}),
   };
 }
 

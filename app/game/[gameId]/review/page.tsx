@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import GameReview from "@/components/GameReview";
 import { signInWithGoogle } from "@/lib/auth-google";
@@ -11,8 +11,16 @@ const linkBack =
 
 export default function GameReviewPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const gameId = typeof params.gameId === "string" ? params.gameId : "";
   const { user, loading } = useAuth();
+
+  const gameTimeRaw = searchParams.get("gameTime");
+  const initialGameTime =
+    gameTimeRaw != null && Number.isFinite(Number(gameTimeRaw))
+      ? Number(gameTimeRaw)
+      : undefined;
+  const initialSourceId = searchParams.get("sourceId") ?? undefined;
 
   if (loading) {
     return (
@@ -54,5 +62,13 @@ export default function GameReviewPage() {
     );
   }
 
-  return <GameReview gameId={gameId} currentUid={user.uid} currentDisplayName={user.displayName} />;
+  return (
+    <GameReview
+      gameId={gameId}
+      currentUid={user.uid}
+      currentDisplayName={user.displayName}
+      {...(initialGameTime !== undefined ? { initialGameTime } : {})}
+      {...(initialSourceId ? { initialSourceId } : {})}
+    />
+  );
 }

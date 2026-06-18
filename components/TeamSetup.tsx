@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   createTeam,
@@ -196,6 +197,15 @@ export default function TeamSetup({
             {myRole}
           </span>
         </p>
+      ) : null}
+
+      {selectedTeam ? (
+        <Link
+          href={`/team/${selectedTeam.id}`}
+          className={`${ghostBtn} mt-3 inline-block`}
+        >
+          View team roster →
+        </Link>
       ) : null}
 
       {error ? <p className="mt-2 text-xs text-rose-300">{error}</p> : null}
