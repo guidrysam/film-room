@@ -190,16 +190,24 @@ export default function GameDashboard({
           </div>
         </section>
 
-        {/* Sources */}
+        {/* Add video */}
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-white">Sources</h2>
-            <Link href={`/game/${game.id}/review`} className={ghostBtn}>
-              Review synced game
+            <h2 className="text-sm font-semibold text-white">Add video</h2>
+            <Link
+              href={gameCapUrl({ teamId: team?.id, gameId: game.id })}
+              className={ghostBtn}
+            >
+              Game Cap
             </Link>
           </div>
 
-          {canAttach ? (
+          {!canAttach ? (
+            <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-xs leading-snug text-amber-200">
+              You can view this game but cannot attach sources with your current
+              role{data.teamRole ? ` (${data.teamRole})` : ""}.
+            </p>
+          ) : (
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -224,6 +232,12 @@ export default function GameDashboard({
                 Upload to YouTube
               </button>
             </div>
+          )}
+
+          {metrics.sourceCount === 0 && canAttach ? (
+            <p className="mb-4 text-sm leading-relaxed text-zinc-400">
+              {SOURCES_EMPTY_MESSAGE}
+            </p>
           ) : null}
 
           {canAttach && sourceMode === "upload" ? (
@@ -239,16 +253,28 @@ export default function GameDashboard({
             </div>
           ) : null}
 
-          <GameSources
-            key={`${game.id}-${sourcesKey}`}
-            game={game}
-            currentUid={currentUid}
-            teamRole={data.teamRole}
-            showHeader={false}
-            showPasteForm={canAttach && sourceMode === "paste"}
-            emptyMessage={canAttach ? SOURCES_EMPTY_MESSAGE : undefined}
-            onChanged={handleSourcesChanged}
-          />
+          <div className="border-t border-white/[0.06] pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                Attached sources
+              </h3>
+              <Link href={`/game/${game.id}/review`} className={ghostBtn}>
+                Review synced game
+              </Link>
+            </div>
+
+            <GameSources
+              key={`${game.id}-${sourcesKey}`}
+              game={game}
+              currentUid={currentUid}
+              teamRole={data.teamRole}
+              showHeader={false}
+              showPasteForm={canAttach && sourceMode === "paste"}
+              pasteFormPlacement="top"
+              suppressEmptyState={metrics.sourceCount === 0 && canAttach}
+              onChanged={handleSourcesChanged}
+            />
+          </div>
         </section>
 
         {/* Review */}
@@ -256,7 +282,7 @@ export default function GameDashboard({
           <h2 className="mb-2 text-sm font-semibold text-white">Review</h2>
           <p className="mb-3 text-xs text-zinc-400">
             {metrics.sourceCount === 0
-              ? "Add video sources above, then review synced angles."
+              ? "Add video above, then review synced angles."
               : `${metrics.syncedSourceCount} of ${metrics.sourceCount} source${metrics.sourceCount === 1 ? "" : "s"} synced for multi-angle review.`}
           </p>
           <Link href={`/game/${game.id}/review`} className={primaryBtn}>

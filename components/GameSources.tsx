@@ -29,6 +29,10 @@ export type GameSourcesProps = {
   teamRole?: GameTeamRole | null;
   /** Show the paste-link attach form (default true). */
   showPasteForm?: boolean;
+  /** Render attach form above the source list (default bottom). */
+  pasteFormPlacement?: "top" | "bottom";
+  /** Hide the empty-state line when the source list is empty. */
+  suppressEmptyState?: boolean;
   /** Show the inner section header row (default true). */
   showHeader?: boolean;
   /** Override empty-state copy when the source list is empty. */
@@ -86,6 +90,8 @@ export default function GameSources({
   currentUid,
   teamRole,
   showPasteForm = true,
+  pasteFormPlacement = "bottom",
+  suppressEmptyState = false,
   showHeader = true,
   emptyMessage,
   onChanged,
@@ -195,6 +201,60 @@ export default function GameSources({
     [game.id, refresh, onChanged],
   );
 
+  const pasteForm =
+    canEdit && showPasteForm ? (
+      <div className="mt-2.5 rounded-md border border-white/[0.07] bg-white/[0.02] p-2">
+        <p className="mb-1.5 text-[10px] font-medium text-zinc-400">
+          Attach YouTube source
+        </p>
+        <input
+          type="text"
+          value={urlOrId}
+          onChange={(e) => setUrlOrId(e.target.value)}
+          placeholder="YouTube URL or video ID"
+          className="mb-1.5 w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
+        />
+        <div className="mb-1.5 flex flex-wrap gap-1">
+          {LABEL_SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setLabel(s)}
+              className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] text-zinc-300 transition hover:bg-white/[0.09]"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <div className="mb-1.5 flex gap-1.5">
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (e.g. Main sideline)"
+            maxLength={60}
+            className="min-w-0 flex-1 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
+          />
+          <input
+            type="number"
+            value={offset}
+            onChange={(e) => setOffset(e.target.value)}
+            placeholder="Offset s"
+            title="Seconds added to game time to reach this source (default 0)"
+            className="w-20 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleAdd()}
+          disabled={adding}
+          className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-900/55 disabled:opacity-40"
+        >
+          {adding ? "Adding…" : "Add source"}
+        </button>
+      </div>
+    ) : null;
+
   return (
     <div>
       {showHeader ? (
@@ -246,15 +306,19 @@ export default function GameSources({
         </div>
       )}
 
+      {pasteFormPlacement === "top" ? pasteForm : null}
+
       {loading ? (
         <p className="text-[11px] text-zinc-500">Loading sources…</p>
       ) : sources.length === 0 ? (
+        suppressEmptyState ? null : (
         <p className="text-[10px] leading-snug text-zinc-500">
           {emptyMessage ??
             (canEdit
               ? "No sources yet. Attach a YouTube video below."
               : "No sources yet. An editor can attach a YouTube video.")}
         </p>
+        )
       ) : (
         <ul className="space-y-1.5">
           {sources.map((s) => {
@@ -329,58 +393,7 @@ export default function GameSources({
         </ul>
       )}
 
-      {canEdit && showPasteForm ? (
-        <div className="mt-2.5 rounded-md border border-white/[0.07] bg-white/[0.02] p-2">
-          <p className="mb-1.5 text-[10px] font-medium text-zinc-400">
-            Attach YouTube source
-          </p>
-          <input
-            type="text"
-            value={urlOrId}
-            onChange={(e) => setUrlOrId(e.target.value)}
-            placeholder="YouTube URL or video ID"
-            className="mb-1.5 w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
-          />
-          <div className="mb-1.5 flex flex-wrap gap-1">
-            {LABEL_SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setLabel(s)}
-                className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] text-zinc-300 transition hover:bg-white/[0.09]"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <div className="mb-1.5 flex gap-1.5">
-            <input
-              type="text"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="Label (e.g. Main sideline)"
-              maxLength={60}
-              className="min-w-0 flex-1 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
-            />
-            <input
-              type="number"
-              value={offset}
-              onChange={(e) => setOffset(e.target.value)}
-              placeholder="Offset s"
-              title="Seconds added to game time to reach this source (default 0)"
-              className="w-20 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleAdd()}
-            disabled={adding}
-            className="rounded-md border border-emerald-500/40 bg-emerald-950/45 px-2.5 py-1 text-[11px] font-semibold text-emerald-100 transition hover:bg-emerald-900/55 disabled:opacity-40"
-          >
-            {adding ? "Adding…" : "Add source"}
-          </button>
-        </div>
-      ) : null}
+      {pasteFormPlacement === "bottom" ? pasteForm : null}
 
       {error ? (
         <p className="mt-2 text-[10px] leading-snug text-rose-300">{error}</p>
