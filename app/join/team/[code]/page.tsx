@@ -32,7 +32,8 @@ const ROLE_COPY: Record<
   },
   parent: {
     title: "Parent",
-    blurb: "Attach camera sources to team games and review in Film Room.",
+    blurb:
+      "Upload video from your phone to help build the synced team game in Game Cap.",
     badge: "border-amber-500/40 bg-amber-950/40 text-amber-200",
   },
   player: {
@@ -101,6 +102,7 @@ export default function JoinTeamPage() {
     try {
       await redeemTeamInvite(invite.code, user.uid, {
         displayName: user.displayName,
+        email: user.email,
       });
       setJoined(true);
       setTimeout(() => router.push("/game-cap"), 900);

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
+import ParentInviteTargets from "@/components/ParentInviteTargets";
 import TeamInvites from "@/components/TeamInvites";
 import TeamRosterImport from "@/components/TeamRosterImport";
 import TeamSetup from "@/components/TeamSetup";
@@ -155,6 +156,8 @@ export default function GameCapPage() {
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
   const canCreateGames =
     selectedTeam && user ? canCoachTeam(selectedTeam, user.uid) : false;
+  const isParent =
+    selectedTeam && user ? teamRoleFor(selectedTeam, user.uid) === "parent" : false;
   const canAttachSources =
     selectedGame && user
       ? canContributeGameSources(selectedGame, user.uid, teamRole)
@@ -208,11 +211,20 @@ export default function GameCapPage() {
             Game Cap
           </h1>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-zinc-300">
-            Select your team, create or pick a game, then attach a source by
-            pasting a YouTube link or uploading to your own channel. Open in
-            Film Room for review and sync.
+            {isParent
+              ? "Upload video from your phone to help build the synced team game. Pick a game below and attach your angle."
+              : "Select your team, create or pick a game, then attach a source by pasting a YouTube link or uploading to your own channel. Open in Film Room for review and sync."}
           </p>
         </div>
+
+        {isParent && selectedTeam ? (
+          <div className="mb-5 rounded-xl border border-amber-500/25 bg-amber-950/20 px-4 py-3 text-sm leading-relaxed text-amber-100">
+            Welcome to <span className="font-medium">{selectedTeam.name}</span>.
+            Upload video from your phone to help build the synced team game.
+            Choose a game below, then paste a YouTube link or upload from your
+            channel.
+          </div>
+        ) : null}
 
         <section className={`${panelClass} mb-5`}>
           <TeamSetup
@@ -224,6 +236,7 @@ export default function GameCapPage() {
           {selectedTeam ? (
             <div className="mt-4 space-y-4 border-t border-white/[0.06] pt-4">
               <TeamRosterImport team={selectedTeam} currentUid={user.uid} />
+              <ParentInviteTargets team={selectedTeam} currentUid={user.uid} />
               <TeamInvites team={selectedTeam} currentUid={user.uid} />
             </div>
           ) : null}

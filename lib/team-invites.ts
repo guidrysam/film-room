@@ -13,6 +13,7 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
+import { linkParentOnTeamJoin } from "@/lib/parent-invite-targets";
 import type { Team, TeamMemberRole } from "@/lib/teams";
 
 /**
@@ -158,7 +159,7 @@ export async function setTeamInviteActive(
 export async function redeemTeamInvite(
   code: string,
   uid: string,
-  _opts?: { displayName?: string | null },
+  opts?: { displayName?: string | null; email?: string | null },
 ): Promise<void> {
   const invite = await getTeamInvite(code);
   if (!invite) throw new Error("This invite link is not valid.");
@@ -173,17 +174,29 @@ export async function redeemTeamInvite(
     teamSnap.data().members && typeof teamSnap.data().members === "object"
       ? (teamSnap.data().members as Record<string, unknown>)
       : {};
-  if (uid in members) {
+  const alreadyMember = uid in members;
+
+  if (!alreadyMember) {
+    await updateDoc(teamRef, {
+      [`members.${uid}`]: invite.role,
+      memberUids: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      joinCode: code,
+    });
+  } else {
     await updateDoc(teamRef, { joinCode: deleteField() });
-    return;
   }
 
-  await updateDoc(teamRef, {
-    [`members.${uid}`]: invite.role,
-    memberUids: arrayUnion(uid),
-    updatedAt: serverTimestamp(),
-    joinCode: code,
-  });
+  if (invite.role === "parent") {
+    try {
+      await linkParentOnTeamJoin(invite.teamId, uid, {
+        email: opts?.email,
+        inviteCode: code,
+      });
+    } catch {
+      /* Onboarding link is best-effort; join still succeeds. */
+    }
+  }
 
   try {
     await updateDoc(teamRef, { joinCode: deleteField() });

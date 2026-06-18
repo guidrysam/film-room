@@ -50,8 +50,17 @@ service cloud.firestore {
       let role = teamRoleOf(teamId, uid);
       return isTeamAdmin(teamId, uid) || role == 'coach' || role == 'parent';
     }
+    function isTeamCoachOf(tid) {
+      return request.auth != null && isTeamCoach(tid, request.auth.uid);
+    }
     function isTeamAdminOf(tid) {
       return request.auth != null && isTeamAdmin(tid, request.auth.uid);
+    }
+    function parentInviteEmailMatchesAuth() {
+      return request.auth != null &&
+             request.auth.token.email is string &&
+             resource.data.email is string &&
+             resource.data.email.lower() == request.auth.token.email.lower();
     }
     function teamJoinInviteData() {
       return get(/databases/$(database)/documents/teamInvites/$(request.resource.data.joinCode)).data;
@@ -98,14 +107,42 @@ service cloud.firestore {
 
       match /players/{playerId} {
         allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
-        allow create, update, delete: if request.auth != null &&
-                                         isTeamCoach(teamId, request.auth.uid);
+        allow create, delete: if request.auth != null &&
+                                 isTeamCoach(teamId, request.auth.uid);
+        allow update: if request.auth != null && isTeamCoach(teamId, request.auth.uid);
+        // Parent self-onboarding: may add only their uid to parentUids.
+        allow update: if request.auth != null &&
+                         isTeamMember(teamId, request.auth.uid) &&
+                         teamRoleOf(teamId, request.auth.uid) == 'parent' &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['parentUids', 'updatedAt']) &&
+                         request.resource.data.parentUids.toSet()
+                           .difference(resource.data.get('parentUids', []).toSet())
+                           .hasOnly([request.auth.uid]) &&
+                         resource.data.get('parentUids', []).toSet()
+                           .difference(request.resource.data.parentUids.toSet())
+                           .size() == 0;
       }
 
       match /parentInviteTargets/{targetId} {
-        allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
-        allow create, update, delete: if request.auth != null &&
-                                         isTeamCoach(teamId, request.auth.uid);
+        allow read: if request.auth != null && (
+          isTeamCoach(teamId, request.auth.uid) ||
+          (isTeamMember(teamId, request.auth.uid) &&
+           resource.data.joinedUid == request.auth.uid)
+        );
+        allow create, delete: if request.auth != null &&
+                                 isTeamCoach(teamId, request.auth.uid);
+        allow update: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid);
+        // Parent self-onboarding after invite redeem (email must match roster).
+        allow update: if request.auth != null &&
+                         isTeamMember(teamId, request.auth.uid) &&
+                         teamRoleOf(teamId, request.auth.uid) == 'parent' &&
+                         parentInviteEmailMatchesAuth() &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['status', 'joinedUid', 'joinedAt', 'updatedAt']) &&
+                         request.resource.data.joinedUid == request.auth.uid &&
+                         request.resource.data.status == 'joined';
       }
     }
 
@@ -122,7 +159,8 @@ service cloud.firestore {
             request.resource.data.role == 'player' ||
             request.resource.data.role == 'viewer')
         && request.resource.data.active is bool
-        && isTeamAdminOf(request.resource.data.teamId);
+        && (isTeamAdminOf(request.resource.data.teamId) ||
+            isTeamCoachOf(request.resource.data.teamId));
 
       allow update, delete: if request.auth != null
         && isTeamAdminOf(resource.data.teamId);

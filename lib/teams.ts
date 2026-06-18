@@ -71,6 +71,8 @@ export type Player = {
   jerseyNumber?: string;
   position?: string;
   linkedUid?: string;
+  /** Parent member uids linked via roster onboarding. */
+  parentUids?: string[];
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
 };
@@ -343,6 +345,10 @@ export async function listTeamGames(
 }
 
 function parsePlayer(id: string, raw: Record<string, unknown>): Player {
+  const parentUidsRaw = Array.isArray(raw.parentUids) ? raw.parentUids : [];
+  const parentUids = parentUidsRaw.filter(
+    (u): u is string => typeof u === "string" && u.trim() !== "",
+  );
   return {
     id,
     name: typeof raw.name === "string" ? raw.name.trim() || "Player" : "Player",
@@ -355,6 +361,7 @@ function parsePlayer(id: string, raw: Record<string, unknown>): Player {
     ...(trimOrUndef(raw.linkedUid)
       ? { linkedUid: (raw.linkedUid as string).trim() }
       : {}),
+    ...(parentUids.length > 0 ? { parentUids } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -424,4 +431,30 @@ export async function upsertTeamPlayer(
     },
     created: !existing,
   };
+}
+
+export async function addParentUidToPlayer(
+  teamId: string,
+  playerId: string,
+  parentUid: string,
+): Promise<void> {
+  const uid = parentUid.trim();
+  if (!uid) throw new Error("Parent uid is required.");
+  await updateDoc(doc(playersCol(teamId), playerId), {
+    parentUids: arrayUnion(uid),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function removeParentUidFromPlayer(
+  teamId: string,
+  playerId: string,
+  parentUid: string,
+): Promise<void> {
+  const uid = parentUid.trim();
+  if (!uid) return;
+  await updateDoc(doc(playersCol(teamId), playerId), {
+    parentUids: arrayRemove(uid),
+    updatedAt: serverTimestamp(),
+  });
 }
