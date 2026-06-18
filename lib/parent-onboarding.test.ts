@@ -2,9 +2,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   canReadParentInviteTarget,
+  combineParentInviteMessages,
   findParentTargetsToLink,
+  parentInviteMailtoUrl,
   parentInviteMessage,
   parentInviteStatusLabel,
+  parentTargetsEligibleForInvite,
+  summarizeParentVideoTeam,
 } from "./parent-onboarding";
 import type { ParentInviteTarget } from "./parent-invite-targets";
 
@@ -82,9 +86,64 @@ describe("parent-onboarding", () => {
   });
 
   it("parentInviteMessage formats copy template", () => {
-    const msg = parentInviteMessage("U14 Wolves", "https://app/join/team/code");
-    assert.match(msg, /Join our Film Room team/);
+    const msg = parentInviteMessage(
+      "Jane Smith",
+      "U14 Wolves",
+      "https://app/join/team/code",
+    );
+    assert.match(msg, /Hi Jane Smith/);
+    assert.match(msg, /U14 Wolves on Film Room/);
+    assert.match(msg, /upload game video/);
     assert.match(msg, /https:\/\/app\/join\/team\/code/);
+    assert.match(msg, /Game Cap/);
+  });
+
+  it("combineParentInviteMessages joins multiple messages", () => {
+    const combined = combineParentInviteMessages(["Message one", "Message two"]);
+    assert.match(combined, /Message one/);
+    assert.match(combined, /---/);
+    assert.match(combined, /Message two/);
+  });
+
+  it("parentInviteMailtoUrl builds mailto link", () => {
+    const url = parentInviteMailtoUrl(
+      "jane@example.com",
+      "Jane Smith",
+      "U14 Wolves",
+      "https://app/join/team/code",
+    );
+    assert.match(url, /^mailto:jane%40example.com\?subject=/);
+    assert.match(url, /body=/);
+  });
+
+  it("summarizeParentVideoTeam counts roster and statuses", () => {
+    const summary = summarizeParentVideoTeam(
+      12,
+      [
+        target({ id: "a", parentName: "A", email: "a@example.com", status: "invited" }),
+        target({ id: "b", parentName: "B", email: "b@example.com", status: "joined" }),
+        target({ id: "c", parentName: "C", email: "c@example.com", status: "ignored" }),
+      ],
+      { coach: "admin", parent1: "parent", parent2: "parent" },
+    );
+    assert.equal(summary.playersImported, 12);
+    assert.equal(summary.parentContactsImported, 3);
+    assert.equal(summary.parentsInvited, 1);
+    assert.equal(summary.parentsJoined, 1);
+    assert.equal(summary.videoContributors, 2);
+  });
+
+  it("parentTargetsEligibleForInvite excludes joined and ignored", () => {
+    const eligible = parentTargetsEligibleForInvite([
+      target({ id: "a", parentName: "A", email: "a@example.com", status: "not_invited" }),
+      target({ id: "b", parentName: "B", email: "b@example.com", status: "invited" }),
+      target({ id: "c", parentName: "C", email: "c@example.com", status: "joined" }),
+      target({ id: "d", parentName: "D", email: "d@example.com", status: "ignored" }),
+    ]);
+    assert.deepEqual(
+      eligible.map((row) => row.id),
+      ["a", "b"],
+    );
   });
 
   it("parentInviteStatusLabel covers statuses", () => {

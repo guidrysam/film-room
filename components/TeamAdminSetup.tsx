@@ -47,7 +47,7 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
           result={createSummary}
           title={`${createSummary.teamName} created`}
           showTeamCreated
-          description="Your roster and parent contacts are ready. Review parent onboarding below and share invite links when you are ready."
+          description="Your roster and parent contacts are ready. Invite parents below to upload video and build highlights."
         />
       ) : null}
 
@@ -72,10 +72,12 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
       </section>
 
       <section className={panelClass}>
-        <h2 className="mb-1 text-sm font-semibold text-white">Parent onboarding</h2>
-        <p className="mb-3 text-xs text-zinc-500">
-          Parent contacts from your CSV import appear here. Copy invite links or
-          messages when you are ready.
+        <h2 className="mb-1 text-sm font-semibold text-white">
+          Build Your Video Team
+        </h2>
+        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+          Invite parents to upload video, view games, and help build player
+          highlights.
         </p>
         <ParentInviteTargets team={team} currentUid={currentUid} />
       </section>

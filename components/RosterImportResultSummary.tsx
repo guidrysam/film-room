@@ -12,7 +12,7 @@ export type RosterImportResultSummaryProps = {
 export default function RosterImportResultSummary({
   result,
   title = "Import complete",
-  description = "Players appear on the team roster. Parent contacts appear in Parent onboarding below — copy invite links when you are ready.",
+  description = "Players appear on the team roster. Invite parents in Build Your Video Team below to upload video and build highlights.",
   showTeamCreated = false,
 }: RosterImportResultSummaryProps) {
   const items = [

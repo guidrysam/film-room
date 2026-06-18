@@ -3,8 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ensureParentInviteForTarget } from "@/lib/parent-invite-flow";
 import {
+  combineParentInviteMessages,
+  parentInviteMailtoUrl,
   parentInviteMessage,
   parentInviteStatusLabel,
+  parentTargetsEligibleForInvite,
+  summarizeParentVideoTeam,
 } from "@/lib/parent-onboarding";
 import {
   listParentInviteTargets,
@@ -41,8 +45,36 @@ function joinUrl(code: string, origin: string): string {
   return `${origin}/join/team/${code}`;
 }
 
+function SummaryCard({
+  summary,
+}: {
+  summary: ReturnType<typeof summarizeParentVideoTeam>;
+}) {
+  const items = [
+    { label: "Players imported", value: summary.playersImported },
+    { label: "Parent contacts imported", value: summary.parentContactsImported },
+    { label: "Parents invited", value: summary.parentsInvited },
+    { label: "Parents joined", value: summary.parentsJoined },
+    { label: "Video contributors", value: summary.videoContributors },
+  ];
+
+  return (
+    <ul className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      {items.map(({ label, value }) => (
+        <li
+          key={label}
+          className="rounded-md border border-white/[0.06] bg-black/25 px-2 py-2 text-center"
+        >
+          <p className="text-lg font-semibold text-white">{value}</p>
+          <p className="text-[9px] uppercase tracking-wide text-zinc-500">{label}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /**
- * Coach/admin UI for roster parent invite targets: copy links, track status, manual link.
+ * Coach/admin UI for inviting parents to upload video and build highlights.
  */
 export default function ParentInviteTargets({
   team,
@@ -53,6 +85,7 @@ export default function ParentInviteTargets({
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [copyAllBusy, setCopyAllBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
@@ -66,6 +99,16 @@ export default function ParentInviteTargets({
         .filter(([, role]) => role === "parent")
         .map(([uid]) => uid),
     [team.members],
+  );
+
+  const summary = useMemo(
+    () => summarizeParentVideoTeam(players.length, targets, team.members),
+    [players.length, targets, team.members],
+  );
+
+  const eligibleTargets = useMemo(
+    () => parentTargetsEligibleForInvite(targets),
+    [targets],
   );
 
   useEffect(() => {
@@ -83,7 +126,7 @@ export default function ParentInviteTargets({
       setTargets(t);
       setPlayers(p);
     } catch {
-      setError("Could not load parent invite targets.");
+      setError("Could not load parent contacts.");
     } finally {
       setLoading(false);
     }
@@ -93,13 +136,20 @@ export default function ParentInviteTargets({
     void refresh();
   }, [refresh]);
 
+  const buildInviteUrl = useCallback(
+    async (target: ParentInviteTarget) => {
+      const code = await ensureParentInviteForTarget(team, target, currentUid);
+      return joinUrl(code, origin || window.location.origin);
+    },
+    [team, currentUid, origin],
+  );
+
   const handleCopyLink = useCallback(
     async (target: ParentInviteTarget) => {
       setBusyId(target.id);
       setError(null);
       try {
-        const code = await ensureParentInviteForTarget(team, target, currentUid);
-        const url = joinUrl(code, origin || window.location.origin);
+        const url = await buildInviteUrl(target);
         await navigator.clipboard.writeText(url);
         setCopiedId(`${target.id}:link`);
         setTimeout(() => setCopiedId(null), 1500);
@@ -110,7 +160,7 @@ export default function ParentInviteTargets({
         setBusyId(null);
       }
     },
-    [team, currentUid, origin, refresh],
+    [buildInviteUrl, refresh],
   );
 
   const handleCopyMessage = useCallback(
@@ -118,9 +168,8 @@ export default function ParentInviteTargets({
       setBusyId(target.id);
       setError(null);
       try {
-        const code = await ensureParentInviteForTarget(team, target, currentUid);
-        const url = joinUrl(code, origin || window.location.origin);
-        const msg = parentInviteMessage(team.name, url);
+        const url = await buildInviteUrl(target);
+        const msg = parentInviteMessage(target.parentName, team.name, url);
         await navigator.clipboard.writeText(msg);
         setCopiedId(`${target.id}:msg`);
         setTimeout(() => setCopiedId(null), 1500);
@@ -131,7 +180,51 @@ export default function ParentInviteTargets({
         setBusyId(null);
       }
     },
-    [team, currentUid, origin, refresh],
+    [buildInviteUrl, team.name, refresh],
+  );
+
+  const handleCopyAllMessages = useCallback(async () => {
+    if (eligibleTargets.length === 0) return;
+    setCopyAllBusy(true);
+    setError(null);
+    try {
+      const messages: string[] = [];
+      for (const target of eligibleTargets) {
+        const url = await buildInviteUrl(target);
+        messages.push(parentInviteMessage(target.parentName, team.name, url));
+      }
+      await navigator.clipboard.writeText(combineParentInviteMessages(messages));
+      setCopiedId("all:msg");
+      setTimeout(() => setCopiedId(null), 1500);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not copy messages.");
+    } finally {
+      setCopyAllBusy(false);
+    }
+  }, [eligibleTargets, buildInviteUrl, team.name, refresh]);
+
+  const handleOpenEmail = useCallback(
+    async (target: ParentInviteTarget) => {
+      setBusyId(target.id);
+      setError(null);
+      try {
+        const url = await buildInviteUrl(target);
+        const mailto = parentInviteMailtoUrl(
+          target.email,
+          target.parentName,
+          team.name,
+          url,
+        );
+        window.location.href = mailto;
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not open email.");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [buildInviteUrl, team.name, refresh],
   );
 
   const handleIgnore = useCallback(
@@ -142,7 +235,7 @@ export default function ParentInviteTargets({
         await setParentTargetIgnored(team.id, targetId);
         await refresh();
       } catch {
-        setError("Could not update target.");
+        setError("Could not update contact.");
       } finally {
         setBusyId(null);
       }
@@ -178,138 +271,166 @@ export default function ParentInviteTargets({
 
   return (
     <div>
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-        Parent invite targets
-      </p>
-      <p className="mb-3 text-[10px] leading-snug text-zinc-500">
-        Imported parents from your roster. Copy a join link to onboard them into
-        Game Cap — no email is sent automatically.
-      </p>
-
       {loading ? (
-        <p className="text-[11px] text-zinc-500">Loading targets…</p>
+        <p className="text-[11px] text-zinc-500">Loading parent contacts…</p>
       ) : targets.length === 0 ? (
         <p className="text-[10px] leading-snug text-zinc-500">
-          No parent targets yet. Import a roster CSV above to add parents.
+          No parent contacts yet. Import a roster CSV above to add parents you can
+          invite to upload video.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {targets.map((target) => {
-            const status = target.status ?? "not_invited";
-            const showManual = manualTargetId === target.id;
-            return (
-              <li
-                key={target.id}
-                className="rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-medium text-zinc-200">
-                      {target.parentName}
-                    </p>
-                    <p className="font-mono text-[10px] text-zinc-500">
-                      {target.email}
-                    </p>
-                    <p className="mt-0.5 text-[10px] text-zinc-400">
-                      Player: {target.playerName ?? "—"}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${STATUS_BADGE[status] ?? STATUS_BADGE.not_invited}`}
-                  >
-                    {parentInviteStatusLabel(status)}
-                  </span>
-                </div>
+        <>
+          <SummaryCard summary={summary} />
 
-                {status !== "joined" && status !== "ignored" ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyLink(target)}
-                      disabled={busyId === target.id}
-                      className={primaryBtn}
-                    >
-                      {copiedId === `${target.id}:link`
-                        ? "Copied"
-                        : "Copy invite link"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyMessage(target)}
-                      disabled={busyId === target.id}
-                      className={ghostBtn}
-                    >
-                      {copiedId === `${target.id}:msg`
-                        ? "Copied"
-                        : "Copy message"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setManualTargetId(showManual ? null : target.id)
-                      }
-                      className={ghostBtn}
-                    >
-                      {showManual ? "Cancel link" : "Link manually"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleIgnore(target.id)}
-                      disabled={busyId === target.id}
-                      className={ghostBtn}
-                    >
-                      Ignore
-                    </button>
-                  </div>
-                ) : null}
+          <div className="mb-4">
+            <button
+              type="button"
+              onClick={() => void handleCopyAllMessages()}
+              disabled={copyAllBusy || eligibleTargets.length === 0}
+              className={`${primaryBtn} w-full sm:w-auto`}
+            >
+              {copiedId === "all:msg"
+                ? "Copied all messages"
+                : copyAllBusy
+                  ? "Preparing messages…"
+                  : "Copy all invite messages"}
+            </button>
+            <p className="mt-2 text-[10px] leading-snug text-zinc-500">
+              Direct email/SMS sending is coming later. For now, copy messages
+              into email, text, or TeamLinkt.
+            </p>
+          </div>
 
-                {showManual ? (
-                  <div className="mt-2 space-y-1.5 rounded-md border border-white/[0.06] bg-black/30 p-2">
-                    <p className="text-[10px] text-zinc-500">
-                      Link a parent who already joined with a different Google
-                      email.
-                    </p>
-                    <select
-                      value={manualParentUid}
-                      onChange={(e) => setManualParentUid(e.target.value)}
-                      className="w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200"
+          <ul className="space-y-2">
+            {targets.map((target) => {
+              const status = target.status ?? "not_invited";
+              const showManual = manualTargetId === target.id;
+              const canInvite = status !== "joined" && status !== "ignored";
+
+              return (
+                <li
+                  key={target.id}
+                  className="rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-[11px] font-medium text-zinc-200">
+                        {target.parentName}
+                      </p>
+                      <p className="font-mono text-[10px] text-zinc-500">
+                        {target.email}
+                      </p>
+                      <p className="text-[10px] text-zinc-400">
+                        Player linked: {target.playerName ?? "—"}
+                      </p>
+                      <p className="text-[10px] text-zinc-500">
+                        Status: {parentInviteStatusLabel(status)}
+                      </p>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${STATUS_BADGE[status] ?? STATUS_BADGE.not_invited}`}
                     >
-                      <option value="">Select joined parent…</option>
-                      {parentMembers.map((uid) => (
-                        <option key={uid} value={uid}>
-                          {uid}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      value={manualPlayerId}
-                      onChange={(e) => setManualPlayerId(e.target.value)}
-                      className="w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200"
-                    >
-                      <option value="">Select player…</option>
-                      {players.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                          {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => void handleManualLink()}
-                      disabled={
-                        !manualParentUid || !manualPlayerId || busyId === target.id
-                      }
-                      className={primaryBtn}
-                    >
-                      Save link
-                    </button>
+                      {parentInviteStatusLabel(status)}
+                    </span>
                   </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+
+                  {canInvite ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyLink(target)}
+                        disabled={busyId === target.id}
+                        className={primaryBtn}
+                      >
+                        {copiedId === `${target.id}:link`
+                          ? "Copied"
+                          : "Copy invite link"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyMessage(target)}
+                        disabled={busyId === target.id}
+                        className={ghostBtn}
+                      >
+                        {copiedId === `${target.id}:msg`
+                          ? "Copied"
+                          : "Copy message"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenEmail(target)}
+                        disabled={busyId === target.id}
+                        className={ghostBtn}
+                      >
+                        Open email
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setManualTargetId(showManual ? null : target.id)
+                        }
+                        className={ghostBtn}
+                      >
+                        {showManual ? "Cancel link" : "Link manually"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleIgnore(target.id)}
+                        disabled={busyId === target.id}
+                        className={ghostBtn}
+                      >
+                        Ignore
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {showManual ? (
+                    <div className="mt-2 space-y-1.5 rounded-md border border-white/[0.06] bg-black/30 p-2">
+                      <p className="text-[10px] text-zinc-500">
+                        Already joined with another email? Link them manually.
+                      </p>
+                      <select
+                        value={manualParentUid}
+                        onChange={(e) => setManualParentUid(e.target.value)}
+                        className="w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200"
+                      >
+                        <option value="">Select joined parent…</option>
+                        {parentMembers.map((uid) => (
+                          <option key={uid} value={uid}>
+                            {uid}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={manualPlayerId}
+                        onChange={(e) => setManualPlayerId(e.target.value)}
+                        className="w-full rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200"
+                      >
+                        <option value="">Select player…</option>
+                        {players.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                            {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handleManualLink()}
+                        disabled={
+                          !manualParentUid || !manualPlayerId || busyId === target.id
+                        }
+                        className={primaryBtn}
+                      >
+                        Save link
+                      </button>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {error ? (

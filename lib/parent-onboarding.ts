@@ -49,8 +49,65 @@ export function findParentTargetsToLink(
   return out;
 }
 
-export function parentInviteMessage(teamName: string, joinUrl: string): string {
-  return `Join our Film Room team (${teamName}) here: ${joinUrl}`;
+export function parentInviteMessage(
+  parentName: string,
+  teamName: string,
+  joinUrl: string,
+): string {
+  return `Hi ${parentName}, you've been invited to join ${teamName} on Film Room.
+
+Film Room lets parents and coaches upload game video, sync multiple angles, review coach marks, and build player highlights.
+
+Join here:
+${joinUrl}
+
+After joining, open Game Cap to upload video from your phone.`;
+}
+
+export function combineParentInviteMessages(messages: string[]): string {
+  return messages.filter((message) => message.trim()).join("\n\n---\n\n");
+}
+
+export function parentInviteMailtoUrl(
+  email: string,
+  parentName: string,
+  teamName: string,
+  joinUrl: string,
+): string {
+  const subject = encodeURIComponent(`Join ${teamName} on Film Room`);
+  const body = encodeURIComponent(parentInviteMessage(parentName, teamName, joinUrl));
+  return `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
+}
+
+export type ParentVideoTeamSummary = {
+  playersImported: number;
+  parentContactsImported: number;
+  parentsInvited: number;
+  parentsJoined: number;
+  videoContributors: number;
+};
+
+export function summarizeParentVideoTeam(
+  playerCount: number,
+  targets: ParentInviteTarget[],
+  teamMembers: Record<string, string>,
+): ParentVideoTeamSummary {
+  return {
+    playersImported: playerCount,
+    parentContactsImported: targets.length,
+    parentsInvited: targets.filter((target) => target.status === "invited").length,
+    parentsJoined: targets.filter((target) => target.status === "joined").length,
+    videoContributors: Object.values(teamMembers).filter((role) => role === "parent")
+      .length,
+  };
+}
+
+export function parentTargetsEligibleForInvite(
+  targets: ParentInviteTarget[],
+): ParentInviteTarget[] {
+  return targets.filter(
+    (target) => target.status !== "joined" && target.status !== "ignored",
+  );
 }
 
 export function parentInviteStatusLabel(

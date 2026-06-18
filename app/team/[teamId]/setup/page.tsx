@@ -52,7 +52,7 @@ export default function TeamSetupPage() {
         <>
           <p className="mb-5 text-sm text-zinc-400">
             {canCoachTeam(team, user.uid)
-              ? "Import your TeamLinkt roster first, then onboard parents and share team invite links."
+              ? "Import your TeamLinkt roster first, then invite parents to upload video and build highlights."
               : "Coaches and admins manage roster import and invites here."}
           </p>
           <TeamAdminSetup team={team} currentUid={user.uid} />
