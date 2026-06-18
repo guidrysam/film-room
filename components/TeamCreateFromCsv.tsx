@@ -78,7 +78,11 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
       );
       router.push(teamSetupUrl(teamId));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not create team.");
+      const message =
+        e instanceof Error
+          ? e.message
+          : "Could not create team.";
+      setError(message);
       setCreating(false);
     }
   }, [uid, teamName, sport, season, preview, router]);

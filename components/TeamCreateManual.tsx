@@ -35,7 +35,11 @@ export default function TeamCreateManual({ uid }: TeamCreateManualProps) {
       const id = await createTeam(uid, normalized);
       router.push(teamSetupUrl(id));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not create team.");
+      const message =
+        e instanceof Error
+          ? e.message
+          : "Could not create team.";
+      setError(message);
       setCreating(false);
     }
   }, [uid, name, sport, season, router]);

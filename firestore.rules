@@ -56,6 +56,14 @@ service cloud.firestore {
     function isTeamAdminOf(tid) {
       return request.auth != null && isTeamAdmin(tid, request.auth.uid);
     }
+    function isValidNewTeamCreate() {
+      return request.auth != null &&
+             request.resource.data.ownerId == request.auth.uid &&
+             request.resource.data.members is map &&
+             request.resource.data.memberUids is list &&
+             request.resource.data.members[request.auth.uid] == 'admin' &&
+             request.resource.data.memberUids.hasAll([request.auth.uid]);
+    }
     function parentInviteEmailMatchesAuth() {
       return request.auth != null &&
              request.auth.token.email is string &&
@@ -69,10 +77,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
 
-      allow create: if request.auth != null &&
-                       request.resource.data.ownerId == request.auth.uid &&
-                       request.resource.data.members[request.auth.uid] == 'admin' &&
-                       request.resource.data.memberUids.hasAll([request.auth.uid]);
+      // Team creation: auth only — must NOT call isTeamAdmin/isTeamMember (doc does not exist yet).
+      allow create: if isValidNewTeamCreate();
 
       allow update, delete: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
 

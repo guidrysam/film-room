@@ -13,7 +13,8 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { firestore } from "@/lib/firebase";
+import { auth, firestore } from "@/lib/firebase";
+import { formatFirestoreWriteError } from "@/lib/firestore-errors";
 import {
   createGame,
   listGamesForTeam,
@@ -182,20 +183,53 @@ export async function createTeam(
   uid: string,
   data: CreateTeamInput,
 ): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Sign in required to create a team.");
+  }
+  if (user.uid !== uid) {
+    console.warn("createTeam uid mismatch; using authenticated uid", {
+      passedUid: uid,
+      authUid: user.uid,
+    });
+  }
+  const effectiveUid = user.uid;
+  await user.getIdToken();
+
   const ref = doc(teamsCol());
   const now = serverTimestamp();
   const name = data.name.trim() || "Team";
-  await setDoc(ref, {
+  const payload = {
     name,
-    ownerId: uid,
-    members: { [uid]: "admin" },
-    memberUids: [uid],
+    ownerId: effectiveUid,
+    members: { [effectiveUid]: "admin" },
+    memberUids: [effectiveUid],
     createdAt: now,
     updatedAt: now,
     ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
     ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
     ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
+  };
+
+  console.log("Creating team", {
+    uid: effectiveUid,
+    path: ref.path,
+    payload: {
+      ...payload,
+      createdAt: "<serverTimestamp>",
+      updatedAt: "<serverTimestamp>",
+    },
   });
+
+  try {
+    await setDoc(ref, payload);
+  } catch (error) {
+    console.error("createTeam failed", error);
+    throw formatFirestoreWriteError(
+      error,
+      "Team creation failed. Check Firestore rules deployment.",
+    );
+  }
   return ref.id;
 }
 
