@@ -5,10 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   canViewTeam,
   getTeam,
+  listTeamGames,
   listTeamPlayers,
   type Player,
   type Team,
 } from "@/lib/teams";
+import type { Game } from "@/lib/games";
 
 export type TeamRosterProps = {
   teamId: string;
@@ -24,6 +26,7 @@ const ghostBtn =
 export default function TeamRoster({ teamId, currentUid }: TeamRosterProps) {
   const [team, setTeam] = useState<Team | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,10 +39,16 @@ export default function TeamRoster({ teamId, currentUid }: TeamRosterProps) {
         setError("You do not have access to this team roster.");
         setTeam(null);
         setPlayers([]);
+        setGames([]);
         return;
       }
       setTeam(t);
-      setPlayers(await listTeamPlayers(teamId));
+      const [playerRows, gameRows] = await Promise.all([
+        listTeamPlayers(teamId),
+        listTeamGames(currentUid, teamId),
+      ]);
+      setPlayers(playerRows);
+      setGames(gameRows);
     } catch {
       setError("Could not load roster.");
     } finally {
@@ -63,9 +72,14 @@ export default function TeamRoster({ teamId, currentUid }: TeamRosterProps) {
     return (
       <div className={panelClass}>
         <p className="text-sm text-rose-200">{error ?? "Team not found."}</p>
-        <Link href="/game-cap" className={`${ghostBtn} mt-4 inline-block`}>
-          ← Game Cap
-        </Link>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/app" className={ghostBtn}>
+            ← Dashboard
+          </Link>
+          <Link href="/game-cap" className={ghostBtn}>
+            Game Cap
+          </Link>
+        </div>
       </div>
     );
   }
@@ -82,7 +96,38 @@ export default function TeamRoster({ teamId, currentUid }: TeamRosterProps) {
             Open a player profile to see highlights, tagged moments, and linked
             parents.
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href="/app" className={ghostBtn}>
+              ← Dashboard
+            </Link>
+            <Link href="/game-cap" className={ghostBtn}>
+              Game Cap
+            </Link>
+          </div>
         </div>
+
+        {games.length > 0 ? (
+          <section className={`${panelClass} mb-5`}>
+            <h2 className="mb-3 text-sm font-semibold text-white">Team games</h2>
+            <ul className="space-y-1.5">
+              {games.map((g) => (
+                <li key={g.id}>
+                  <Link
+                    href={`/game/${g.id}`}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2 transition hover:bg-white/[0.04]"
+                  >
+                    <span className="min-w-0 truncate text-sm text-zinc-200">
+                      {g.title}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-zinc-500">
+                      Open →
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <section className={panelClass}>
           {players.length === 0 ? (
@@ -119,9 +164,14 @@ export default function TeamRoster({ teamId, currentUid }: TeamRosterProps) {
           )}
         </section>
 
-        <Link href="/game-cap" className={`${ghostBtn} mt-6 inline-block`}>
-          ← Game Cap
-        </Link>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link href="/app" className={ghostBtn}>
+            ← Dashboard
+          </Link>
+          <Link href="/game-cap" className={ghostBtn}>
+            Game Cap
+          </Link>
+        </div>
       </div>
     </div>
   );

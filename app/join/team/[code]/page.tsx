@@ -105,7 +105,7 @@ export default function JoinTeamPage() {
         email: user.email,
       });
       setJoined(true);
-      setTimeout(() => router.push("/game-cap"), 900);
+      setTimeout(() => router.push(`/team/${invite.teamId}`), 900);
     } catch (e) {
       setJoinError(
         e instanceof Error ? e.message : "Could not join this team.",

@@ -453,8 +453,8 @@ export default function GameReview({
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
         <p className="text-sm text-rose-200">{loadError ?? "Game not found."}</p>
-        <Link href="/app" className={`${ghostBtn} mt-4 inline-block`}>
-          Back to dashboard
+        <Link href={`/game/${gameId}`} className={`${ghostBtn} mt-4 inline-block`}>
+          ← Back to Game
         </Link>
       </div>
     );
@@ -475,17 +475,25 @@ export default function GameReview({
                 .join(" · ") || "Synced multi-angle review"}
             </p>
           </div>
-          <Link href="/app" className={ghostBtn}>
-            ← Dashboard
+          <Link href={`/game/${gameId}`} className={ghostBtn}>
+            ← Back to Game
           </Link>
         </div>
 
         {playableSources.length === 0 ? (
           <div className={panelClass}>
             <p className="text-sm text-zinc-400">
-              No playable YouTube sources yet. Attach sources in Game Cap, then
-              return here to review synced angles.
+              No playable YouTube sources yet. Attach video from the game hub or
+              Game Cap, then return here to review synced angles.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link href={`/game/${gameId}`} className={primaryBtn}>
+                Game hub
+              </Link>
+              <Link href={`/game-cap?gameId=${gameId}`} className={ghostBtn}>
+                Add video
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-[1fr_320px]">

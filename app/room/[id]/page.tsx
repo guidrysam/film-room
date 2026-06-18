@@ -6794,6 +6794,16 @@ function RoomContent() {
   const returnHomeBtnClass =
     "fixed left-4 top-4 z-50 rounded-lg border border-white/[0.08] bg-zinc-950/85 px-2.5 py-1.5 text-xs font-medium text-zinc-200 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
+  const gameHubNavLink =
+    gameIdFromUrl?.trim() ? (
+      <Link
+        href={`/game/${gameIdFromUrl.trim()}`}
+        className="fixed left-4 top-[3.25rem] z-50 rounded-lg border border-white/[0.08] bg-zinc-950/70 px-2.5 py-1 text-[11px] font-medium text-zinc-400 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+      >
+        ← Game
+      </Link>
+    ) : null;
+
   if (!roomId.trim()) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
@@ -6953,6 +6963,7 @@ function RoomContent() {
 
     return (
       <>
+      {gameHubNavLink}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
           <button
@@ -8149,13 +8160,16 @@ function RoomContent() {
       }`}
     >
       {!cleanMode ? (
-        <button
-          type="button"
-          onClick={handleReturnHome}
-          className={returnHomeBtnClass}
-        >
-          ← Home
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={handleReturnHome}
+            className={returnHomeBtnClass}
+          >
+            ← Home
+          </button>
+          {gameHubNavLink}
+        </>
       ) : null}
       <div
         className={`mx-auto flex w-full flex-1 flex-col min-h-0 ${

@@ -93,7 +93,7 @@ export default function JoinGamePage() {
         displayName: user.displayName,
       });
       setJoined(true);
-      setTimeout(() => router.push("/app#film-room"), 900);
+      setTimeout(() => router.push(`/game/${invite.gameId}`), 900);
     } catch (e) {
       setJoinError(
         e instanceof Error ? e.message : "Could not join this game.",

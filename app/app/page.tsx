@@ -200,9 +200,9 @@ export default function DashboardPage() {
       if (!user) return;
       setCreatingGameId(sessionId);
       try {
-        await createGameFromSavedSession(sessionId, user.uid);
+        const newGameId = await createGameFromSavedSession(sessionId, user.uid);
         await Promise.all([refreshGames(), refreshList()]);
-        alert("Game created from this session.");
+        router.push(`/game/${newGameId}`);
       } catch (err) {
         alert(
           `Could not create game: ${errorMessage(err, "Unknown error while creating game.")}`,
@@ -211,7 +211,7 @@ export default function DashboardPage() {
         setCreatingGameId(null);
       }
     },
-    [user, refreshGames, refreshList],
+    [user, refreshGames, refreshList, router],
   );
 
   const startNewSession = () => {

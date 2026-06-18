@@ -352,26 +352,31 @@ function GameCapPageInner() {
           ) : (
             <ul className="space-y-1.5">
               {games.map((g) => (
-                <li key={g.id}>
-                  <Link
-                    href={`/game/${g.id}`}
-                    className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition ${
-                      g.id === selectedGameId
-                        ? "border-blue-500/50 bg-blue-950/30"
-                        : "border-white/[0.06] bg-zinc-950/50 hover:bg-white/[0.04]"
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-white">
-                        {g.title}
-                      </span>
-                      <span className="block text-xs text-zinc-500">
-                        {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
-                          .filter(Boolean)
-                          .join(" · ") || "Game"}
-                      </span>
+                <li
+                  key={g.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-white">
+                      {g.title}
                     </span>
-                  </Link>
+                    <span className="block text-xs text-zinc-500">
+                      {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
+                        .filter(Boolean)
+                        .join(" · ") || "Game"}
+                    </span>
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Link href={`/game/${g.id}`} className={ghostBtn}>
+                      Open
+                    </Link>
+                    <Link
+                      href={`/game-cap?gameId=${g.id}`}
+                      className="rounded-lg border border-blue-500/40 bg-blue-950/40 px-2.5 py-1 text-xs font-medium text-blue-100 transition hover:bg-blue-900/55"
+                    >
+                      Add video
+                    </Link>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -388,9 +393,9 @@ function GameCapPageInner() {
           </h2>
           {!selectedGame ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              Open a game from the list above, or add{" "}
-              <span className="font-mono text-zinc-500">?gameId=</span> to attach
-              sources to a specific game.
+              Choose a game above and tap{" "}
+              <span className="font-medium text-zinc-300">Add video</span>, or open
+              a game from the dashboard and use Add source there.
             </p>
           ) : (
             <div>

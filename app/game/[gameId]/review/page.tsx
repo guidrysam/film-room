@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import GameReview from "@/components/GameReview";
@@ -9,7 +10,7 @@ import { signInWithGoogle } from "@/lib/auth-google";
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm";
 
-export default function GameReviewPage() {
+function GameReviewPageInner() {
   const params = useParams();
   const searchParams = useSearchParams();
   const gameId = typeof params.gameId === "string" ? params.gameId : "";
@@ -46,8 +47,8 @@ export default function GameReviewPage() {
           >
             Sign in with Google
           </button>
-          <Link href="/app" className={linkBack}>
-            ← Back to dashboard
+          <Link href={gameId ? `/game/${gameId}` : "/app"} className={linkBack}>
+            ← {gameId ? "Back to Game" : "Back to dashboard"}
           </Link>
         </div>
       </div>
@@ -63,12 +64,43 @@ export default function GameReviewPage() {
   }
 
   return (
-    <GameReview
-      gameId={gameId}
-      currentUid={user.uid}
-      currentDisplayName={user.displayName}
-      {...(initialGameTime !== undefined ? { initialGameTime } : {})}
-      {...(initialSourceId ? { initialSourceId } : {})}
-    />
+    <div className="min-h-screen px-4 py-6 text-zinc-50">
+      <div className="mx-auto max-w-5xl">
+        <nav
+          aria-label="Breadcrumb"
+          className="mb-4 flex items-center gap-2 text-xs text-zinc-500"
+        >
+          <Link
+            href={`/game/${gameId}`}
+            className="font-medium text-zinc-400 transition hover:text-zinc-100"
+          >
+            Game
+          </Link>
+          <span aria-hidden>/</span>
+          <span className="text-zinc-300">Review</span>
+        </nav>
+        <GameReview
+          gameId={gameId}
+          currentUid={user.uid}
+          currentDisplayName={user.displayName}
+          {...(initialGameTime !== undefined ? { initialGameTime } : {})}
+          {...(initialSourceId ? { initialSourceId } : {})}
+        />
+      </div>
+    </div>
+  );
+}
+
+export default function GameReviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center text-zinc-300">
+          <p className="text-sm">Loading…</p>
+        </div>
+      }
+    >
+      <GameReviewPageInner />
+    </Suspense>
   );
 }
