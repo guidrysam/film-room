@@ -1,16 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
+  Suspense,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { ref, serverTimestamp, set } from "firebase/database";
 import { db } from "@/lib/firebase";
+import { isDebugUiEnabled } from "@/lib/debug-ui";
 import { markRoomHost } from "@/lib/room-host";
 import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
@@ -341,8 +344,30 @@ function safeParseSavedSetup(raw: string): SavedSetupV1 | null {
   }
 }
 
-export default function StreamRoomPage() {
+function AdvancedTroubleshooting({
+  debugUiEnabled,
+  children,
+}: {
+  debugUiEnabled: boolean;
+  children: ReactNode;
+}) {
+  if (debugUiEnabled) {
+    return <div className="mt-4 space-y-4">{children}</div>;
+  }
+  return (
+    <details className="mt-4 rounded-xl border border-white/10 bg-black/25 p-4">
+      <summary className="cursor-pointer text-xs font-medium text-zinc-400">
+        Advanced troubleshooting
+      </summary>
+      <div className="mt-4 space-y-4">{children}</div>
+    </details>
+  );
+}
+
+function StreamRoomPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   const [angles, setAnglesState] = useState<StreamAngleRow[]>(() => defaultRows());
 
   const setAngles = useCallback((update: SetStateAction<StreamAngleRow[]>) => {
@@ -351,20 +376,6 @@ export default function StreamRoomPage() {
         typeof update === "function"
           ? (update as (p: StreamAngleRow[]) => StreamAngleRow[])(prev)
           : update;
-      const byId = new Map(prev.map((r) => [r.id, r]));
-      for (const row of next) {
-        const old = byId.get(row.id);
-        if (old !== undefined && old.url !== row.url) {
-          console.log("ANGLE_URL_WRITE", {
-            angleId: row.id,
-            before: old.url,
-            after: row.url,
-            lengthBefore: old.url.length,
-            lengthAfter: row.url.length,
-            stack: new Error().stack,
-          });
-        }
-      }
       return next;
     });
   }, []);
@@ -442,6 +453,16 @@ export default function StreamRoomPage() {
     string | null
   >(null);
   const [cameraCopyToast, setCameraCopyToast] = useState<string | null>(null);
+  const [streamNotice, setStreamNotice] = useState<{
+    kind: "error" | "info";
+    message: string;
+  } | null>(null);
+  const [cameraVerifySummary, setCameraVerifySummary] = useState<{
+    camId: string;
+    streamId: string;
+    title: string;
+    status: string;
+  } | null>(null);
   const [saveToast, setSaveToast] = useState(false);
   const [loadableSetup, setLoadableSetup] = useState(false);
 
@@ -463,15 +484,19 @@ export default function StreamRoomPage() {
   const copyText = useCallback(async (label: string, text: string) => {
     const t = text.trim();
     if (!t) {
-      window.alert("Nothing to copy.");
+      setStreamNotice({ kind: "error", message: "Nothing to copy." });
       return;
     }
     try {
       await navigator.clipboard.writeText(t);
       setCameraCopyToast(`Copied ${label}`);
+      setStreamNotice(null);
       window.setTimeout(() => setCameraCopyToast(null), 2000);
     } catch {
-      window.alert("Could not copy to clipboard.");
+      setStreamNotice({
+        kind: "error",
+        message: "Could not copy to clipboard.",
+      });
     }
   }, []);
 
@@ -748,11 +773,13 @@ export default function StreamRoomPage() {
       router.push(`/room/${roomId}?view=sync`);
     } catch (err) {
       console.error("[Stream Room] create room failed", err);
-      window.alert(
-        err instanceof Error
-          ? err.message
-          : "Could not start live session. Check Firebase permissions.",
-      );
+      setStreamNotice({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "Could not start live session. Check Firebase permissions.",
+      });
       setStarting(false);
     }
   }, [angles, router, startEnabled]);
@@ -812,13 +839,6 @@ export default function StreamRoomPage() {
       },
     ) => {
       const finalUrl = url.trim();
-      console.log("FILM_ROOM_LOAD_LIVE_URL", {
-        source: "fillFirstAngleWithUrl",
-        inputUrl: url,
-        finalUrl,
-        length: finalUrl.length,
-        fromYouTubeBroadcast: Boolean(fromYouTubeBroadcast),
-      });
       setAngles((prev) => {
         if (prev.length === 0) return prev;
         const idx = Math.max(0, prev.findIndex((a) => !a.url.trim()));
@@ -863,7 +883,10 @@ export default function StreamRoomPage() {
 
   const verifyCameraStream = useCallback(async (cam: YouTubeCameraPreset) => {
     if (!cam.streamId.trim()) {
-      window.alert("This preset has no stream id.");
+      setStreamNotice({
+        kind: "error",
+        message: "This preset has no stream id.",
+      });
       return;
     }
     if (verifyCameraLoadingId !== null) return;
@@ -886,11 +909,13 @@ export default function StreamRoomPage() {
       }
       const body = data as { ok?: boolean; error?: string };
       if (!res.ok || body.ok !== true) {
-        window.alert(
-          typeof body.error === "string" && body.error.trim() !== ""
-            ? body.error.trim()
-            : `Verify failed (HTTP ${res.status}).`,
-        );
+        setStreamNotice({
+          kind: "error",
+          message:
+            typeof body.error === "string" && body.error.trim() !== ""
+              ? body.error.trim()
+              : `Verify failed (HTTP ${res.status}).`,
+        });
         return;
       }
       const ok = data as {
@@ -919,21 +944,24 @@ export default function StreamRoomPage() {
         }
         return next;
       });
-      window.alert(
-        [
-          `Stream ID: ${ok.streamId ?? ""}`,
-          `Title: ${ok.streamTitle ?? ""}`,
-          `Status: ${ok.streamStatus ?? ""}`,
-          `RTMP server: ${ok.ingestionAddress ?? ""}`,
-          `Stream key: ${ok.streamName ?? ""}`,
-        ].join("\n"),
-      );
+      setCameraVerifySummary({
+        camId: cam.id,
+        streamId: ok.streamId ?? cam.streamId,
+        title: ok.streamTitle ?? "—",
+        status: ok.streamStatus ?? "—",
+      });
+      setStreamNotice({
+        kind: "info",
+        message: `Camera verified: ${ok.streamTitle ?? "stream"} (${ok.streamStatus ?? "unknown status"}).`,
+      });
     } catch (err) {
-      window.alert(
-        err instanceof Error && err.message.trim()
-          ? err.message
-          : "Could not verify stream.",
-      );
+      setStreamNotice({
+        kind: "error",
+        message:
+          err instanceof Error && err.message.trim()
+            ? err.message
+            : "Could not verify stream.",
+      });
     } finally {
       setVerifyCameraLoadingId(null);
     }
@@ -959,9 +987,11 @@ export default function StreamRoomPage() {
   const startSessionWithCamera = useCallback(
     async (cam: YouTubeCameraPreset) => {
       if (!cam.streamId.trim()) {
-        window.alert(
-          "This preset has no stream id. Create a camera stream again and save the preset.",
-        );
+        setCameraActiveLinkStatus({
+          kind: "warning",
+          message:
+            "This preset has no stream id. Create a camera stream again and save the preset.",
+        });
         return;
       }
       if (sessionFromCameraLoadingId) return;
@@ -1040,34 +1070,40 @@ export default function StreamRoomPage() {
             typeof existingJson.message === "string" && existingJson.message.trim() !== ""
               ? existingJson.message.trim()
               : `find-broadcast-for-stream failed (HTTP ${existingRes.status}).`;
-          window.alert(msg);
-          setCameraActiveResolveDebug({
-            foundActiveBoundCount,
-            foundUpcomingBoundCount,
-            selectedBroadcastId,
-            selectedVideoId,
-            noCreateAttempted: true,
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message: msg,
           });
-          setCameraActiveLinkStatus(null);
+          if (debugUiEnabled) {
+            setCameraActiveResolveDebug({
+              foundActiveBoundCount,
+              foundUpcomingBoundCount,
+              selectedBroadcastId,
+              selectedVideoId,
+              noCreateAttempted: true,
+            });
+          }
           return;
         }
 
         const noCreateAttempted = existingJson.noCreateAttempted !== false;
 
-        setCameraActiveResolveDebug({
-          foundActiveBoundCount,
-          foundUpcomingBoundCount,
-          selectedBroadcastId,
-          selectedVideoId,
-          noCreateAttempted,
-          foundAcceptableLive: existingJson.foundAcceptableLive === true,
-          foundOnlyUpcomingBound: existingJson.foundOnlyUpcomingBound === true,
-          lifeCycleStatus:
-            typeof existingJson.lifeCycleStatus === "string"
-              ? existingJson.lifeCycleStatus
-              : undefined,
-          finalAngleUrl: undefined,
-        });
+        if (debugUiEnabled) {
+          setCameraActiveResolveDebug({
+            foundActiveBoundCount,
+            foundUpcomingBoundCount,
+            selectedBroadcastId,
+            selectedVideoId,
+            noCreateAttempted,
+            foundAcceptableLive: existingJson.foundAcceptableLive === true,
+            foundOnlyUpcomingBound: existingJson.foundOnlyUpcomingBound === true,
+            lifeCycleStatus:
+              typeof existingJson.lifeCycleStatus === "string"
+                ? existingJson.lifeCycleStatus
+                : undefined,
+            finalAngleUrl: undefined,
+          });
+        }
 
         const attemptTransitionLive = async (broadcastId: string) => {
           try {
@@ -1113,7 +1149,7 @@ export default function StreamRoomPage() {
                 embedRejected: j.embedRejected === true,
               }));
             }
-            if (r.ok && j) {
+            if (r.ok && j && debugUiEnabled) {
               setCameraTransitionDebug({
                 transitionAttempted: true,
                 streamStatus:
@@ -1227,23 +1263,27 @@ export default function StreamRoomPage() {
                 : "";
 
           if (!finalUrl) {
-            window.alert("Could not build watch URL from YouTube response.");
-            setCameraActiveLinkStatus(null);
+            setCameraActiveLinkStatus({
+              kind: "warning",
+              message: "Could not build watch URL from YouTube response.",
+            });
             return;
           }
 
-          setCameraActiveResolveDebug((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  finalAngleUrl: finalUrl,
-                  lifeCycleStatus:
-                    typeof existingJson.lifeCycleStatus === "string"
-                      ? existingJson.lifeCycleStatus
-                      : prev.lifeCycleStatus,
-                }
-              : prev,
-          );
+          if (debugUiEnabled) {
+            setCameraActiveResolveDebug((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    finalAngleUrl: finalUrl,
+                    lifeCycleStatus:
+                      typeof existingJson.lifeCycleStatus === "string"
+                        ? existingJson.lifeCycleStatus
+                        : prev.lifeCycleStatus,
+                  }
+                : prev,
+            );
+          }
 
           setCameraActiveLinkStatus({
             kind: "success",
@@ -1288,12 +1328,6 @@ export default function StreamRoomPage() {
             appCreatedLive: true,
             source: "youtube_api_broadcast",
             createdBroadcastId: broadcastId,
-          });
-          console.log("GET_WATCH_LINK_APPLIED", {
-            streamId: cam.streamId.trim(),
-            broadcastId,
-            videoId: vid,
-            finalUrl,
           });
           // Best-effort: if stream is receiving, try to transition to live.
           await attemptTransitionLive(broadcastId);
@@ -1357,20 +1391,26 @@ export default function StreamRoomPage() {
                     createdJson.message.trim() !== ""
                   ? createdJson.message.trim()
                   : `create-broadcast-from-stream failed (HTTP ${createRes.status}).`;
-          window.alert(alertMsg);
-          setCameraActiveLinkStatus(null);
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message: alertMsg,
+          });
           return;
         }
         const vid =
           typeof createdJson.videoId === "string" ? createdJson.videoId.trim() : "";
         if (!/^[a-zA-Z0-9_-]{11}$/.test(vid)) {
-          window.alert("Create broadcast returned invalid video id.");
-          setCameraActiveLinkStatus(null);
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message: "Create broadcast returned invalid video id.",
+          });
           return;
         }
         if (createdJson.boundMatchesRequested !== true) {
-          window.alert("Created broadcast did not bind to the saved stream key.");
-          setCameraActiveLinkStatus(null);
+          setCameraActiveLinkStatus({
+            kind: "warning",
+            message: "Created broadcast did not bind to the saved stream key.",
+          });
           return;
         }
         const finalUrl = `https://youtube.com/live/${vid}`;
@@ -1388,7 +1428,6 @@ export default function StreamRoomPage() {
           watchUrl: finalUrl,
         });
         if (createdJson.embedRejected === true) {
-          window.alert(EMBED_NOT_ALLOWED_MESSAGE);
           setCameraActiveLinkStatus({
             kind: "warning",
             message: EMBED_NOT_ALLOWED_MESSAGE,
@@ -1428,31 +1467,29 @@ export default function StreamRoomPage() {
           source: "youtube_api_broadcast",
           createdBroadcastId: vid,
         });
-        console.log("GET_WATCH_LINK_APPLIED", {
-          streamId: cam.streamId.trim(),
-          broadcastId: vid,
-          videoId: vid,
-          finalUrl,
-        });
         await attemptTransitionLive(vid);
       } catch (err) {
-        window.alert(
-          err instanceof Error && err.message.trim()
-            ? err.message
-            : "Could not create/get today’s watch link.",
-        );
-        setCameraActiveLinkStatus(null);
+        setCameraActiveLinkStatus({
+          kind: "warning",
+          message:
+            err instanceof Error && err.message.trim()
+              ? err.message
+              : "Could not create/get today’s watch link.",
+        });
       } finally {
         setSessionFromCameraLoadingId(null);
       }
     },
-    [sessionFromCameraLoadingId, fillFirstAngleWithUrl, setAngles, bumpApiCount],
+    [sessionFromCameraLoadingId, fillFirstAngleWithUrl, setAngles, bumpApiCount, debugUiEnabled],
   );
 
   const useManualLiveLink = useCallback(() => {
     const raw = manualLiveLinkDraft.trim();
     if (!raw) {
-      window.alert("Paste a YouTube live link first.");
+      setStreamNotice({
+        kind: "error",
+        message: "Paste a YouTube live link first.",
+      });
       return;
     }
     const t = parsePersistentLiveUrlTarget(raw);
@@ -1623,31 +1660,53 @@ export default function StreamRoomPage() {
             >
               ← Home
             </Link>
-            <Link
-              href="/stream/embed-diagnostics"
-              className="rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
-            >
-              Embed diagnostics
-            </Link>
+            {debugUiEnabled ? (
+              <Link
+                href="/stream/embed-diagnostics"
+                className="rounded-sm text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+              >
+                Embed diagnostics
+              </Link>
+            ) : null}
           </div>
         </div>
 
-        <div className={panelClass}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-white">
-                YouTube embed diagnostics
-              </h2>
-              <p className="text-xs leading-relaxed text-zinc-400">
-                Compare Studio vs API-created live streams on your channel. Test
-                whether manual Studio streams embed when API broadcasts do not.
-              </p>
+        {streamNotice ? (
+          <p
+            className={`rounded-lg border px-3 py-2 text-sm ${
+              streamNotice.kind === "error"
+                ? "border-rose-500/35 bg-rose-950/30 text-rose-100"
+                : "border-blue-500/30 bg-blue-950/25 text-blue-100"
+            }`}
+          >
+            {streamNotice.message}
+          </p>
+        ) : null}
+
+        {cameraCopyToast ? (
+          <p className="rounded-lg border border-emerald-500/30 bg-emerald-950/25 px-3 py-2 text-sm text-emerald-100">
+            {cameraCopyToast}
+          </p>
+        ) : null}
+
+        <AdvancedTroubleshooting debugUiEnabled={debugUiEnabled}>
+          <div className={panelClass}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <h2 className="text-sm font-semibold text-white">
+                  YouTube embed diagnostics
+                </h2>
+                <p className="text-xs leading-relaxed text-zinc-400">
+                  Compare Studio vs API-created live streams on your channel. Test
+                  whether manual Studio streams embed when API broadcasts do not.
+                </p>
+              </div>
+              <Link href="/stream/embed-diagnostics" className={ghostBtn}>
+                Open diagnostics
+              </Link>
             </div>
-            <Link href="/stream/embed-diagnostics" className={ghostBtn}>
-              Open diagnostics
-            </Link>
           </div>
-        </div>
+        </AdvancedTroubleshooting>
 
         <div className={panelClass}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1875,7 +1934,8 @@ export default function StreamRoomPage() {
           ) : null}
 
           {cameraSessionVerify ? (
-            <div className="mt-6 rounded-2xl border border-blue-500/35 bg-blue-950/30 px-4 py-4 shadow-lg shadow-blue-950/30 ring-1 ring-blue-500/15">
+            <AdvancedTroubleshooting debugUiEnabled={debugUiEnabled}>
+            <div className="rounded-2xl border border-blue-500/35 bg-blue-950/30 px-4 py-4 shadow-lg shadow-blue-950/30 ring-1 ring-blue-500/15">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-200/95">
                 Latest broadcast — binding verified
               </h3>
@@ -1932,6 +1992,7 @@ export default function StreamRoomPage() {
                 This is the exact key your phone must stream to.
               </p>
             </div>
+            </AdvancedTroubleshooting>
           ) : null}
 
           {cameraActiveLinkStatus ? (
@@ -1965,11 +2026,13 @@ export default function StreamRoomPage() {
             </div>
           </div>
 
+          {(cameraActiveResolveDebug || cameraTransitionDebug) ? (
+            <AdvancedTroubleshooting debugUiEnabled={debugUiEnabled}>
           {cameraActiveResolveDebug ? (
-            <div className="mt-4 rounded-xl border border-white/10 bg-black/35 p-4">
-              <details>
+            <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+              <details open={debugUiEnabled}>
                 <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
-                  Today’s watch link debug (temporary)
+                  Today’s watch link details
                 </summary>
                 <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-zinc-500">
                   {JSON.stringify(cameraActiveResolveDebug, null, 2)}
@@ -1979,10 +2042,10 @@ export default function StreamRoomPage() {
           ) : null}
 
           {cameraTransitionDebug ? (
-            <div className="mt-3 rounded-xl border border-white/10 bg-black/35 p-4">
-              <details open>
+            <div className="rounded-xl border border-white/10 bg-black/35 p-4">
+              <details open={debugUiEnabled}>
                 <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
-                  Transition-to-live debug (temporary)
+                  Transition-to-live details
                 </summary>
                 <div className="mt-3 space-y-1 text-[11px] text-zinc-300">
                   <div>
@@ -2101,6 +2164,23 @@ export default function StreamRoomPage() {
                 ) : null}
               </details>
             </div>
+          ) : null}
+            </AdvancedTroubleshooting>
+          ) : !debugUiEnabled ? (
+            <AdvancedTroubleshooting debugUiEnabled={false}>
+              <p className="text-xs text-zinc-500">
+                Add <span className="font-mono">?debug=1</span> to the URL for
+                detailed API and transition logs.
+              </p>
+            </AdvancedTroubleshooting>
+          ) : null}
+
+          {cameraVerifySummary ? (
+            <p className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-100">
+              Verified <span className="font-medium">{cameraVerifySummary.title}</span>{" "}
+              ({cameraVerifySummary.status}) · stream{" "}
+              <span className="font-mono">{cameraVerifySummary.streamId}</span>
+            </p>
           ) : null}
 
           {savedCamerasSorted.length > 0 ? (
@@ -2259,8 +2339,8 @@ export default function StreamRoomPage() {
             </div>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-xs text-zinc-300">
-                After <strong>Create / Get Today’s Watch Link</strong>, click{" "}
-                <strong>Launch Film Room</strong>.
+                After <strong>Create / Get Today’s Watch Link</strong>, start your
+                synced live session below.
               </div>
               <button
                 type="button"
@@ -2268,10 +2348,11 @@ export default function StreamRoomPage() {
                 className={primaryBtn}
                 disabled={!startEnabled}
               >
-                Launch Film Room
+                {starting ? "Starting…" : "Start live session"}
               </button>
             </div>
 
+            {debugUiEnabled ? (
             <div className="mt-3 text-[11px] text-zinc-500">
               API calls this session:{" "}
               <span className="font-mono text-zinc-300">
@@ -2286,6 +2367,7 @@ export default function StreamRoomPage() {
                 youtube-video-meta={apiCallCounts.youtubeVideoMeta}
               </span>
             </div>
+            ) : null}
           </div>
         </div>
 
@@ -2318,15 +2400,6 @@ export default function StreamRoomPage() {
                   <label className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-400">
                     YouTube URL
                   </label>
-                  {typeof window !== "undefined"
-                    ? (() => {
-                        console.log("ANGLE_RENDER_VALUE", {
-                          angleId: a.id,
-                          url: a.url,
-                        });
-                        return null;
-                      })()
-                    : null}
                   <input
                     value={a.url}
                     onChange={(e) => setAngleField(a.id, { url: e.target.value })}
@@ -2376,7 +2449,7 @@ export default function StreamRoomPage() {
                   </div>
                 ) : null}
 
-                {a.debug ? (
+                {debugUiEnabled && a.debug ? (
                   <div className="md:col-span-12">
                     <details className="rounded-lg border border-white/10 bg-black/35 px-3 py-2">
                       <summary className="cursor-pointer text-[11px] font-medium text-zinc-300">
@@ -2433,12 +2506,26 @@ export default function StreamRoomPage() {
               disabled={!startEnabled}
               onClick={() => void startLiveSession()}
             >
-              {starting ? "Starting…" : "Start Live Session"}
+              {starting ? "Starting…" : "Start live session"}
             </button>
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function StreamRoomPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center text-zinc-300">
+          <p className="text-sm">Loading…</p>
+        </div>
+      }
+    >
+      <StreamRoomPageInner />
+    </Suspense>
   );
 }
 

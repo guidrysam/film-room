@@ -26,6 +26,7 @@ import {
 import type { YouTubePlayer } from "react-youtube";
 import YouTube from "react-youtube";
 import { db } from "@/lib/firebase";
+import { isDebugUiEnabled } from "@/lib/debug-ui";
 import {
   buildViewerRoomUrl,
   isRoomHost,
@@ -1696,6 +1697,7 @@ function RoomContent() {
   const videoFromUrl = searchParams.get("video");
   /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
   const gameIdFromUrl = searchParams.get("gameId");
+  const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
   const videoIdFromUrl = useMemo(() => {
     const raw = videoFromUrl?.trim();
@@ -7422,6 +7424,7 @@ function RoomContent() {
                               opts={youtubePlayerOpts}
                             />
                           </YoutubePointerGate>
+                          {debugUiEnabled ? (
                           <SyncAngleDebugStrip
                             angleId={angle.id}
                             angleName={angle.name}
@@ -7436,6 +7439,7 @@ function RoomContent() {
                               s.sourceType === "live"
                             }
                           />
+                          ) : null}
                           {roomId && coachViewMode === "single" && isFeatured ? (
                             <TelestratorOverlay
                               roomId={roomId}
@@ -7598,9 +7602,10 @@ function RoomContent() {
                               renderAngleId={viewerPlayerViewDrawAngleId}
                               allowLegacyWithoutAngleId
                               wrapClassName="pointer-events-none absolute inset-0 z-30 touch-none"
-                              viewerDebug
+                              viewerDebug={debugUiEnabled}
                             />
                           ) : null}
+                          {debugUiEnabled ? (
                           <SyncAngleDebugStrip
                             angleId={a.id}
                             angleName={a.name}
@@ -7615,6 +7620,7 @@ function RoomContent() {
                               s.sourceType === "live"
                             }
                           />
+                          ) : null}
                           {showPerAngleLiveTiles ? (
                             <button
                               type="button"
@@ -7684,10 +7690,10 @@ function RoomContent() {
                         ? "pointer-events-none absolute inset-0 z-30 touch-none"
                         : undefined
                     }
-                    viewerDebug={!isHost}
+                    viewerDebug={debugUiEnabled}
                   />
                 ) : null}
-                {!isHost && multi ? null : (
+                {debugUiEnabled && (!isHost && multi ? null : (
                   <SyncAngleDebugStrip
                     angleId={activeAngle.id}
                     angleName={activeAngle.name}
@@ -7702,7 +7708,7 @@ function RoomContent() {
                       s.sourceType === "live"
                     }
                   />
-                )}
+                ))}
               </div>
               {!isHost && multi && !viewerPlaybackUnlocked ? (
                 <div className="border-t border-white/[0.06] bg-zinc-900/55 px-3 py-2.5">
