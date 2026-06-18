@@ -23,6 +23,17 @@ export const ROSTER_CSV_FIELD_LABELS: Record<RosterCsvField, string> = {
   ignore: "Ignore column",
 };
 
+/** Columns commonly exported from TeamLinkt roster CSVs. */
+export const TEAMLINKT_ROSTER_CSV_COLUMNS = [
+  "Player First Name",
+  "Player Last Name",
+  "Player Name",
+  "Jersey Number",
+  "Parent Name",
+  "Parent Email",
+  "Phone",
+] as const;
+
 export type RosterColumnMapping = Record<number, RosterCsvField>;
 
 export type ParsedRosterRow = {

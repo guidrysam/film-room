@@ -13,6 +13,7 @@ import {
   mappingHasPlayerIdentity,
   parseCsvText,
   ROSTER_CSV_FIELD_LABELS,
+  TEAMLINKT_ROSTER_CSV_COLUMNS,
   unmappedRequiredFields,
   type RosterColumnMapping,
   type RosterCsvField,
@@ -51,6 +52,40 @@ const MAPPING_OPTIONS: RosterCsvField[] = [
   "ignore",
 ];
 
+function ImportResultSummary({ result }: { result: RosterImportResult }) {
+  const items = [
+    { label: "Players created", value: result.playersCreated },
+    { label: "Players updated", value: result.playersUpdated },
+    { label: "Parent contacts created", value: result.parentsSaved },
+    { label: "Invalid rows skipped", value: result.skipped },
+  ];
+
+  return (
+    <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-3">
+      <p className="mb-2 text-[11px] font-semibold text-emerald-100">
+        Import complete
+      </p>
+      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {items.map(({ label, value }) => (
+          <li
+            key={label}
+            className="rounded-md border border-white/[0.06] bg-black/25 px-2 py-2 text-center"
+          >
+            <p className="text-lg font-semibold text-white">{value}</p>
+            <p className="text-[9px] uppercase tracking-wide text-zinc-500">
+              {label}
+            </p>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[10px] leading-snug text-emerald-200/90">
+        Players appear on the team roster. Parent contacts appear in Parent
+        onboarding below — copy invite links when you are ready.
+      </p>
+    </div>
+  );
+}
+
 /**
  * Import a TeamLinkt-style roster CSV into team players and parent invite targets.
  */
@@ -69,6 +104,7 @@ export default function TeamRosterImport({
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<RosterImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showColumnHelp, setShowColumnHelp] = useState(false);
 
   const missingFields = useMemo(
     () => unmappedRequiredFields(mapping),
@@ -194,20 +230,48 @@ export default function TeamRosterImport({
   return (
     <div>
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-        Roster CSV import
+        TeamLinkt / roster CSV import
       </p>
-      <p className="mb-3 text-[10px] leading-snug text-zinc-500">
-        Upload a TeamLinkt roster export to create players and parent invite
-        targets. No emails are sent automatically.
+      <p className="mb-3 text-xs leading-relaxed text-zinc-400">
+        Export your roster from TeamLinkt, then upload the CSV here. We will
+        auto-map columns when possible — adjust mapping below if your export
+        uses different headers.
       </p>
 
+      <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setShowColumnHelp((s) => !s)}
+          className="flex w-full items-center justify-between gap-2 text-left text-[11px] font-medium text-zinc-300"
+          aria-expanded={showColumnHelp}
+        >
+          <span>Expected CSV columns</span>
+          <span className="text-zinc-500">{showColumnHelp ? "▲" : "▼"}</span>
+        </button>
+        {showColumnHelp ? (
+          <ul className="mt-2 space-y-1 border-t border-white/[0.06] pt-2 text-[10px] text-zinc-500">
+            {TEAMLINKT_ROSTER_CSV_COLUMNS.map((col) => (
+              <li key={col} className="flex items-center gap-2">
+                <span className="font-mono text-zinc-400">{col}</span>
+              </li>
+            ))}
+            <li className="pt-1 text-zinc-600">
+              Player name can be one column or first + last name. Parent email
+              and name are used for invite targets when both are present.
+            </li>
+          </ul>
+        ) : null}
+      </div>
+
+      {result ? <ImportResultSummary result={result} /> : null}
+
       {!fileName ? (
-        <label className="mb-3 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-white/12 bg-black/20 px-4 py-6 text-center transition hover:border-white/20 hover:bg-black/30">
-          <span className="text-[11px] font-medium text-zinc-300">
-            Choose roster CSV
+        <label className="mb-3 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-blue-500/25 bg-blue-950/15 px-4 py-7 text-center transition hover:border-blue-500/40 hover:bg-blue-950/25">
+          <span className="text-sm font-medium text-zinc-100">
+            Upload TeamLinkt CSV
           </span>
-          <span className="mt-1 text-[10px] text-zinc-500">
-            TeamLinkt export or similar
+          <span className="mt-1 text-[11px] text-zinc-400">
+            .csv roster export from TeamLinkt or similar
           </span>
           <input
             type="file"
@@ -279,7 +343,7 @@ export default function TeamRosterImport({
         <div className="mb-3">
           <p className="mb-2 text-[10px] font-medium text-zinc-400">
             Import preview ({importableCount} to import,{" "}
-            {preview.filter((r) => r.status === "invalid").length} skipped)
+            {preview.filter((r) => r.status === "invalid").length} invalid)
           </p>
           <div className="max-h-56 overflow-auto rounded-md border border-white/[0.06]">
             <table className="w-full text-left text-[10px]">
@@ -329,17 +393,6 @@ export default function TeamRosterImport({
               : `Import ${importableCount} player${importableCount === 1 ? "" : "s"}`}
           </button>
         </div>
-      ) : null}
-
-      {result ? (
-        <p className="mb-2 text-[11px] text-emerald-200">
-          Imported {result.playersCreated} new and updated {result.playersUpdated}{" "}
-          players. Saved {result.parentsSaved} parent invite target
-          {result.parentsSaved === 1 ? "" : "s"}.
-          {result.skipped > 0
-            ? ` Skipped ${result.skipped} invalid row${result.skipped === 1 ? "" : "s"}.`
-            : ""}
-        </p>
       ) : null}
 
       {error ? (
