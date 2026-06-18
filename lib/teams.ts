@@ -72,6 +72,14 @@ export type Player = {
   position?: string;
   linkedUid?: string;
   createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
+};
+
+export type PlayerInput = {
+  name: string;
+  jerseyNumber?: string;
+  position?: string;
+  linkedUid?: string;
 };
 
 export type CreateTeamInput = {
@@ -88,6 +96,10 @@ export type CreateTeamGameInput = CreateGameInput & {
 
 function teamsCol() {
   return collection(firestore, "teams");
+}
+
+function playersCol(teamId: string) {
+  return collection(firestore, "teams", teamId, "players");
 }
 
 function trimOrUndef(v: unknown): string | undefined {
@@ -328,4 +340,88 @@ export async function listTeamGames(
   const team = await getTeam(teamId);
   if (!team || !canViewTeam(team, uid)) return [];
   return listGamesForTeam(teamId);
+}
+
+function parsePlayer(id: string, raw: Record<string, unknown>): Player {
+  return {
+    id,
+    name: typeof raw.name === "string" ? raw.name.trim() || "Player" : "Player",
+    ...(trimOrUndef(raw.jerseyNumber)
+      ? { jerseyNumber: (raw.jerseyNumber as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.position)
+      ? { position: (raw.position as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.linkedUid)
+      ? { linkedUid: (raw.linkedUid as string).trim() }
+      : {}),
+    createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
+    updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
+  };
+}
+
+/** Stable roster key for duplicate detection (name + jersey number). */
+export function playerRosterKey(name: string, jerseyNumber?: string): string {
+  const n = name.trim().toLowerCase().replace(/\s+/g, " ");
+  const j = (jerseyNumber ?? "").trim().toLowerCase();
+  return `${n}|${j}`;
+}
+
+export function indexPlayersByRosterKey(
+  players: Player[],
+): Map<string, Player> {
+  const map = new Map<string, Player>();
+  for (const p of players) {
+    map.set(playerRosterKey(p.name, p.jerseyNumber), p);
+  }
+  return map;
+}
+
+export async function listTeamPlayers(teamId: string): Promise<Player[]> {
+  const snap = await getDocs(playersCol(teamId));
+  const out: Player[] = [];
+  snap.forEach((d) =>
+    out.push(parsePlayer(d.id, d.data() as Record<string, unknown>)),
+  );
+  out.sort(
+    (a, b) =>
+      a.name.localeCompare(b.name) ||
+      (a.jerseyNumber ?? "").localeCompare(b.jerseyNumber ?? ""),
+  );
+  return out;
+}
+
+export async function upsertTeamPlayer(
+  teamId: string,
+  input: PlayerInput,
+  existingByKey?: Map<string, Player>,
+): Promise<{ player: Player; created: boolean }> {
+  const name = input.name.trim();
+  if (!name) throw new Error("Player name is required.");
+  const jerseyNumber = trimOrUndef(input.jerseyNumber);
+  const key = playerRosterKey(name, jerseyNumber);
+  const existing = existingByKey?.get(key);
+  const ref = existing
+    ? doc(playersCol(teamId), existing.id)
+    : doc(playersCol(teamId));
+  const now = serverTimestamp();
+  const payload = {
+    name,
+    ...(jerseyNumber ? { jerseyNumber } : {}),
+    ...(trimOrUndef(input.position) ? { position: input.position!.trim() } : {}),
+    ...(trimOrUndef(input.linkedUid) ? { linkedUid: input.linkedUid!.trim() } : {}),
+    updatedAt: now,
+    ...(!existing ? { createdAt: now } : {}),
+  };
+  await setDoc(ref, payload, { merge: true });
+  return {
+    player: {
+      id: ref.id,
+      name,
+      ...(jerseyNumber ? { jerseyNumber } : {}),
+      ...(trimOrUndef(input.position) ? { position: input.position!.trim() } : {}),
+      ...(trimOrUndef(input.linkedUid) ? { linkedUid: input.linkedUid!.trim() } : {}),
+    },
+    created: !existing,
+  };
 }

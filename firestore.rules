@@ -101,6 +101,12 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null &&
                                          isTeamCoach(teamId, request.auth.uid);
       }
+
+      match /parentInviteTargets/{targetId} {
+        allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
+        allow create, update, delete: if request.auth != null &&
+                                         isTeamCoach(teamId, request.auth.uid);
+      }
     }
 
     // ---- Team invites (join links) ------------------------------------

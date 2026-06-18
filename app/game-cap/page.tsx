@@ -6,6 +6,7 @@ import { useAuth } from "@/components/AuthProvider";
 import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
 import TeamInvites from "@/components/TeamInvites";
+import TeamRosterImport from "@/components/TeamRosterImport";
 import TeamSetup from "@/components/TeamSetup";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
@@ -221,7 +222,8 @@ export default function GameCapPage() {
             onTeamsChanged={() => void refreshTeam()}
           />
           {selectedTeam ? (
-            <div className="mt-4 border-t border-white/[0.06] pt-4">
+            <div className="mt-4 space-y-4 border-t border-white/[0.06] pt-4">
+              <TeamRosterImport team={selectedTeam} currentUid={user.uid} />
               <TeamInvites team={selectedTeam} currentUid={user.uid} />
             </div>
           ) : null}
