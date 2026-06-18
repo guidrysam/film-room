@@ -9,11 +9,15 @@ import {
 } from "@/lib/roster-import";
 import {
   guessRosterColumnMapping,
+  isTeamLinktRosterExport,
   mapRosterRows,
   mappingHasPlayerIdentity,
   parseCsvText,
+  parseTeamLinktRosterRows,
   ROSTER_CSV_FIELD_LABELS,
+  suggestedTeamNameFromRows,
   TEAMLINKT_ROSTER_CSV_COLUMNS,
+  trimTrailingEmptyCsvColumns,
   unmappedRequiredFields,
   type RosterColumnMapping,
   type RosterCsvField,
@@ -46,6 +50,9 @@ const MAPPING_OPTIONS: RosterCsvField[] = [
   "playerFirstName",
   "playerLastName",
   "jerseyNumber",
+  "position",
+  "teamName",
+  "isPlayer",
   "parentName",
   "parentEmail",
   "phone",
@@ -105,6 +112,8 @@ export default function TeamRosterImport({
   const [result, setResult] = useState<RosterImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showColumnHelp, setShowColumnHelp] = useState(false);
+  const [teamLinktMode, setTeamLinktMode] = useState(false);
+  const [suggestedTeamName, setSuggestedTeamName] = useState<string | null>(null);
 
   const missingFields = useMemo(
     () => unmappedRequiredFields(mapping),
@@ -123,6 +132,8 @@ export default function TeamRosterImport({
     setPreview(null);
     setResult(null);
     setError(null);
+    setTeamLinktMode(false);
+    setSuggestedTeamName(null);
   }, []);
 
   const handleFile = useCallback(
@@ -135,18 +146,25 @@ export default function TeamRosterImport({
       }
       try {
         const text = await file.text();
-        const rows = parseCsvText(text);
+        const rows = trimTrailingEmptyCsvColumns(parseCsvText(text));
         if (rows.length < 2) {
           setError("CSV must include a header row and at least one player row.");
           return;
         }
         const headerRow = rows[0]!;
         const body = rows.slice(1);
-        const guessed = guessRosterColumnMapping(headerRow);
+        const teamLinkt = isTeamLinktRosterExport(headerRow);
         setFileName(file.name);
         setHeaders(headerRow);
         setDataRows(body);
-        setMapping(guessed);
+        setTeamLinktMode(teamLinkt);
+        if (teamLinkt) {
+          const parsed = parseTeamLinktRosterRows(headerRow, body);
+          setSuggestedTeamName(suggestedTeamNameFromRows(parsed) ?? null);
+        } else {
+          setMapping(guessRosterColumnMapping(headerRow));
+          setSuggestedTeamName(null);
+        }
       } catch {
         setError("Could not read this CSV file.");
       }
@@ -164,7 +182,7 @@ export default function TeamRosterImport({
   );
 
   const handlePreview = useCallback(async () => {
-    if (!hasPlayerIdentity) {
+    if (!teamLinktMode && !hasPlayerIdentity) {
       setError("Map player name or first + last name before previewing.");
       return;
     }
@@ -172,7 +190,9 @@ export default function TeamRosterImport({
     setError(null);
     setResult(null);
     try {
-      const parsed = mapRosterRows(dataRows, mapping);
+      const parsed = teamLinktMode
+        ? parseTeamLinktRosterRows(headers, dataRows)
+        : mapRosterRows(dataRows, mapping);
       const existing = await listTeamPlayers(team.id);
       setPreview(buildRosterImportPreview(parsed, existing));
     } catch {
@@ -180,10 +200,20 @@ export default function TeamRosterImport({
     } finally {
       setPreviewLoading(false);
     }
-  }, [hasPlayerIdentity, dataRows, mapping, team.id]);
+  }, [
+    teamLinktMode,
+    hasPlayerIdentity,
+    headers,
+    dataRows,
+    mapping,
+    team.id,
+  ]);
 
   useEffect(() => {
-    if (!hasPlayerIdentity || dataRows.length === 0) {
+    const ready = teamLinktMode
+      ? dataRows.length > 0
+      : hasPlayerIdentity && dataRows.length > 0;
+    if (!ready) {
       setPreview(null);
       return;
     }
@@ -191,7 +221,7 @@ export default function TeamRosterImport({
       void handlePreview();
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [mapping, dataRows, hasPlayerIdentity, handlePreview]);
+  }, [teamLinktMode, mapping, dataRows, hasPlayerIdentity, handlePreview]);
 
   const handleImport = useCallback(async () => {
     if (!preview?.length) return;
@@ -205,6 +235,8 @@ export default function TeamRosterImport({
       setHeaders([]);
       setDataRows([]);
       setMapping({});
+      setTeamLinktMode(false);
+      setSuggestedTeamName(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed.");
     } finally {
@@ -233,9 +265,9 @@ export default function TeamRosterImport({
         TeamLinkt / roster CSV import
       </p>
       <p className="mb-3 text-xs leading-relaxed text-zinc-400">
-        Export your roster from TeamLinkt, then upload the CSV here. We will
-        auto-map columns when possible — adjust mapping below if your export
-        uses different headers.
+        Export your roster from TeamLinkt, then upload the CSV here. TeamLinkt
+        exports are detected automatically; other CSVs can use manual column
+        mapping below.
       </p>
 
       <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2.5">
@@ -256,8 +288,9 @@ export default function TeamRosterImport({
               </li>
             ))}
             <li className="pt-1 text-zinc-600">
-              Player name can be one column or first + last name. Parent email
-              and name are used for invite targets when both are present.
+              Rows with Is Player = Yes become roster players. Coach/manager rows
+              are skipped. Parent invite targets come from Contact 1–3 when email
+              is present and relationship is not Player.
             </li>
           </ul>
         ) : null}
@@ -281,15 +314,31 @@ export default function TeamRosterImport({
           />
         </label>
       ) : (
-        <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2">
-          <span className="truncate text-[11px] text-zinc-300">{fileName}</span>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/[0.06] bg-black/25 px-2.5 py-2">
+          <div className="min-w-0">
+            <span className="block truncate text-[11px] text-zinc-300">
+              {fileName}
+            </span>
+            {teamLinktMode ? (
+              <span className="text-[10px] text-blue-300">
+                TeamLinkt export detected
+                {suggestedTeamName && suggestedTeamName !== team.name
+                  ? ` · CSV team: ${suggestedTeamName}`
+                  : null}
+              </span>
+            ) : (
+              <span className="text-[10px] text-zinc-500">
+                Generic CSV — map columns below
+              </span>
+            )}
+          </div>
           <button type="button" onClick={reset} className={ghostBtn}>
             Clear
           </button>
         </div>
       )}
 
-      {headers.length > 0 ? (
+      {headers.length > 0 && !teamLinktMode ? (
         <div className="mb-3">
           <p className="mb-2 text-[10px] font-medium text-zinc-400">
             Column mapping
@@ -343,6 +392,7 @@ export default function TeamRosterImport({
         <div className="mb-3">
           <p className="mb-2 text-[10px] font-medium text-zinc-400">
             Import preview ({importableCount} to import,{" "}
+            {preview.filter((r) => r.status === "skip").length} skipped,{" "}
             {preview.filter((r) => r.status === "invalid").length} invalid)
           </p>
           <div className="max-h-56 overflow-auto rounded-md border border-white/[0.06]">
@@ -351,8 +401,8 @@ export default function TeamRosterImport({
                 <tr>
                   <th className="px-2 py-1.5 font-medium">Player</th>
                   <th className="px-2 py-1.5 font-medium">#</th>
-                  <th className="px-2 py-1.5 font-medium">Parent</th>
-                  <th className="px-2 py-1.5 font-medium">Email</th>
+                  <th className="px-2 py-1.5 font-medium">Pos</th>
+                  <th className="px-2 py-1.5 font-medium">Parents</th>
                   <th className="px-2 py-1.5 font-medium">Status</th>
                 </tr>
               </thead>
@@ -366,13 +416,16 @@ export default function TeamRosterImport({
                     <td className="px-2 py-1.5 font-mono text-zinc-500">
                       {row.jerseyNumber ?? "—"}
                     </td>
-                    <td className="px-2 py-1.5">{row.parentName ?? "—"}</td>
-                    <td className="px-2 py-1.5 font-mono text-zinc-500">
-                      {row.parentEmail ?? "—"}
+                    <td className="px-2 py-1.5">{row.position ?? "—"}</td>
+                    <td className="px-2 py-1.5">
+                      {row.parentContacts?.length
+                        ? `${row.parentContacts.length} contact${row.parentContacts.length === 1 ? "" : "s"}`
+                        : row.parentName ?? "—"}
                     </td>
                     <td className="px-2 py-1.5">
                       <span
                         className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${STATUS_BADGE[row.status]}`}
+                        title={row.message}
                       >
                         {row.status}
                       </span>

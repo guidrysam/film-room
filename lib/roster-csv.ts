@@ -7,6 +7,9 @@ export type RosterCsvField =
   | "playerLastName"
   | "playerName"
   | "jerseyNumber"
+  | "position"
+  | "teamName"
+  | "isPlayer"
   | "parentName"
   | "parentEmail"
   | "phone"
@@ -17,24 +20,52 @@ export const ROSTER_CSV_FIELD_LABELS: Record<RosterCsvField, string> = {
   playerLastName: "Player last name",
   playerName: "Player name",
   jerseyNumber: "Jersey number",
+  position: "Position",
+  teamName: "Team name",
+  isPlayer: "Is player",
   parentName: "Parent / guardian name",
   parentEmail: "Parent email",
   phone: "Phone (optional)",
   ignore: "Ignore column",
 };
 
-/** Columns commonly exported from TeamLinkt roster CSVs. */
+/** Headers from TeamLinkt roster member exports (team_roster_members_*.csv). */
 export const TEAMLINKT_ROSTER_CSV_COLUMNS = [
-  "Player First Name",
-  "Player Last Name",
   "Player Name",
+  "Team Name",
   "Jersey Number",
-  "Parent Name",
-  "Parent Email",
-  "Phone",
+  "Position",
+  "Is Player",
+  "Contact 1 Name",
+  "Contact 1 Relationship",
+  "Contact 1 Email",
+  "Contact 1 Phone",
+  "Contact 2 Name",
+  "Contact 2 Relationship",
+  "Contact 2 Email",
+  "Contact 2 Phone",
+  "Contact 3 Name",
+  "Contact 3 Relationship",
+  "Contact 3 Email",
+  "Contact 3 Phone",
 ] as const;
 
+const TEAMLINKT_REQUIRED_HEADERS = new Set([
+  "player name",
+  "team name",
+  "jersey number",
+  "position",
+  "is player",
+]);
+
 export type RosterColumnMapping = Record<number, RosterCsvField>;
+
+export type RosterParentContact = {
+  name: string;
+  email: string;
+  phone?: string;
+  relationship?: string;
+};
 
 export type ParsedRosterRow = {
   rowIndex: number;
@@ -42,9 +73,14 @@ export type ParsedRosterRow = {
   playerLastName?: string;
   playerName?: string;
   jerseyNumber?: string;
+  position?: string;
+  teamName?: string;
+  /** true/false when present; null for legacy/generic CSV rows. */
+  isPlayer?: boolean | null;
   parentName?: string;
   parentEmail?: string;
   phone?: string;
+  parentContacts?: RosterParentContact[];
 };
 
 const HEADER_ALIASES: Record<Exclude<RosterCsvField, "ignore">, string[]> = {
@@ -86,6 +122,9 @@ const HEADER_ALIASES: Record<Exclude<RosterCsvField, "ignore">, string[]> = {
     "no",
     "no.",
   ],
+  position: ["position", "pos", "player position"],
+  teamName: ["team", "team name", "team_name"],
+  isPlayer: ["is player", "is_player", "player row"],
   parentName: [
     "parent",
     "parent name",
@@ -94,6 +133,7 @@ const HEADER_ALIASES: Record<Exclude<RosterCsvField, "ignore">, string[]> = {
     "guardian",
     "guardian name",
     "parent_name",
+    "contact 1 name",
   ],
   parentEmail: [
     "email",
@@ -102,8 +142,16 @@ const HEADER_ALIASES: Record<Exclude<RosterCsvField, "ignore">, string[]> = {
     "e-mail",
     "parent_email",
     "guardian email",
+    "contact 1 email",
   ],
-  phone: ["phone", "mobile", "cell", "phone number", "parent phone"],
+  phone: [
+    "phone",
+    "mobile",
+    "cell",
+    "phone number",
+    "parent phone",
+    "contact 1 phone",
+  ],
 };
 
 function normalizeHeader(h: string): string {
@@ -165,6 +213,136 @@ export function parseCsvText(text: string): string[][] {
   }
 
   return rows;
+}
+
+/** Drop trailing empty header/cells so extra commas do not break parsing. */
+export function trimTrailingEmptyCsvColumns(rows: string[][]): string[][] {
+  if (rows.length === 0) return rows;
+
+  let width = rows[0]!.length;
+  while (width > 0) {
+    const headerEmpty = !trimCell(rows[0]![width - 1]);
+    const allRowsEmpty = rows.every((row) => !trimCell(row[width - 1]));
+    if (headerEmpty && allRowsEmpty) {
+      width--;
+      continue;
+    }
+    break;
+  }
+
+  if (width === 0) return rows;
+
+  return rows.map((row) => {
+    const next = row.slice(0, width);
+    while (next.length < width) next.push("");
+    return next;
+  });
+}
+
+export function normalizeIsPlayer(value: string | undefined): boolean | null {
+  const norm = trimCell(value)?.toLowerCase();
+  if (!norm) return null;
+  if (["yes", "y", "true", "1"].includes(norm)) return true;
+  if (["no", "n", "false", "0"].includes(norm)) return false;
+  return null;
+}
+
+export function isStaffPosition(position: string | undefined): boolean {
+  const norm = normalizeHeader(position ?? "");
+  if (!norm) return false;
+  return norm.includes("coach") || norm.includes("manager");
+}
+
+export function isPlayerRelationship(relationship: string | undefined): boolean {
+  return normalizeHeader(relationship ?? "") === "player";
+}
+
+export function isTeamLinktRosterExport(headers: string[]): boolean {
+  const normalized = headers.map(normalizeHeader).filter(Boolean);
+  for (const required of TEAMLINKT_REQUIRED_HEADERS) {
+    if (!normalized.includes(required)) return false;
+  }
+  return normalized.includes("contact 1 name");
+}
+
+function headerIndexMap(headers: string[]): Map<string, number> {
+  const map = new Map<string, number>();
+  headers.forEach((header, index) => {
+    const norm = normalizeHeader(header);
+    if (norm && !map.has(norm)) map.set(norm, index);
+  });
+  return map;
+}
+
+function cellAt(
+  cells: string[],
+  indexByHeader: Map<string, number>,
+  header: string,
+): string | undefined {
+  const index = indexByHeader.get(header);
+  if (index == null) return undefined;
+  return trimCell(cells[index]);
+}
+
+function parseTeamLinktContacts(
+  cells: string[],
+  indexByHeader: Map<string, number>,
+): RosterParentContact[] {
+  const contacts: RosterParentContact[] = [];
+
+  for (const slot of [1, 2, 3] as const) {
+    const prefix = `contact ${slot}`;
+    const name = cellAt(cells, indexByHeader, `${prefix} name`);
+    const relationship = cellAt(cells, indexByHeader, `${prefix} relationship`);
+    const email = normalizeEmail(cellAt(cells, indexByHeader, `${prefix} email`));
+    const phone = cellAt(cells, indexByHeader, `${prefix} phone`);
+
+    if (!email) continue;
+    if (isPlayerRelationship(relationship)) continue;
+    if (!name) continue;
+
+    contacts.push({
+      name,
+      email,
+      ...(phone ? { phone } : {}),
+      ...(relationship ? { relationship } : {}),
+    });
+  }
+
+  return contacts;
+}
+
+/** Parse TeamLinkt roster member export rows into normalized import rows. */
+export function parseTeamLinktRosterRows(
+  headers: string[],
+  dataRows: string[][],
+  headerRowIndex = 0,
+): ParsedRosterRow[] {
+  const indexByHeader = headerIndexMap(headers);
+
+  return dataRows.map((cells, offset) => {
+    const rowIndex = headerRowIndex + 1 + offset;
+    const playerName = cellAt(cells, indexByHeader, "player name");
+    const isPlayer = normalizeIsPlayer(
+      cellAt(cells, indexByHeader, "is player"),
+    );
+
+    return {
+      rowIndex,
+      ...(playerName ? { playerName } : {}),
+      ...(cellAt(cells, indexByHeader, "team name")
+        ? { teamName: cellAt(cells, indexByHeader, "team name") }
+        : {}),
+      ...(cellAt(cells, indexByHeader, "jersey number")
+        ? { jerseyNumber: cellAt(cells, indexByHeader, "jersey number") }
+        : {}),
+      ...(cellAt(cells, indexByHeader, "position")
+        ? { position: cellAt(cells, indexByHeader, "position") }
+        : {}),
+      isPlayer,
+      parentContacts: parseTeamLinktContacts(cells, indexByHeader),
+    };
+  });
 }
 
 function matchHeaderField(header: string): RosterCsvField | null {
@@ -239,7 +417,7 @@ export function mapRosterRows(
 
   dataRows.forEach((cells, offset) => {
     const rowIndex = headerRowIndex + 1 + offset;
-    const row: ParsedRosterRow = { rowIndex };
+    const row: ParsedRosterRow = { rowIndex, isPlayer: null };
     for (const [indexStr, field] of Object.entries(mapping)) {
       if (field === "ignore") continue;
       const index = Number(indexStr);
@@ -257,6 +435,15 @@ export function mapRosterRows(
           break;
         case "jerseyNumber":
           row.jerseyNumber = value;
+          break;
+        case "position":
+          row.position = value;
+          break;
+        case "teamName":
+          row.teamName = value;
+          break;
+        case "isPlayer":
+          row.isPlayer = normalizeIsPlayer(value);
           break;
         case "parentName":
           row.parentName = value;
@@ -281,4 +468,13 @@ export function normalizeEmail(email: string | undefined): string | undefined {
   const t = trimCell(email)?.toLowerCase();
   if (!t || !t.includes("@")) return undefined;
   return t;
+}
+
+/** Suggested team name from the first non-empty Team Name cell in a TeamLinkt export. */
+export function suggestedTeamNameFromRows(rows: ParsedRosterRow[]): string | undefined {
+  for (const row of rows) {
+    const name = trimCell(row.teamName);
+    if (name) return name;
+  }
+  return undefined;
 }

@@ -4,9 +4,11 @@ import {
   upsertParentInviteTarget,
 } from "@/lib/parent-invite-targets";
 import {
+  isStaffPosition,
   normalizeEmail,
   resolvePlayerName,
   type ParsedRosterRow,
+  type RosterParentContact,
 } from "@/lib/roster-csv";
 import {
   indexPlayersByRosterKey,
@@ -22,9 +24,12 @@ export type RosterImportPreviewRow = {
   rowIndex: number;
   playerName: string;
   jerseyNumber?: string;
+  position?: string;
+  teamName?: string;
   parentName?: string;
   parentEmail?: string;
   phone?: string;
+  parentContacts?: RosterParentContact[];
   status: RosterImportRowStatus;
   message?: string;
   existingPlayerId?: string;
@@ -37,6 +42,23 @@ export type RosterImportResult = {
   skipped: number;
 };
 
+function resolveParentContacts(row: ParsedRosterRow): RosterParentContact[] {
+  if (row.parentContacts?.length) return row.parentContacts;
+
+  const email = normalizeEmail(row.parentEmail);
+  if (email && row.parentName?.trim()) {
+    return [
+      {
+        name: row.parentName.trim(),
+        email,
+        ...(row.phone?.trim() ? { phone: row.phone.trim() } : {}),
+      },
+    ];
+  }
+
+  return [];
+}
+
 export function buildRosterImportPreview(
   rows: ParsedRosterRow[],
   existingPlayers: Player[],
@@ -45,6 +67,20 @@ export function buildRosterImportPreview(
   const preview: RosterImportPreviewRow[] = [];
 
   for (const row of rows) {
+    if (row.isPlayer === false) {
+      preview.push({
+        rowIndex: row.rowIndex,
+        playerName: resolvePlayerName(row) ?? "",
+        ...(row.teamName ? { teamName: row.teamName } : {}),
+        ...(row.position ? { position: row.position } : {}),
+        status: "skip",
+        message: isStaffPosition(row.position)
+          ? "Staff contact — not imported as player"
+          : "Not marked as player",
+      });
+      continue;
+    }
+
     const playerName = resolvePlayerName(row);
     if (!playerName) {
       preview.push({
@@ -59,19 +95,31 @@ export function buildRosterImportPreview(
     const jerseyNumber = row.jerseyNumber?.trim() || undefined;
     const key = playerRosterKey(playerName, jerseyNumber);
     const existing = byKey.get(key);
+    const parentContacts = resolveParentContacts(row);
+    const primary = parentContacts[0];
 
     preview.push({
       rowIndex: row.rowIndex,
       playerName,
       ...(jerseyNumber ? { jerseyNumber } : {}),
-      ...(row.parentName?.trim() ? { parentName: row.parentName.trim() } : {}),
-      ...(normalizeEmail(row.parentEmail)
-        ? { parentEmail: normalizeEmail(row.parentEmail) }
-        : {}),
-      ...(row.phone?.trim() ? { phone: row.phone.trim() } : {}),
+      ...(row.position?.trim() ? { position: row.position.trim() } : {}),
+      ...(row.teamName?.trim() ? { teamName: row.teamName.trim() } : {}),
+      ...(primary ? { parentName: primary.name, parentEmail: primary.email } : {}),
+      ...(primary?.phone ? { phone: primary.phone } : {}),
+      ...(parentContacts.length > 0 ? { parentContacts } : {}),
       status: existing ? "update" : "create",
       ...(existing
         ? { existingPlayerId: existing.id, message: "Matches existing player" }
+        : {}),
+      ...(parentContacts.length > 1
+        ? {
+            message: [
+              existing ? "Matches existing player" : undefined,
+              `${parentContacts.length} parent contacts`,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          }
         : {}),
     });
   }
@@ -105,6 +153,7 @@ export async function importRosterPreview(
       {
         name: row.playerName,
         ...(row.jerseyNumber ? { jerseyNumber: row.jerseyNumber } : {}),
+        ...(row.position ? { position: row.position } : {}),
       },
       playersByKey,
     );
@@ -113,13 +162,25 @@ export async function importRosterPreview(
     if (created) playersCreated++;
     else playersUpdated++;
 
-    if (row.parentEmail && row.parentName) {
+    const contacts =
+      row.parentContacts ??
+      (row.parentEmail && row.parentName
+        ? [
+            {
+              name: row.parentName,
+              email: row.parentEmail,
+              ...(row.phone ? { phone: row.phone } : {}),
+            },
+          ]
+        : []);
+
+    for (const contact of contacts) {
       await upsertParentInviteTarget(
         teamId,
         {
-          parentName: row.parentName,
-          email: row.parentEmail,
-          ...(row.phone ? { phone: row.phone } : {}),
+          parentName: contact.name,
+          email: contact.email,
+          ...(contact.phone ? { phone: contact.phone } : {}),
           playerId: player.id,
           playerName: player.name,
         },
