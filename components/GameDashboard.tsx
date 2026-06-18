@@ -9,6 +9,12 @@ import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-
 import { gameReviewUrl } from "@/lib/player-profile";
 import { canContributeGameSources } from "@/lib/games";
 import { canCoachTeam } from "@/lib/teams";
+import {
+  gameCapUrl,
+  teamGamesUrl,
+  teamRosterUrl,
+  teamSetupUrl,
+} from "@/lib/team-routes";
 
 export type GameDashboardProps = {
   gameId: string;
@@ -148,16 +154,24 @@ export default function GameDashboard({
               ← Dashboard
             </Link>
             {team ? (
-              <Link href={`/team/${team.id}`} className={ghostBtn}>
-                Team
-              </Link>
+              <>
+                <Link href={teamRosterUrl(team.id)} className={ghostBtn}>
+                  Team roster
+                </Link>
+                <Link href={teamGamesUrl(team.id)} className={ghostBtn}>
+                  Team games
+                </Link>
+                {canCoachTeam(team, currentUid) ? (
+                  <Link href={teamSetupUrl(team.id)} className={ghostBtn}>
+                    Team setup
+                  </Link>
+                ) : null}
+              </>
             ) : null}
-            {team && canCoachTeam(team, currentUid) ? (
-              <Link href={`/team/${team.id}/setup`} className={ghostBtn}>
-                Team Setup
-              </Link>
-            ) : null}
-            <Link href={team ? `/game-cap?teamId=${team.id}` : "/game-cap"} className={ghostBtn}>
+            <Link
+              href={gameCapUrl({ teamId: team?.id, gameId: game.id })}
+              className={ghostBtn}
+            >
               Game Cap
             </Link>
           </div>

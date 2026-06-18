@@ -1,6 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import {
+  gameCapUrl,
+  teamGamesUrl,
+  teamRosterUrl,
+  teamSetupUrl,
+} from "@/lib/team-routes";
 import { canCoachTeam, type Team } from "@/lib/teams";
 
 export type TeamNavTab = "roster" | "setup" | "games";
@@ -18,7 +24,8 @@ const ghostBtn =
 export type TeamNavProps = {
   team: Team;
   currentUid: string;
-  active: TeamNavTab;
+  /** Omit on sub-pages (e.g. player profile) when no tab is active. */
+  active?: TeamNavTab;
 };
 
 /**
@@ -26,7 +33,7 @@ export type TeamNavProps = {
  */
 export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
   const showSetup = canCoachTeam(team, currentUid);
-  const base = `/team/${team.id}`;
+  const base = teamRosterUrl(team.id);
 
   return (
     <div className="mb-6 flex flex-col gap-3 border-b border-white/[0.06] pb-5">
@@ -41,17 +48,14 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
           Roster
         </Link>
         {showSetup ? (
-          <Link href={`${base}/setup`} className={tabClass(active === "setup")}>
+          <Link href={teamSetupUrl(team.id)} className={tabClass(active === "setup")}>
             Setup
           </Link>
         ) : null}
-        <Link href={`${base}/games`} className={tabClass(active === "games")}>
+        <Link href={teamGamesUrl(team.id)} className={tabClass(active === "games")}>
           Games
         </Link>
-        <Link
-          href={`/game-cap?teamId=${team.id}`}
-          className={ghostBtn}
-        >
+        <Link href={gameCapUrl({ teamId: team.id })} className={ghostBtn}>
           Game Cap
         </Link>
       </nav>

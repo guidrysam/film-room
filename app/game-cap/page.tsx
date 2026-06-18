@@ -10,6 +10,7 @@ import TeamSetup from "@/components/TeamSetup";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
   canContributeGameSources,
+  getGame,
   type Game,
 } from "@/lib/games";
 import {
@@ -20,6 +21,7 @@ import {
   teamRoleFor,
   type Team,
 } from "@/lib/teams";
+import { gameCapUrl, teamSetupUrl } from "@/lib/team-routes";
 
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
@@ -65,6 +67,8 @@ function GameCapPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
   const [sourcesKey, setSourcesKey] = useState(0);
+  const [queryResolvedGame, setQueryResolvedGame] = useState<Game | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
   const teamRole = useMemo(() => {
     if (!selectedTeam || !user) return null;
@@ -113,6 +117,29 @@ function GameCapPageInner() {
   useEffect(() => {
     if (queryTeamId) setSelectedTeamId(queryTeamId);
   }, [queryTeamId]);
+
+  useEffect(() => {
+    if (!user || !queryGameId) {
+      setQueryResolvedGame(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const game = await getGame(queryGameId);
+      if (cancelled) return;
+      setQueryResolvedGame(game);
+      if (game?.teamId) {
+        setSelectedTeamId((prev) => prev ?? game.teamId ?? null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, queryGameId]);
+
+  useEffect(() => {
+    if (queryGameId) setShowPicker(false);
+  }, [queryGameId]);
 
   const handleCreate = useCallback(async () => {
     if (!user || !selectedTeamId || !selectedTeam) return;
@@ -163,7 +190,14 @@ function GameCapPageInner() {
     router,
   ]);
 
-  const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
+  const selectedGame =
+    games.find((g) => g.id === selectedGameId) ??
+    (queryResolvedGame?.id === selectedGameId ? queryResolvedGame : null);
+
+  const attachFocus = Boolean(
+    queryGameId && selectedGame && (queryTeamId || selectedGame.teamId),
+  );
+  const showTeamGamePickers = !attachFocus || showPicker;
   const canCreateGames =
     selectedTeam && user ? canCoachTeam(selectedTeam, user.uid) : false;
   const isParent =
@@ -236,14 +270,30 @@ function GameCapPageInner() {
           </div>
         ) : null}
 
+        {attachFocus && selectedTeam && selectedGame ? (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-500/25 bg-blue-950/20 px-4 py-3">
+            <p className="text-sm text-blue-100">
+              <span className="font-medium">{selectedTeam.name}</span>
+              <span className="text-blue-200/70"> · </span>
+              <span className="font-medium">{selectedGame.title}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowPicker((s) => !s)}
+              className={ghostBtn}
+            >
+              {showPicker ? "Hide picker" : "Change team or game"}
+            </button>
+          </div>
+        ) : null}
+
+        {showTeamGamePickers ? (
+          <>
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">Select team</h2>
             {selectedTeam && user && canCoachTeam(selectedTeam, user.uid) ? (
-              <Link
-                href={`/team/${selectedTeam.id}/setup`}
-                className={ghostBtn}
-              >
+              <Link href={teamSetupUrl(selectedTeam.id)} className={ghostBtn}>
                 Team Setup
               </Link>
             ) : null}
@@ -375,7 +425,10 @@ function GameCapPageInner() {
                       Open
                     </Link>
                     <Link
-                      href={`/game-cap?gameId=${g.id}`}
+                      href={gameCapUrl({
+                        teamId: selectedTeamId ?? undefined,
+                        gameId: g.id,
+                      })}
                       className="rounded-lg border border-blue-500/40 bg-blue-950/40 px-2.5 py-1 text-xs font-medium text-blue-100 transition hover:bg-blue-900/55"
                     >
                       Add video
@@ -390,6 +443,8 @@ function GameCapPageInner() {
             <p className="mt-2 text-xs text-rose-300">{error}</p>
           ) : null}
         </section>
+          </>
+        ) : null}
 
         <section className={panelClass}>
           <h2 className="mb-3 text-sm font-semibold text-white">Attach video</h2>

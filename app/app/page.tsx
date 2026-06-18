@@ -19,7 +19,18 @@ import {
   type SavedSessionKind,
 } from "@/lib/saved-sessions";
 import { listMyGames, type Game } from "@/lib/games";
-import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
+import {
+  canCoachTeam,
+  listMyTeams,
+  teamRoleFor,
+  type Team,
+} from "@/lib/teams";
+import {
+  gameCapUrl,
+  teamGamesUrl,
+  teamRosterUrl,
+  teamSetupUrl,
+} from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const inputClass =
@@ -480,7 +491,7 @@ export default function DashboardPage() {
                 Teams
               </p>
               <p className="mt-0.5 text-xs text-zinc-500">
-                Organize Game Cap uploads by team and role.
+                Roster, games, setup, and Game Cap uploads by team.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -491,8 +502,8 @@ export default function DashboardPage() {
               >
                 Refresh
               </button>
-              <Link href="/game-cap" className={ghostBtn}>
-                Game Cap
+              <Link href="/team/new" className={ghostBtn}>
+                Create team
               </Link>
             </div>
           </div>
@@ -501,8 +512,12 @@ export default function DashboardPage() {
           ) : teams.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
               No teams yet.{" "}
+              <Link href="/team/new" className="text-blue-300 hover:underline">
+                Create a team
+              </Link>{" "}
+              or{" "}
               <Link href="/game-cap" className="text-blue-300 hover:underline">
-                Create one in Game Cap
+                create one in Game Cap
               </Link>
               .
             </p>
@@ -510,22 +525,41 @@ export default function DashboardPage() {
             <ul className="space-y-2">
               {teams.map((t) => {
                 const role = user ? teamRoleFor(t, user.uid) : null;
+                const isCoach = user ? canCoachTeam(t, user.uid) : false;
                 return (
                   <li
                     key={t.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                    className="rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
                   >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-white">
-                        {t.name}
-                      </p>
-                      <p className="text-xs text-zinc-500">
-                        {[t.sport, role].filter(Boolean).join(" · ")}
-                      </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <Link
+                          href={teamRosterUrl(t.id)}
+                          className="truncate text-sm font-medium text-white hover:text-blue-200"
+                        >
+                          {t.name}
+                        </Link>
+                        <p className="text-xs text-zinc-500">
+                          {[t.sport, role].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
                     </div>
-                    <Link href="/game-cap" className={ghostBtn}>
-                      Open
-                    </Link>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Link href={teamRosterUrl(t.id)} className={ghostBtn}>
+                        Roster
+                      </Link>
+                      <Link href={teamGamesUrl(t.id)} className={ghostBtn}>
+                        Games
+                      </Link>
+                      <Link href={gameCapUrl({ teamId: t.id })} className={ghostBtn}>
+                        Game Cap
+                      </Link>
+                      {isCoach ? (
+                        <Link href={teamSetupUrl(t.id)} className={ghostBtn}>
+                          Setup
+                        </Link>
+                      ) : null}
+                    </div>
                   </li>
                 );
               })}

@@ -9,6 +9,7 @@ import {
   teamRoleFor,
   type Team,
 } from "@/lib/teams";
+import { teamRosterUrl, teamSetupUrl } from "@/lib/team-routes";
 
 export type TeamSetupProps = {
   currentUid: string;
@@ -202,11 +203,11 @@ export default function TeamSetup({
 
       {selectedTeam ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Link href={`/team/${selectedTeam.id}`} className={ghostBtn}>
+          <Link href={teamRosterUrl(selectedTeam.id)} className={ghostBtn}>
             Team roster →
           </Link>
           {canCoachTeam(selectedTeam, currentUid) ? (
-            <Link href={`/team/${selectedTeam.id}/setup`} className={ghostBtn}>
+            <Link href={teamSetupUrl(selectedTeam.id)} className={ghostBtn}>
               Team Setup →
             </Link>
           ) : null}

@@ -1,0 +1,24 @@
+/** Shared team hub and Game Cap URL builders. */
+
+export function teamRosterUrl(teamId: string): string {
+  return `/team/${teamId}`;
+}
+
+export function teamGamesUrl(teamId: string): string {
+  return `/team/${teamId}/games`;
+}
+
+export function teamSetupUrl(teamId: string): string {
+  return `/team/${teamId}/setup`;
+}
+
+export function gameCapUrl(opts?: {
+  teamId?: string;
+  gameId?: string;
+}): string {
+  const params = new URLSearchParams();
+  if (opts?.teamId) params.set("teamId", opts.teamId);
+  if (opts?.gameId) params.set("gameId", opts.gameId);
+  const q = params.toString();
+  return q ? `/game-cap?${q}` : "/game-cap";
+}

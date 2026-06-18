@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import TeamNav from "@/components/TeamNav";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { highlightMomentPlayhead } from "@/lib/highlight-draft";
 import {
@@ -10,6 +11,7 @@ import {
   loadPlayerProfile,
   type PlayerProfileData,
 } from "@/lib/player-profile";
+import { teamRosterUrl } from "@/lib/team-routes";
 
 export type PlayerProfileViewProps = {
   teamId: string;
@@ -77,8 +79,8 @@ export default function PlayerProfileView({
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
         <p className="text-sm text-rose-200">{error ?? "Player not found."}</p>
-        <Link href={`/team/${teamId}`} className={`${ghostBtn} mt-4 inline-block`}>
-          ← Roster
+        <Link href={teamRosterUrl(teamId)} className={`${ghostBtn} mt-4 inline-block`}>
+          ← Back to team
         </Link>
       </div>
     );
@@ -89,15 +91,17 @@ export default function PlayerProfileView({
   return (
     <div className="min-h-screen px-4 py-10 text-zinc-50">
       <div className="mx-auto max-w-2xl">
+        <TeamNav team={team} currentUid={currentUid} />
+
         <div className="mb-6 border-b border-white/[0.06] pb-5">
           <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
             Player Profile
           </p>
-          <h1 className="text-xl font-semibold text-white">{player.name}</h1>
+          <h2 className="text-xl font-semibold text-white">{player.name}</h2>
           <p className="mt-1 text-sm text-zinc-400">
-            {team.name}
-            {player.jerseyNumber ? ` · #${player.jerseyNumber}` : ""}
-            {player.position ? ` · ${player.position}` : ""}
+            {player.jerseyNumber ? `#${player.jerseyNumber}` : null}
+            {player.jerseyNumber && player.position ? " · " : null}
+            {player.position ?? null}
           </p>
         </div>
 
@@ -227,8 +231,8 @@ export default function PlayerProfileView({
           )}
         </section>
 
-        <Link href={`/team/${teamId}`} className={`${ghostBtn} mt-6 inline-block`}>
-          ← Roster
+        <Link href={teamRosterUrl(teamId)} className={`${ghostBtn} mt-6 inline-block`}>
+          ← Back to team
         </Link>
       </div>
     </div>

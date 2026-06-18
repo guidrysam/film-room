@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { canCoachTeam, listTeamGames, type Team } from "@/lib/teams";
 import type { Game } from "@/lib/games";
+import { gameCapUrl } from "@/lib/team-routes";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -49,7 +50,7 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
             Refresh
           </button>
           {canCreate ? (
-            <Link href={`/game-cap?teamId=${team.id}`} className={ghostBtn}>
+            <Link href={gameCapUrl({ teamId: team.id })} className={ghostBtn}>
               New game in Game Cap
             </Link>
           ) : null}
@@ -84,7 +85,10 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
                 <Link href={`/game/${g.id}`} className={ghostBtn}>
                   Open
                 </Link>
-                <Link href={`/game-cap?gameId=${g.id}`} className={primaryBtn}>
+                <Link
+                  href={gameCapUrl({ teamId: team.id, gameId: g.id })}
+                  className={primaryBtn}
+                >
                   Add video
                 </Link>
               </div>

@@ -32,6 +32,7 @@ import {
   type HighlightMoment,
 } from "@/lib/highlight-draft";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
+import { gameCapUrl } from "@/lib/team-routes";
 
 export type GameReviewProps = {
   gameId: string;
@@ -490,7 +491,10 @@ export default function GameReview({
               <Link href={`/game/${gameId}`} className={primaryBtn}>
                 Game hub
               </Link>
-              <Link href={`/game-cap?gameId=${gameId}`} className={ghostBtn}>
+              <Link
+                href={gameCapUrl({ teamId: game?.teamId, gameId })}
+                className={ghostBtn}
+              >
                 Add video
               </Link>
             </div>
