@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import TeamNav from "@/components/TeamNav";
 import { formatPlayerStatLine } from "@/lib/game-stats";
+import { teamStatsUrl } from "@/lib/team-routes";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { highlightMomentPlayhead } from "@/lib/highlight-draft";
 import {
@@ -87,7 +88,7 @@ export default function PlayerProfileView({
     );
   }
 
-  const { player, team, highlightDrafts, taggedMoments, statSummary, gameStats } =
+  const { player, team, highlightDrafts, taggedMoments, allTimeStatSummary, seasonStatSummaries, gameStats } =
     data;
 
   return (
@@ -135,18 +136,33 @@ export default function PlayerProfileView({
             </div>
             <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-3">
               <p className="text-lg font-semibold text-white">
-                {statSummary.total}
+                {allTimeStatSummary.total}
               </p>
               <p className="text-[10px] uppercase tracking-wide text-zinc-500">
-                Stats
+                All-time stats
               </p>
             </div>
           </div>
-          {statSummary.total > 0 ? (
+          {allTimeStatSummary.total > 0 ? (
             <p className="mt-3 text-xs text-zinc-400">
-              Season summary: {formatPlayerStatLine(statSummary)}
+              All-time: {formatPlayerStatLine(allTimeStatSummary)}
             </p>
           ) : null}
+          {seasonStatSummaries.length > 0 ? (
+            <ul className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">
+              {seasonStatSummaries.map(({ season, summary }) => (
+                <li key={season} className="text-xs text-zinc-400">
+                  <span className="font-medium text-zinc-300">{season}:</span>{" "}
+                  {summary.total > 0
+                    ? formatPlayerStatLine(summary)
+                    : "No stats"}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <Link href={teamStatsUrl(teamId)} className={`${ghostBtn} mt-3 inline-block`}>
+            View team stats
+          </Link>
         </section>
 
         <section className={`${panelClass} mb-5`}>
@@ -170,6 +186,7 @@ export default function PlayerProfileView({
                       </span>
                       <span className="block text-xs text-zinc-500">
                         {stat.gameTitle}
+                        {stat.gameSeason ? ` · ${stat.gameSeason}` : ""}
                         {stat.opponent ? ` vs ${stat.opponent}` : ""}
                       </span>
                     </span>

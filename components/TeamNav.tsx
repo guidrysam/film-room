@@ -6,10 +6,11 @@ import {
   teamGamesUrl,
   teamRosterUrl,
   teamSetupUrl,
+  teamStatsUrl,
 } from "@/lib/team-routes";
 import { canCoachTeam, type Team } from "@/lib/teams";
 
-export type TeamNavTab = "roster" | "setup" | "games";
+export type TeamNavTab = "roster" | "setup" | "games" | "stats";
 
 const tabClass = (active: boolean) =>
   `rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
@@ -54,6 +55,9 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
         ) : null}
         <Link href={teamGamesUrl(team.id)} className={tabClass(active === "games")}>
           Games
+        </Link>
+        <Link href={teamStatsUrl(team.id)} className={tabClass(active === "stats")}>
+          Stats
         </Link>
         <Link href={gameCapUrl({ teamId: team.id })} className={ghostBtn}>
           Game Cap

@@ -8,6 +8,10 @@ export function teamGamesUrl(teamId: string): string {
   return `/team/${teamId}/games`;
 }
 
+export function teamStatsUrl(teamId: string): string {
+  return `/team/${teamId}/stats`;
+}
+
 export function teamSetupUrl(teamId: string): string {
   return `/team/${teamId}/setup`;
 }

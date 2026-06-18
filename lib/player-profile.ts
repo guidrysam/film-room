@@ -1,10 +1,16 @@
-import { listGameEvents, listGamesForTeam } from "@/lib/games";
+import { listGamesForTeam, listGameEvents } from "@/lib/games";
 import {
-  listGameStatsFromEvents,
   statTypeLabel,
   summarizeGameStatsByPlayer,
   type PlayerStatSummary,
 } from "@/lib/game-stats";
+import {
+  buildTeamGameStatRecords,
+  flattenStatsForAggregation,
+  loadTeamGameStatsBundle,
+  summarizePlayerStatsBySeason,
+  type TeamGameStatRecord,
+} from "@/lib/season-stats";
 import {
   highlightMomentsForPlayer,
   listHighlightDraftsForPlayer,
@@ -16,7 +22,6 @@ import {
   canViewTeam,
   getTeam,
   getTeamPlayer,
-  listTeamPlayers,
   type Player,
   type Team,
 } from "@/lib/teams";
@@ -34,6 +39,7 @@ export type PlayerGameStat = {
   gameId: string;
   gameTitle: string;
   gameDate?: string;
+  gameSeason?: string;
   opponent?: string;
   eventId: string;
   statType: string;
@@ -50,7 +56,8 @@ export type PlayerProfileData = {
   taggedMomentsCount: number;
   highlightDrafts: HighlightDraft[];
   taggedMoments: TaggedMoment[];
-  statSummary: PlayerStatSummary;
+  allTimeStatSummary: PlayerStatSummary;
+  seasonStatSummaries: { season: string; summary: PlayerStatSummary }[];
   gameStats: PlayerGameStat[];
 };
 
@@ -74,6 +81,32 @@ export function flattenPlayerHighlightMoments(
   return out;
 }
 
+function playerGameStatsFromRecords(
+  records: TeamGameStatRecord[],
+  playerId: string,
+): PlayerGameStat[] {
+  const out: PlayerGameStat[] = [];
+  for (const stat of records) {
+    if (!stat.playerIds.includes(playerId)) continue;
+    out.push({
+      gameId: stat.gameId,
+      gameTitle: stat.gameTitle,
+      ...(stat.gameDate ? { gameDate: stat.gameDate } : {}),
+      ...(stat.gameSeason ? { gameSeason: stat.gameSeason } : {}),
+      ...(stat.opponent ? { opponent: stat.opponent } : {}),
+      eventId: stat.eventId,
+      statType: statTypeLabel(stat.statType),
+      t: stat.t,
+      ...(stat.note ? { note: stat.note } : {}),
+      ...(stat.sourceId ? { sourceId: stat.sourceId } : {}),
+    });
+  }
+  return out.sort(
+    (a, b) =>
+      (a.gameDate ?? "").localeCompare(b.gameDate ?? "") || a.t - b.t,
+  );
+}
+
 export async function loadPlayerProfile(
   teamId: string,
   playerId: string,
@@ -84,35 +117,39 @@ export async function loadPlayerProfile(
   const player = await getTeamPlayer(teamId, playerId);
   if (!player) return null;
 
-  const [games, players] = await Promise.all([
-    listGamesForTeam(teamId),
-    listTeamPlayers(teamId),
-  ]);
-  const taggedMoments: TaggedMoment[] = [];
-  const gameStats: PlayerGameStat[] = [];
-  const allStatsForSummary: ReturnType<typeof listGameStatsFromEvents> = [];
+  const bundle = await loadTeamGameStatsBundle(teamId);
+  const allRecords = buildTeamGameStatRecords(bundle.games, bundle.statsByGameId);
+  const playerRecords = allRecords.filter((r) => r.playerIds.includes(playerId));
 
+  const summaries = summarizeGameStatsByPlayer(
+    flattenStatsForAggregation(playerRecords),
+    bundle.players,
+  );
+  const allTimeStatSummary =
+    summaries.find((s) => s.playerId === playerId) ?? {
+      playerId,
+      playerName: player.name,
+      ...(player.jerseyNumber ? { jerseyNumber: player.jerseyNumber } : {}),
+      counts: {},
+      total: 0,
+    };
+
+  const bySeason = summarizePlayerStatsBySeason(
+    allRecords,
+    bundle.players,
+    playerId,
+  );
+  const seasonStatSummaries = [...bySeason.entries()]
+    .map(([season, summary]) => ({ season, summary }))
+    .sort((a, b) => a.season.localeCompare(b.season));
+
+  const gameStats = playerGameStatsFromRecords(allRecords, playerId);
+
+  const games = await listGamesForTeam(teamId);
+  const taggedMoments: TaggedMoment[] = [];
   await Promise.all(
     games.map(async (game) => {
       const events = await listGameEvents(game.id);
-      const stats = listGameStatsFromEvents(events);
-      for (const stat of stats) {
-        if (!stat.playerIds.includes(playerId)) continue;
-        allStatsForSummary.push(stat);
-        gameStats.push({
-          gameId: game.id,
-          gameTitle: game.title,
-          ...(game.date ? { gameDate: game.date } : {}),
-          ...(game.opponent ?? game.awayTeam
-            ? { opponent: game.opponent ?? game.awayTeam }
-            : {}),
-          eventId: stat.eventId,
-          statType: statTypeLabel(stat.statType),
-          t: stat.t,
-          ...(stat.note ? { note: stat.note } : {}),
-          ...(stat.sourceId ? { sourceId: stat.sourceId } : {}),
-        });
-      }
       for (const ev of events) {
         if (!eventTagsPlayer(ev, playerId)) continue;
         if (ev.type === "stat") continue;
@@ -127,22 +164,7 @@ export async function loadPlayerProfile(
       }
     }),
   );
-
   taggedMoments.sort((a, b) => a.t - b.t);
-  gameStats.sort(
-    (a, b) =>
-      (a.gameDate ?? "").localeCompare(b.gameDate ?? "") || a.t - b.t,
-  );
-
-  const summaries = summarizeGameStatsByPlayer(allStatsForSummary, players);
-  const statSummary =
-    summaries.find((s) => s.playerId === playerId) ?? {
-      playerId,
-      playerName: player.name,
-      ...(player.jerseyNumber ? { jerseyNumber: player.jerseyNumber } : {}),
-      counts: {},
-      total: 0,
-    };
 
   const highlightDrafts = await listHighlightDraftsForPlayer(
     teamId,
@@ -158,7 +180,8 @@ export async function loadPlayerProfile(
     taggedMomentsCount: taggedMoments.length,
     highlightDrafts,
     taggedMoments,
-    statSummary,
+    allTimeStatSummary,
+    seasonStatSummaries,
     gameStats,
   };
 }

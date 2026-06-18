@@ -22,6 +22,7 @@ import {
   teamGamesUrl,
   teamRosterUrl,
   teamSetupUrl,
+  teamStatsUrl,
 } from "@/lib/team-routes";
 
 export type GameDashboardProps = {
@@ -336,6 +337,11 @@ export default function GameDashboard({
               <Link href={`/game/${game.id}/review`} className={ghostBtn}>
                 Log stats in review
               </Link>
+              {team ? (
+                <Link href={teamStatsUrl(team.id)} className={ghostBtn}>
+                  View season stats
+                </Link>
+              ) : null}
               {canManageStats && metrics.statCount > 0 ? (
                 <button
                   type="button"
