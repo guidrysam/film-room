@@ -6,6 +6,14 @@ import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-load";
+import { topPlayerStatLines } from "@/lib/game-dashboard";
+import {
+  buildGameStatCsvRows,
+  canManageGameStats,
+  downloadCsvFile,
+  gameStatsToCsv,
+  listGameStatsFromEvents,
+} from "@/lib/game-stats";
 import { gameReviewUrl } from "@/lib/player-profile";
 import { canContributeGameSources } from "@/lib/games";
 import { canCoachTeam } from "@/lib/teams";
@@ -103,6 +111,35 @@ export default function GameDashboard({
     return canContributeGameSources(data.game, currentUid, data.teamRole);
   }, [data, currentUid]);
 
+  const canManageStats = useMemo(() => {
+    if (!data) return false;
+    return canManageGameStats(
+      data.game,
+      currentUid,
+      data.team,
+    );
+  }, [data, currentUid]);
+
+  const topStatLines = useMemo(() => {
+    if (!data) return [];
+    return topPlayerStatLines(data.events, data.players, 5);
+  }, [data]);
+
+  const handleExportStatsCsv = useCallback(() => {
+    if (!data) return;
+    const stats = listGameStatsFromEvents(data.events);
+    const csv = gameStatsToCsv(
+      buildGameStatCsvRows({
+        game: data.game,
+        team: data.team,
+        stats,
+        players: data.players,
+      }),
+    );
+    const slug = data.game.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    downloadCsvFile(`${slug || "game"}-stats.csv`, csv);
+  }, [data]);
+
   const taggedPlayers = useMemo(() => {
     if (!data) return [];
     const set = new Set(data.taggedPlayerIds);
@@ -180,13 +217,14 @@ export default function GameDashboard({
         {/* Overview */}
         <section className={`${panelClass} mb-5`}>
           <h2 className="mb-3 text-sm font-semibold text-white">Overview</h2>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             {metricCard("Sources", metrics.sourceCount)}
             {metricCard("Synced", metrics.syncedSourceCount)}
             {metricCard("Players", metrics.playerCount)}
             {metricCard("Parents", metrics.parentContributorCount)}
             {metricCard("Marks", metrics.coachMarkCount)}
             {metricCard("Highlights", metrics.highlightDraftCount)}
+            {metricCard("Stats", metrics.statCount)}
           </div>
         </section>
 
@@ -288,6 +326,49 @@ export default function GameDashboard({
           <Link href={`/game/${game.id}/review`} className={primaryBtn}>
             Review synced game
           </Link>
+        </section>
+
+        {/* Stats */}
+        <section className={`${panelClass} mb-5`}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-white">Stats</h2>
+            <div className="flex flex-wrap gap-2">
+              <Link href={`/game/${game.id}/review`} className={ghostBtn}>
+                Log stats in review
+              </Link>
+              {canManageStats && metrics.statCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={handleExportStatsCsv}
+                  className={ghostBtn}
+                >
+                  Export CSV
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {metrics.statCount === 0 ? (
+            <p className="text-sm text-zinc-400">
+              No stats logged yet. Open review and add goals, assists, and more
+              at game time.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {topStatLines.map((line) => (
+                <li
+                  key={line.playerName}
+                  className="rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
+                >
+                  <span className="text-sm font-medium text-zinc-200">
+                    {line.playerName}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">
+                    {line.line}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {/* Players */}

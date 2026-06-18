@@ -86,6 +86,7 @@ export type GameTimelineEventType =
   | "sync_point"
   | "note"
   | "tag"
+  | "stat"
   | "layout"
   | "camera_switch";
 
@@ -866,6 +867,7 @@ const EVENT_TYPES: GameTimelineEventType[] = [
   "sync_point",
   "note",
   "tag",
+  "stat",
   "layout",
   "camera_switch",
 ];
@@ -950,6 +952,13 @@ export async function listGameEvents(
   });
   out.sort((a, b) => a.t - b.t);
   return out;
+}
+
+export async function deleteGameEvent(
+  gameId: string,
+  eventId: string,
+): Promise<void> {
+  await deleteDoc(doc(eventsCol(gameId), eventId));
 }
 
 // ---- Director tracks / cuts -------------------------------------------

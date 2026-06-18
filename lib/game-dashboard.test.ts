@@ -56,6 +56,7 @@ describe("game-dashboard", () => {
     assert.equal(m.parentContributorCount, 2);
     assert.equal(m.coachMarkCount, 1);
     assert.equal(m.highlightDraftCount, 1);
+    assert.equal(m.statCount, 0);
   });
 
   it("collectTaggedPlayerIds from events and highlights", () => {
@@ -178,6 +179,7 @@ describe("game-dashboard", () => {
     assert.equal(metrics.parentContributorCount, 2);
     assert.equal(metrics.coachMarkCount, 2);
     assert.equal(metrics.highlightDraftCount, 2);
+    assert.equal(metrics.statCount, 0);
     assert.deepEqual(tagged.sort(), ["pl1", "pl2"]);
     assert.equal(marks.length, 2);
     assert.equal(marks[0]!.t, 300);

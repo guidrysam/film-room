@@ -1,5 +1,11 @@
 import { listGameEvents, listGamesForTeam } from "@/lib/games";
 import {
+  listGameStatsFromEvents,
+  statTypeLabel,
+  summarizeGameStatsByPlayer,
+  type PlayerStatSummary,
+} from "@/lib/game-stats";
+import {
   highlightMomentsForPlayer,
   listHighlightDraftsForPlayer,
   type HighlightDraft,
@@ -10,6 +16,7 @@ import {
   canViewTeam,
   getTeam,
   getTeamPlayer,
+  listTeamPlayers,
   type Player,
   type Team,
 } from "@/lib/teams";
@@ -23,6 +30,18 @@ export type TaggedMoment = {
   label?: string;
 };
 
+export type PlayerGameStat = {
+  gameId: string;
+  gameTitle: string;
+  gameDate?: string;
+  opponent?: string;
+  eventId: string;
+  statType: string;
+  t: number;
+  note?: string;
+  sourceId?: string;
+};
+
 export type PlayerProfileData = {
   team: Team;
   player: Player;
@@ -31,6 +50,8 @@ export type PlayerProfileData = {
   taggedMomentsCount: number;
   highlightDrafts: HighlightDraft[];
   taggedMoments: TaggedMoment[];
+  statSummary: PlayerStatSummary;
+  gameStats: PlayerGameStat[];
 };
 
 export type PlayerMomentView = {
@@ -63,14 +84,38 @@ export async function loadPlayerProfile(
   const player = await getTeamPlayer(teamId, playerId);
   if (!player) return null;
 
-  const games = await listGamesForTeam(teamId);
+  const [games, players] = await Promise.all([
+    listGamesForTeam(teamId),
+    listTeamPlayers(teamId),
+  ]);
   const taggedMoments: TaggedMoment[] = [];
+  const gameStats: PlayerGameStat[] = [];
+  const allStatsForSummary: ReturnType<typeof listGameStatsFromEvents> = [];
 
   await Promise.all(
     games.map(async (game) => {
       const events = await listGameEvents(game.id);
+      const stats = listGameStatsFromEvents(events);
+      for (const stat of stats) {
+        if (!stat.playerIds.includes(playerId)) continue;
+        allStatsForSummary.push(stat);
+        gameStats.push({
+          gameId: game.id,
+          gameTitle: game.title,
+          ...(game.date ? { gameDate: game.date } : {}),
+          ...(game.opponent ?? game.awayTeam
+            ? { opponent: game.opponent ?? game.awayTeam }
+            : {}),
+          eventId: stat.eventId,
+          statType: statTypeLabel(stat.statType),
+          t: stat.t,
+          ...(stat.note ? { note: stat.note } : {}),
+          ...(stat.sourceId ? { sourceId: stat.sourceId } : {}),
+        });
+      }
       for (const ev of events) {
         if (!eventTagsPlayer(ev, playerId)) continue;
+        if (ev.type === "stat") continue;
         taggedMoments.push({
           gameId: game.id,
           gameTitle: game.title,
@@ -84,6 +129,20 @@ export async function loadPlayerProfile(
   );
 
   taggedMoments.sort((a, b) => a.t - b.t);
+  gameStats.sort(
+    (a, b) =>
+      (a.gameDate ?? "").localeCompare(b.gameDate ?? "") || a.t - b.t,
+  );
+
+  const summaries = summarizeGameStatsByPlayer(allStatsForSummary, players);
+  const statSummary =
+    summaries.find((s) => s.playerId === playerId) ?? {
+      playerId,
+      playerName: player.name,
+      ...(player.jerseyNumber ? { jerseyNumber: player.jerseyNumber } : {}),
+      counts: {},
+      total: 0,
+    };
 
   const highlightDrafts = await listHighlightDraftsForPlayer(
     teamId,
@@ -99,6 +158,8 @@ export async function loadPlayerProfile(
     taggedMomentsCount: taggedMoments.length,
     highlightDrafts,
     taggedMoments,
+    statSummary,
+    gameStats,
   };
 }
 

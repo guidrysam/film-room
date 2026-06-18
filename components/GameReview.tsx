@@ -19,8 +19,19 @@ import {
   type GameTimelineEventType,
   type GameVideoSource,
 } from "@/lib/games";
-import { getTeam, listTeamPlayers, teamRoleFor, type Player } from "@/lib/teams";
+import { getTeam, listTeamPlayers, teamRoleFor, type Player, type Team } from "@/lib/teams";
 import { getEventPlayerIds } from "@/lib/timeline-players";
+import {
+  addGameStat,
+  canManageGameStats,
+  deleteGameStat,
+  GAME_STAT_TYPES,
+  listGameStatsFromEvents,
+  parseGameStat,
+  statFromCoachMark,
+  statTypeLabel,
+  type GameStatType,
+} from "@/lib/game-stats";
 import {
   appendHighlightMoment,
   createHighlightDraft,
@@ -71,6 +82,8 @@ function eventTypeLabel(type: GameTimelineEventType): string {
       return "Note";
     case "tag":
       return "Tag";
+    case "stat":
+      return "Stat";
     case "layout":
       return "Layout";
     case "camera_switch":
@@ -104,6 +117,7 @@ export default function GameReview({
   initialSourceId,
 }: GameReviewProps) {
   const [game, setGame] = useState<Game | null>(null);
+  const [team, setTeam] = useState<Team | null>(null);
   const [sources, setSources] = useState<GameVideoSource[]>([]);
   const [events, setEvents] = useState<GameTimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,6 +146,11 @@ export default function GameReview({
   const [removingMomentKey, setRemovingMomentKey] = useState<string | null>(null);
   const [teamPlayers, setTeamPlayers] = useState<Player[]>([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
+  const [statType, setStatType] = useState<GameStatType>("goal");
+  const [statNote, setStatNote] = useState("");
+  const [statPlayerIds, setStatPlayerIds] = useState<string[]>([]);
+  const [statSaving, setStatSaving] = useState(false);
+  const [statMessage, setStatMessage] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -156,6 +175,13 @@ export default function GameReview({
     () => events.find((e) => e.id === selectedEventId) ?? null,
     [events, selectedEventId],
   );
+
+  const canManageStats = useMemo(
+    () => (game ? canManageGameStats(game, currentUid, team) : false),
+    [game, currentUid, team],
+  );
+
+  const gameStats = useMemo(() => listGameStatsFromEvents(events), [events]);
 
   const momentSource = useMemo(
     () =>
@@ -207,6 +233,7 @@ export default function GameReview({
         listGameEvents(gameId),
       ]);
       setGame(g);
+      setTeam(team);
       setSources(srcs);
       setEvents(evs);
       if (g.teamId) {
@@ -298,9 +325,129 @@ export default function GameReview({
     (event: GameTimelineEvent) => {
       setSelectedEventId(event.id);
       setSelectedGameTime(event.t);
+      const playerIds = getEventPlayerIds(event);
+      if (playerIds.length > 0) {
+        setSelectedPlayerIds(playerIds);
+        setStatPlayerIds(playerIds);
+      }
+      if (event.type === "coach_mark" && event.label) {
+        setStatNote(event.label);
+      }
       void applySeekForGameTime(event.t, selectedSource);
     },
     [selectedSource, applySeekForGameTime],
+  );
+
+  const toggleStatPlayer = useCallback((playerId: string) => {
+    setStatPlayerIds((prev) =>
+      prev.includes(playerId)
+        ? prev.filter((id) => id !== playerId)
+        : [...prev, playerId],
+    );
+  }, []);
+
+  const refreshEvents = useCallback(async () => {
+    try {
+      setEvents(await listGameEvents(gameId));
+    } catch {
+      /* non-fatal */
+    }
+  }, [gameId]);
+
+  const handleAddStat = useCallback(async () => {
+    if (!game || statPlayerIds.length === 0) {
+      setStatMessage("Select at least one player.");
+      return;
+    }
+    setStatSaving(true);
+    setStatMessage(null);
+    try {
+      await addGameStat(gameId, {
+        t: selectedGameTime,
+        statType,
+        playerIds: statPlayerIds,
+        ...(statNote.trim() ? { note: statNote.trim() } : {}),
+        ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+        createdBy: currentUid,
+        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+      });
+      setStatMessage("Stat saved.");
+      setStatNote("");
+      await refreshEvents();
+    } catch (e) {
+      setStatMessage(e instanceof Error ? e.message : "Could not save stat.");
+    } finally {
+      setStatSaving(false);
+    }
+  }, [
+    game,
+    statPlayerIds,
+    gameId,
+    selectedGameTime,
+    statType,
+    statNote,
+    selectedSource,
+    currentUid,
+    currentDisplayName,
+    refreshEvents,
+  ]);
+
+  const handleAddStatFromMark = useCallback(async () => {
+    if (!selectedEvent || selectedEvent.type !== "coach_mark") return;
+    const draft = statFromCoachMark(selectedEvent, {
+      t: selectedGameTime,
+      statType,
+      playerIds: statPlayerIds.length > 0 ? statPlayerIds : getEventPlayerIds(selectedEvent),
+      note: statNote.trim() || undefined,
+      sourceId: selectedSource?.id ?? selectedEvent.sourceId,
+    });
+    if (!draft || draft.playerIds.length === 0) {
+      setStatMessage("Tag a player on the coach mark or select players first.");
+      return;
+    }
+    setStatSaving(true);
+    setStatMessage(null);
+    try {
+      await addGameStat(gameId, {
+        ...draft,
+        createdBy: currentUid,
+        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+      });
+      setStatMessage("Stat saved from coach mark.");
+      await refreshEvents();
+    } catch (e) {
+      setStatMessage(e instanceof Error ? e.message : "Could not save stat.");
+    } finally {
+      setStatSaving(false);
+    }
+  }, [
+    selectedEvent,
+    selectedGameTime,
+    statType,
+    statPlayerIds,
+    statNote,
+    selectedSource,
+    gameId,
+    currentUid,
+    currentDisplayName,
+    refreshEvents,
+  ]);
+
+  const handleDeleteStat = useCallback(
+    async (eventId: string) => {
+      setStatSaving(true);
+      setStatMessage(null);
+      try {
+        await deleteGameStat(gameId, eventId);
+        setStatMessage("Stat removed.");
+        await refreshEvents();
+      } catch {
+        setStatMessage("Could not remove stat.");
+      } finally {
+        setStatSaving(false);
+      }
+    },
+    [gameId, refreshEvents],
   );
 
   const handleAddToHighlightDraft = useCallback(async () => {
@@ -642,7 +789,11 @@ export default function GameReview({
                                 {formatTimelineSeconds(ev.t)}
                               </span>
                               <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">
-                                {eventTypeLabel(ev.type)}
+                                {ev.type === "stat"
+                                  ? statTypeLabel(
+                                      parseGameStat(ev)?.statType ?? "custom",
+                                    )
+                                  : eventTypeLabel(ev.type)}
                               </span>
                             </div>
                             {ev.label ? (
@@ -669,6 +820,159 @@ export default function GameReview({
                   </ul>
                 )}
               </section>
+
+              {canManageStats ? (
+                <section className={panelClass}>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Add stat
+                  </p>
+                  <p className="mb-3 text-[11px] leading-snug text-zinc-500">
+                    Log a stat at the selected game time. Choose players and
+                    stat type, then save.
+                  </p>
+
+                  <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                      Selected game time
+                    </p>
+                    <p className="mt-0.5 font-mono text-xs text-zinc-200">
+                      {formatTimelineSeconds(selectedGameTime)}
+                    </p>
+                  </div>
+
+                  <label className="mb-3 block">
+                    <span className="mb-1 block text-[10px] text-zinc-500">
+                      Stat type
+                    </span>
+                    <select
+                      value={statType}
+                      onChange={(e) =>
+                        setStatType(e.target.value as GameStatType)
+                      }
+                      className={inputClass}
+                    >
+                      {GAME_STAT_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {statTypeLabel(type)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {teamPlayers.length > 0 ? (
+                    <div className="mb-3">
+                      <p className="mb-1.5 text-[10px] text-zinc-500">Players</p>
+                      <ul className="max-h-28 space-y-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-black/20 p-2">
+                        {teamPlayers.map((p) => {
+                          const active = statPlayerIds.includes(p.id);
+                          return (
+                            <li key={p.id}>
+                              <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
+                                <input
+                                  type="checkbox"
+                                  checked={active}
+                                  onChange={() => toggleStatPlayer(p.id)}
+                                  className="rounded border-white/20"
+                                />
+                                <span>
+                                  {p.name}
+                                  {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="mb-3 text-[11px] text-zinc-500">
+                      Link this game to a team roster to tag players on stats.
+                    </p>
+                  )}
+
+                  <label className="mb-3 block">
+                    <span className="mb-1 block text-[10px] text-zinc-500">
+                      Note (optional)
+                    </span>
+                    <input
+                      type="text"
+                      value={statNote}
+                      onChange={(e) => setStatNote(e.target.value)}
+                      placeholder="e.g. Near-post finish"
+                      className={inputClass}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleAddStat()}
+                    disabled={statSaving || statPlayerIds.length === 0}
+                    className={`${primaryBtn} mb-2 w-full`}
+                  >
+                    {statSaving ? "Saving…" : "Save stat"}
+                  </button>
+
+                  {selectedEvent?.type === "coach_mark" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleAddStatFromMark()}
+                      disabled={statSaving}
+                      className={`${ghostBtn} w-full`}
+                    >
+                      Add stat from coach mark
+                    </button>
+                  ) : null}
+
+                  {statMessage ? (
+                    <p className="mt-2 text-[11px] text-zinc-400">{statMessage}</p>
+                  ) : null}
+
+                  {gameStats.length > 0 ? (
+                    <div className="mt-4 border-t border-white/[0.06] pt-3">
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                        Game stats ({gameStats.length})
+                      </p>
+                      <ul className="max-h-32 space-y-1 overflow-y-auto">
+                        {gameStats.map((stat) => (
+                          <li
+                            key={stat.eventId}
+                            className="flex items-center justify-between gap-2 rounded border border-white/[0.05] bg-black/20 px-2 py-1.5"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedGameTime(stat.t);
+                                setSelectedEventId(stat.eventId);
+                              }}
+                              className="min-w-0 flex-1 text-left"
+                            >
+                              <span className="font-mono text-[10px] text-zinc-400">
+                                {formatTimelineSeconds(stat.t)}
+                              </span>
+                              <span className="ml-2 text-[11px] text-zinc-200">
+                                {statTypeLabel(stat.statType)}
+                              </span>
+                              <span className="ml-1 text-[10px] text-zinc-500">
+                                {stat.playerIds
+                                  .map((id) => playerNameById.get(id) ?? id)
+                                  .join(", ")}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteStat(stat.eventId)}
+                              disabled={statSaving}
+                              className={dangerBtn}
+                            >
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
 
               <section className={panelClass}>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import TeamNav from "@/components/TeamNav";
+import { formatPlayerStatLine } from "@/lib/game-stats";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { highlightMomentPlayhead } from "@/lib/highlight-draft";
 import {
@@ -86,7 +87,8 @@ export default function PlayerProfileView({
     );
   }
 
-  const { player, team, highlightDrafts, taggedMoments } = data;
+  const { player, team, highlightDrafts, taggedMoments, statSummary, gameStats } =
+    data;
 
   return (
     <div className="min-h-screen px-4 py-10 text-zinc-50">
@@ -106,7 +108,7 @@ export default function PlayerProfileView({
         </div>
 
         <section className={`${panelClass} mb-5`}>
-          <div className="grid grid-cols-3 gap-3 text-center">
+          <div className="grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
             <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-3">
               <p className="text-lg font-semibold text-white">
                 {data.linkedParentsCount}
@@ -131,7 +133,54 @@ export default function PlayerProfileView({
                 Tags
               </p>
             </div>
+            <div className="rounded-lg border border-white/[0.06] bg-black/25 px-2 py-3">
+              <p className="text-lg font-semibold text-white">
+                {statSummary.total}
+              </p>
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Stats
+              </p>
+            </div>
           </div>
+          {statSummary.total > 0 ? (
+            <p className="mt-3 text-xs text-zinc-400">
+              Season summary: {formatPlayerStatLine(statSummary)}
+            </p>
+          ) : null}
+        </section>
+
+        <section className={`${panelClass} mb-5`}>
+          <h2 className="mb-3 text-sm font-semibold text-white">Game stats</h2>
+          {gameStats.length === 0 ? (
+            <p className="text-sm text-zinc-400">
+              No official stats logged for this player yet.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {gameStats.map((stat) => (
+                <li key={stat.eventId}>
+                  <Link
+                    href={gameReviewUrl(stat.gameId, stat.t, stat.sourceId)}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2 transition hover:bg-white/[0.04]"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-zinc-200">
+                        {stat.statType}
+                        {stat.note ? ` · ${stat.note}` : ""}
+                      </span>
+                      <span className="block text-xs text-zinc-500">
+                        {stat.gameTitle}
+                        {stat.opponent ? ` vs ${stat.opponent}` : ""}
+                      </span>
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-zinc-400">
+                      {formatTimelineSeconds(stat.t)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className={`${panelClass} mb-5`}>

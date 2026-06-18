@@ -1,5 +1,10 @@
 import type { GameTimelineEvent, GameVideoSource } from "@/lib/games";
 import type { HighlightDraft } from "@/lib/highlight-draft";
+import {
+  formatPlayerStatLine,
+  listGameStatsFromEvents,
+  summarizeGameStatsByPlayer,
+} from "@/lib/game-stats";
 import { getEventPlayerIds } from "@/lib/timeline-players";
 import type { Player, Team } from "@/lib/teams";
 
@@ -10,6 +15,7 @@ export type GameDashboardMetrics = {
   parentContributorCount: number;
   coachMarkCount: number;
   highlightDraftCount: number;
+  statCount: number;
 };
 
 export function isSourceSynced(
@@ -61,6 +67,7 @@ export function computeGameDashboardMetrics(input: {
     parentContributorCount,
     coachMarkCount: countCoachMarks(input.events),
     highlightDraftCount: input.highlightDrafts.length,
+    statCount: listGameStatsFromEvents(input.events).length,
   };
 }
 
@@ -89,4 +96,17 @@ export function syncStatusSummary(sources: GameVideoSource[]): string {
     return `${sources.length} source${sources.length === 1 ? "" : "s"} · all synced`;
   }
   return `${synced} of ${sources.length} synced`;
+}
+
+export function topPlayerStatLines(
+  events: GameTimelineEvent[],
+  players: Player[],
+  limit = 5,
+): { playerName: string; line: string }[] {
+  return summarizeGameStatsByPlayer(listGameStatsFromEvents(events), players)
+    .slice(0, limit)
+    .map((summary) => ({
+      playerName: summary.playerName,
+      line: formatPlayerStatLine(summary),
+    }));
 }
