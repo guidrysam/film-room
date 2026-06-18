@@ -29,6 +29,10 @@ export type GameSourcesProps = {
   teamRole?: GameTeamRole | null;
   /** Show the paste-link attach form (default true). */
   showPasteForm?: boolean;
+  /** Show the inner section header row (default true). */
+  showHeader?: boolean;
+  /** Override empty-state copy when the source list is empty. */
+  emptyMessage?: string;
   /** Called after a source is added (parent may refresh counts). */
   onChanged?: () => void;
 };
@@ -82,6 +86,8 @@ export default function GameSources({
   currentUid,
   teamRole,
   showPasteForm = true,
+  showHeader = true,
+  emptyMessage,
   onChanged,
 }: GameSourcesProps) {
   const router = useRouter();
@@ -191,6 +197,7 @@ export default function GameSources({
 
   return (
     <div>
+      {showHeader ? (
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
           Sources
@@ -215,15 +222,38 @@ export default function GameSources({
               : "Open in Film Room"}
         </button>
       </div>
+      ) : (
+        <div className="mb-2 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => void handleOpen()}
+            disabled={opening || playableCount === 0}
+            className="rounded-md border border-blue-500/40 bg-blue-950/50 px-2.5 py-1 text-[11px] font-semibold text-blue-100 transition hover:bg-blue-900/55 disabled:opacity-40"
+            title={
+              playableCount === 0
+                ? "Add a YouTube source first"
+                : playableCount > 1
+                  ? "Open all angles in sync"
+                  : "Open in Film Room"
+            }
+          >
+            {opening
+              ? "Opening…"
+              : playableCount > 1
+                ? `Open in Film Room (${playableCount} angles)`
+                : "Open in Film Room"}
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-[11px] text-zinc-500">Loading sources…</p>
       ) : sources.length === 0 ? (
         <p className="text-[10px] leading-snug text-zinc-500">
-          No sources yet.{" "}
-          {canEdit
-            ? "Attach a YouTube video below."
-            : "An editor can attach a YouTube video."}
+          {emptyMessage ??
+            (canEdit
+              ? "No sources yet. Attach a YouTube video below."
+              : "No sources yet. An editor can attach a YouTube video.")}
         </p>
       ) : (
         <ul className="space-y-1.5">

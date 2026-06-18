@@ -44,5 +44,11 @@ export default function GamePage() {
     );
   }
 
-  return <GameDashboard gameId={gameId} currentUid={user.uid} />;
+  return (
+    <GameDashboard
+      gameId={gameId}
+      currentUid={user.uid}
+      currentDisplayName={user.displayName}
+    />
+  );
 }

@@ -2,11 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  formatTimelineSeconds,
-  syncStatusBadgeClass,
-  syncStatusLabel,
-} from "@/lib/game-timeline";
+import GameCapUpload from "@/components/GameCapUpload";
+import GameSources from "@/components/GameSources";
+import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-load";
 import { gameReviewUrl } from "@/lib/player-profile";
 import { canContributeGameSources } from "@/lib/games";
@@ -14,7 +12,10 @@ import { canContributeGameSources } from "@/lib/games";
 export type GameDashboardProps = {
   gameId: string;
   currentUid: string;
+  currentDisplayName?: string | null;
 };
+
+type SourceMode = "paste" | "upload";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -24,6 +25,12 @@ const ghostBtn =
 
 const primaryBtn =
   "inline-flex items-center justify-center rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-500";
+
+const modeTab =
+  "rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
+
+const SOURCES_EMPTY_MESSAGE =
+  "No video yet. Paste a YouTube link or upload a video to start building this synced game.";
 
 function metricCard(label: string, value: number | string) {
   return (
@@ -37,10 +44,16 @@ function metricCard(label: string, value: number | string) {
 /**
  * Primary Game page — single screen for sources, review, players, highlights, marks.
  */
-export default function GameDashboard({ gameId, currentUid }: GameDashboardProps) {
+export default function GameDashboard({
+  gameId,
+  currentUid,
+  currentDisplayName,
+}: GameDashboardProps) {
   const [data, setData] = useState<GameDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
+  const [sourcesKey, setSourcesKey] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -59,6 +72,20 @@ export default function GameDashboard({ gameId, currentUid }: GameDashboardProps
       setLoading(false);
     }
   }, [gameId, currentUid]);
+
+  const refreshMetrics = useCallback(async () => {
+    try {
+      const loaded = await loadGameDashboard(gameId, currentUid);
+      if (loaded) setData(loaded);
+    } catch {
+      /* Best-effort metrics refresh after source attach. */
+    }
+  }, [gameId, currentUid]);
+
+  const handleSourcesChanged = useCallback(() => {
+    setSourcesKey((k) => k + 1);
+    void refreshMetrics();
+  }, [refreshMetrics]);
 
   useEffect(() => {
     void refresh();
@@ -94,7 +121,7 @@ export default function GameDashboard({ gameId, currentUid }: GameDashboardProps
     );
   }
 
-  const { game, team, metrics, sources, highlightDrafts, recentMarks, recentDrafts } =
+  const { game, team, metrics, highlightDrafts, recentMarks, recentDrafts } =
     data;
 
   return (
@@ -124,7 +151,7 @@ export default function GameDashboard({ gameId, currentUid }: GameDashboardProps
                 Team roster
               </Link>
             ) : null}
-            <Link href={`/game-cap?gameId=${game.id}`} className={ghostBtn}>
+            <Link href="/game-cap" className={ghostBtn}>
               Game Cap
             </Link>
           </div>
@@ -147,52 +174,72 @@ export default function GameDashboard({ gameId, currentUid }: GameDashboardProps
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">Sources</h2>
-            <div className="flex gap-2">
-              {canAttach ? (
-                <Link href={`/game-cap?gameId=${game.id}`} className={primaryBtn}>
-                  Add source
-                </Link>
-              ) : null}
-              <Link href={`/game/${game.id}/review`} className={ghostBtn}>
-                Open review
-              </Link>
-            </div>
+            <Link href={`/game/${game.id}/review`} className={ghostBtn}>
+              Review synced game
+            </Link>
           </div>
-          {sources.length === 0 ? (
-            <p className="text-sm text-zinc-400">Upload or attach video.</p>
-          ) : (
-            <ul className="space-y-1.5">
-              {sources.map((s) => (
-                <li
-                  key={s.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2"
-                >
-                  <span className="min-w-0 truncate text-sm text-zinc-200">
-                    {s.label}
-                  </span>
-                  <span
-                    className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${syncStatusBadgeClass(s.syncStatus)}`}
-                  >
-                    {syncStatusLabel(s.syncStatus)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+
+          {canAttach ? (
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSourceMode("paste")}
+                className={`${modeTab} ${
+                  sourceMode === "paste"
+                    ? "border-blue-500/45 bg-blue-600/25 text-white"
+                    : "border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                }`}
+              >
+                Paste YouTube link
+              </button>
+              <button
+                type="button"
+                onClick={() => setSourceMode("upload")}
+                className={`${modeTab} ${
+                  sourceMode === "upload"
+                    ? "border-blue-500/45 bg-blue-600/25 text-white"
+                    : "border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                }`}
+              >
+                Upload to YouTube
+              </button>
+            </div>
+          ) : null}
+
+          {canAttach && sourceMode === "upload" ? (
+            <div className="mb-4">
+              <GameCapUpload
+                game={game}
+                team={team}
+                currentUid={currentUid}
+                currentDisplayName={currentDisplayName}
+                onComplete={handleSourcesChanged}
+                onSwitchToPaste={() => setSourceMode("paste")}
+              />
+            </div>
+          ) : null}
+
+          <GameSources
+            key={`${game.id}-${sourcesKey}`}
+            game={game}
+            currentUid={currentUid}
+            teamRole={data.teamRole}
+            showHeader={false}
+            showPasteForm={canAttach && sourceMode === "paste"}
+            emptyMessage={canAttach ? SOURCES_EMPTY_MESSAGE : undefined}
+            onChanged={handleSourcesChanged}
+          />
         </section>
 
         {/* Review */}
         <section className={`${panelClass} mb-5`}>
           <h2 className="mb-2 text-sm font-semibold text-white">Review</h2>
           <p className="mb-3 text-xs text-zinc-400">
-            {sources.length === 0
-              ? "Attach sources to review synced angles."
+            {metrics.sourceCount === 0
+              ? "Add video sources above, then review synced angles."
               : `${metrics.syncedSourceCount} of ${metrics.sourceCount} source${metrics.sourceCount === 1 ? "" : "s"} synced for multi-angle review.`}
           </p>
-          <Link
-            href={`/game/${game.id}/review`}
-            className={primaryBtn}
-          >
+          <Link href={`/game/${game.id}/review`} className={primaryBtn}>
             Review synced game
           </Link>
         </section>
