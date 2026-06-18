@@ -54,6 +54,7 @@ export type Team = {
   id: string;
   name: string;
   sport?: string;
+  season?: string;
   clubId?: string;
   ownerId: string;
   /** uid -> role. Creator is always admin. */
@@ -87,6 +88,7 @@ export type PlayerInput = {
 export type CreateTeamInput = {
   name: string;
   sport?: string;
+  season?: string;
   clubId?: string;
 };
 
@@ -153,10 +155,26 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
     members,
     memberUids,
     ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
+    ...(trimOrUndef(raw.season) ? { season: (raw.season as string).trim() } : {}),
     ...(trimOrUndef(raw.clubId) ? { clubId: (raw.clubId as string).trim() } : {}),
     ...(youtube && Object.keys(youtube).length > 0 ? { youtube } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
+  };
+}
+
+/** Normalize manual team create input before persisting. */
+export function normalizeCreateTeamInput(input: {
+  name: string;
+  sport?: string;
+  season?: string;
+}): CreateTeamInput | { error: string } {
+  const name = input.name.trim();
+  if (!name) return { error: "Give the team a name." };
+  return {
+    name,
+    ...(trimOrUndef(input.sport) ? { sport: input.sport!.trim() } : {}),
+    ...(trimOrUndef(input.season) ? { season: input.season!.trim() } : {}),
   };
 }
 
@@ -175,6 +193,7 @@ export async function createTeam(
     createdAt: now,
     updatedAt: now,
     ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
+    ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
     ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
   });
   return ref.id;
@@ -209,6 +228,7 @@ export async function updateTeam(
     updatedAt: serverTimestamp(),
     ...(patch.name !== undefined ? { name: patch.name.trim() || "Team" } : {}),
     ...(patch.sport !== undefined ? { sport: patch.sport.trim() } : {}),
+    ...(patch.season !== undefined ? { season: patch.season.trim() } : {}),
     ...(patch.clubId !== undefined ? { clubId: patch.clubId.trim() } : {}),
     ...(patch.youtube !== undefined ? { youtube: patch.youtube } : {}),
   });

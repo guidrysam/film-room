@@ -42,6 +42,69 @@ export type RosterImportResult = {
   skipped: number;
 };
 
+export type RosterImportPreviewSummary = {
+  playerCount: number;
+  parentContactCount: number;
+  skippedCount: number;
+  invalidCount: number;
+};
+
+export const TEAM_CREATE_IMPORT_SUMMARY_KEY = "teamCreateImportSummary";
+
+export type TeamCreateImportSummary = RosterImportResult & {
+  teamName: string;
+  teamCreated: true;
+};
+
+function countParentContacts(row: RosterImportPreviewRow): number {
+  if (row.parentContacts?.length) return row.parentContacts.length;
+  if (row.parentEmail && row.parentName) return 1;
+  return 0;
+}
+
+export function summarizeRosterImportPreview(
+  preview: RosterImportPreviewRow[],
+): RosterImportPreviewSummary {
+  const importable = preview.filter(
+    (row) => row.status === "create" || row.status === "update",
+  );
+  let parentContactCount = 0;
+  for (const row of importable) {
+    parentContactCount += countParentContacts(row);
+  }
+  return {
+    playerCount: importable.length,
+    parentContactCount,
+    skippedCount: preview.filter((row) => row.status === "skip").length,
+    invalidCount: preview.filter((row) => row.status === "invalid").length,
+  };
+}
+
+export function readTeamCreateImportSummary():
+  | TeamCreateImportSummary
+  | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(TEAM_CREATE_IMPORT_SUMMARY_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as TeamCreateImportSummary;
+  } catch {
+    return null;
+  }
+}
+
+export function storeTeamCreateImportSummary(
+  summary: TeamCreateImportSummary,
+): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(TEAM_CREATE_IMPORT_SUMMARY_KEY, JSON.stringify(summary));
+}
+
+export function clearTeamCreateImportSummary(): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(TEAM_CREATE_IMPORT_SUMMARY_KEY);
+}
+
 function resolveParentContacts(row: ParsedRosterRow): RosterParentContact[] {
   if (row.parentContacts?.length) return row.parentContacts;
 

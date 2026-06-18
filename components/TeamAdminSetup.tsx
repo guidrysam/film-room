@@ -1,8 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import ParentInviteTargets from "@/components/ParentInviteTargets";
+import RosterImportResultSummary from "@/components/RosterImportResultSummary";
 import TeamInvites from "@/components/TeamInvites";
 import TeamRosterImport from "@/components/TeamRosterImport";
+import {
+  clearTeamCreateImportSummary,
+  readTeamCreateImportSummary,
+  type TeamCreateImportSummary,
+} from "@/lib/roster-import";
 import { canCoachTeam, type Team } from "@/lib/teams";
 
 const panelClass =
@@ -17,6 +24,12 @@ export type TeamAdminSetupProps = {
  * Coach/admin team administration: roster import, parent targets, invite links.
  */
 export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps) {
+  const [createSummary] = useState<TeamCreateImportSummary | null>(() => {
+    const summary = readTeamCreateImportSummary();
+    if (summary) clearTeamCreateImportSummary();
+    return summary;
+  });
+
   if (!canCoachTeam(team, currentUid)) {
     return (
       <div className={panelClass}>
@@ -29,6 +42,15 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
 
   return (
     <div className="space-y-5">
+      {createSummary ? (
+        <RosterImportResultSummary
+          result={createSummary}
+          title={`${createSummary.teamName} created`}
+          showTeamCreated
+          description="Your roster and parent contacts are ready. Review parent onboarding below and share invite links when you are ready."
+        />
+      ) : null}
+
       <section
         className={`${panelClass} ring-2 ring-blue-500/20`}
         aria-labelledby="teamlinkt-import-heading"

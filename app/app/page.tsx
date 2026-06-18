@@ -506,6 +506,9 @@ export default function DashboardPage() {
                 Create team
               </Link>
             </div>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Create manually or import from TeamLinkt CSV.
+            </p>
           </div>
           {teamsLoading ? (
             <p className="text-sm text-zinc-400">Loading teams…</p>

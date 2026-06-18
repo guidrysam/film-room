@@ -471,10 +471,34 @@ export function normalizeEmail(email: string | undefined): string | undefined {
 }
 
 /** Suggested team name from the first non-empty Team Name cell in a TeamLinkt export. */
-export function suggestedTeamNameFromRows(rows: ParsedRosterRow[]): string | undefined {
+export function collectTeamNamesFromRows(rows: ParsedRosterRow[]): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
   for (const row of rows) {
     const name = trimCell(row.teamName);
-    if (name) return name;
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
   }
-  return undefined;
+  return names;
+}
+
+export type TeamNameDetection = {
+  suggested?: string;
+  names: string[];
+  hasMultiple: boolean;
+};
+
+/** Detect team names from roster rows; warns when multiple distinct names appear. */
+export function detectTeamNamesFromRows(rows: ParsedRosterRow[]): TeamNameDetection {
+  const names = collectTeamNamesFromRows(rows);
+  return {
+    ...(names[0] ? { suggested: names[0] } : {}),
+    names,
+    hasMultiple: names.length > 1,
+  };
+}
+
+export function suggestedTeamNameFromRows(rows: ParsedRosterRow[]): string | undefined {
+  return detectTeamNamesFromRows(rows).suggested;
 }
