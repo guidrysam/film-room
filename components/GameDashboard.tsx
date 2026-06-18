@@ -8,6 +8,7 @@ import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-load";
 import { gameReviewUrl } from "@/lib/player-profile";
 import { canContributeGameSources } from "@/lib/games";
+import { canCoachTeam } from "@/lib/teams";
 
 export type GameDashboardProps = {
   gameId: string;
@@ -148,10 +149,15 @@ export default function GameDashboard({
             </Link>
             {team ? (
               <Link href={`/team/${team.id}`} className={ghostBtn}>
-                Team roster
+                Team
               </Link>
             ) : null}
-            <Link href="/game-cap" className={ghostBtn}>
+            {team && canCoachTeam(team, currentUid) ? (
+              <Link href={`/team/${team.id}/setup`} className={ghostBtn}>
+                Team Setup
+              </Link>
+            ) : null}
+            <Link href={team ? `/game-cap?teamId=${team.id}` : "/game-cap"} className={ghostBtn}>
               Game Cap
             </Link>
           </div>

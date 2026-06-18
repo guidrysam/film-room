@@ -6,9 +6,6 @@ import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
-import ParentInviteTargets from "@/components/ParentInviteTargets";
-import TeamInvites from "@/components/TeamInvites";
-import TeamRosterImport from "@/components/TeamRosterImport";
 import TeamSetup from "@/components/TeamSetup";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
@@ -49,6 +46,7 @@ function GameCapPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryGameId = searchParams.get("gameId");
+  const queryTeamId = searchParams.get("teamId");
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -111,6 +109,10 @@ function GameCapPageInner() {
   useEffect(() => {
     if (queryGameId) setSelectedGameId(queryGameId);
   }, [queryGameId]);
+
+  useEffect(() => {
+    if (queryTeamId) setSelectedTeamId(queryTeamId);
+  }, [queryTeamId]);
 
   const handleCreate = useCallback(async () => {
     if (!user || !selectedTeamId || !selectedTeam) return;
@@ -235,26 +237,28 @@ function GameCapPageInner() {
         ) : null}
 
         <section className={`${panelClass} mb-5`}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-white">Select team</h2>
+            {selectedTeam && user && canCoachTeam(selectedTeam, user.uid) ? (
+              <Link
+                href={`/team/${selectedTeam.id}/setup`}
+                className={ghostBtn}
+              >
+                Team Setup
+              </Link>
+            ) : null}
+          </div>
           <TeamSetup
             currentUid={user.uid}
             selectedTeamId={selectedTeamId}
             onSelectTeam={setSelectedTeamId}
             onTeamsChanged={() => void refreshTeam()}
           />
-          {selectedTeam ? (
-            <div className="mt-4 space-y-4 border-t border-white/[0.06] pt-4">
-              <TeamRosterImport team={selectedTeam} currentUid={user.uid} />
-              <ParentInviteTargets team={selectedTeam} currentUid={user.uid} />
-              <TeamInvites team={selectedTeam} currentUid={user.uid} />
-            </div>
-          ) : null}
         </section>
 
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-white">
-              2 · Choose a Game
-            </h2>
+            <h2 className="text-sm font-semibold text-white">Select game</h2>
             {selectedTeamId ? (
               <div className="flex gap-2">
                 <button
@@ -388,9 +392,7 @@ function GameCapPageInner() {
         </section>
 
         <section className={panelClass}>
-          <h2 className="mb-3 text-sm font-semibold text-white">
-            3 · Attach a source &amp; open
-          </h2>
+          <h2 className="mb-3 text-sm font-semibold text-white">Attach video</h2>
           {!selectedGame ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
               Choose a game above and tap{" "}

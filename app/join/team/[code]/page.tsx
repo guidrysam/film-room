@@ -105,7 +105,13 @@ export default function JoinTeamPage() {
         email: user.email,
       });
       setJoined(true);
-      setTimeout(() => router.push(`/team/${invite.teamId}`), 900);
+      const dest =
+        invite.role === "parent"
+          ? `/game-cap?teamId=${invite.teamId}`
+          : invite.role === "coach"
+            ? `/team/${invite.teamId}/setup`
+            : `/team/${invite.teamId}`;
+      setTimeout(() => router.push(dest), 900);
     } catch (e) {
       setJoinError(
         e instanceof Error ? e.message : "Could not join this team.",

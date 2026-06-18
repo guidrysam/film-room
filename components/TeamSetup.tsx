@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
+  canCoachTeam,
   createTeam,
   listMyTeams,
   teamRoleFor,
@@ -148,7 +149,7 @@ export default function TeamSetup({
         <p className="text-sm text-zinc-400">Loading teams…</p>
       ) : teams.length === 0 ? (
         <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-          No teams yet. Create one above to organize Game Cap uploads.
+          No teams yet. Create one above to organize team games and video.
         </p>
       ) : (
         <ul className="space-y-1.5">
@@ -200,12 +201,16 @@ export default function TeamSetup({
       ) : null}
 
       {selectedTeam ? (
-        <Link
-          href={`/team/${selectedTeam.id}`}
-          className={`${ghostBtn} mt-3 inline-block`}
-        >
-          View team roster →
-        </Link>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link href={`/team/${selectedTeam.id}`} className={ghostBtn}>
+            Team roster →
+          </Link>
+          {canCoachTeam(selectedTeam, currentUid) ? (
+            <Link href={`/team/${selectedTeam.id}/setup`} className={ghostBtn}>
+              Team Setup →
+            </Link>
+          ) : null}
+        </div>
       ) : null}
 
       {error ? <p className="mt-2 text-xs text-rose-300">{error}</p> : null}
