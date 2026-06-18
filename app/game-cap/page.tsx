@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
@@ -43,8 +44,11 @@ type SourceMode = "paste" | "upload" | "record";
 const modeTab =
   "rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
-export default function GameCapPage() {
+function GameCapPageInner() {
   const { user, loading } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryGameId = searchParams.get("gameId");
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -102,8 +106,11 @@ export default function GameCapPage() {
 
   useEffect(() => {
     void refreshGames();
-    setSelectedGameId(null);
   }, [refreshGames]);
+
+  useEffect(() => {
+    if (queryGameId) setSelectedGameId(queryGameId);
+  }, [queryGameId]);
 
   const handleCreate = useCallback(async () => {
     if (!user || !selectedTeamId || !selectedTeam) return;
@@ -134,7 +141,7 @@ export default function GameCapPage() {
       setScheduledStartAt("");
       setShowCreate(false);
       await refreshGames();
-      setSelectedGameId(id);
+      router.push(`/game/${id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create game.");
     } finally {
@@ -151,6 +158,7 @@ export default function GameCapPage() {
     season,
     scheduledStartAt,
     refreshGames,
+    router,
   ]);
 
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
@@ -343,33 +351,29 @@ export default function GameCapPage() {
             </p>
           ) : (
             <ul className="space-y-1.5">
-              {games.map((g) => {
-                const active = g.id === selectedGameId;
-                return (
-                  <li key={g.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedGameId(active ? null : g.id)}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition ${
-                        active
-                          ? "border-blue-500/50 bg-blue-950/30"
-                          : "border-white/[0.06] bg-zinc-950/50 hover:bg-white/[0.04]"
-                      }`}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-white">
-                          {g.title}
-                        </span>
-                        <span className="block text-xs text-zinc-500">
-                          {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
-                            .filter(Boolean)
-                            .join(" · ") || "Game"}
-                        </span>
+              {games.map((g) => (
+                <li key={g.id}>
+                  <Link
+                    href={`/game/${g.id}`}
+                    className={`flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition ${
+                      g.id === selectedGameId
+                        ? "border-blue-500/50 bg-blue-950/30"
+                        : "border-white/[0.06] bg-zinc-950/50 hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-white">
+                        {g.title}
                       </span>
-                    </button>
-                  </li>
-                );
-              })}
+                      <span className="block text-xs text-zinc-500">
+                        {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
+                          .filter(Boolean)
+                          .join(" · ") || "Game"}
+                      </span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
             </ul>
           )}
 
@@ -384,10 +388,21 @@ export default function GameCapPage() {
           </h2>
           {!selectedGame ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              Select a game above to attach a YouTube source.
+              Open a game from the list above, or add{" "}
+              <span className="font-mono text-zinc-500">?gameId=</span> to attach
+              sources to a specific game.
             </p>
           ) : (
             <div>
+              <p className="mb-3 text-xs text-zinc-400">
+                Attaching to{" "}
+                <Link
+                  href={`/game/${selectedGame.id}`}
+                  className="font-medium text-blue-300 hover:underline"
+                >
+                  {selectedGame.title}
+                </Link>
+              </p>
               {!canAttachSources ? (
                 <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-xs leading-snug text-amber-200">
                   You can view this game but cannot attach sources with your
@@ -459,5 +474,19 @@ export default function GameCapPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function GameCapPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center text-zinc-300">
+          <p className="text-sm">Loading…</p>
+        </div>
+      }
+    >
+      <GameCapPageInner />
+    </Suspense>
   );
 }

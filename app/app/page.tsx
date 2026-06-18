@@ -20,7 +20,6 @@ import {
 } from "@/lib/saved-sessions";
 import { listMyGames, type Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
-import GameDetails from "@/components/GameDetails";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 const inputClass =
@@ -137,7 +136,6 @@ export default function DashboardPage() {
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [creatingGameId, setCreatingGameId] = useState<string | null>(null);
-  const [openGameId, setOpenGameId] = useState<string | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
 
@@ -605,9 +603,7 @@ export default function DashboardPage() {
             </p>
           ) : (
             <ul className="space-y-2">
-              {games.map((g) => {
-                const open = openGameId === g.id;
-                return (
+              {games.map((g) => (
                   <li
                     key={g.id}
                     className="rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2"
@@ -623,28 +619,19 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setOpenGameId(open ? null : g.id)}
-                          className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08]"
+                        <Link
+                          href={`/game/${g.id}`}
+                          className="rounded-md border border-blue-500/40 bg-blue-950/40 px-2.5 py-1 text-xs font-medium text-blue-100 transition hover:bg-blue-900/55"
                         >
-                          {open ? "Close" : "Manage"}
-                        </button>
+                          Open
+                        </Link>
                         <span className="font-mono text-[10px] text-zinc-500">
                           {g.id}
                         </span>
                       </div>
                     </div>
-                    {open && user ? (
-                      <GameDetails
-                        game={g}
-                        currentUid={user.uid}
-                        onChanged={() => void refreshGames()}
-                      />
-                    ) : null}
                   </li>
-                );
-              })}
+              ))}
             </ul>
           )}
         </div>
