@@ -88,6 +88,29 @@ export default function AboutPage() {
 
         <div className="space-y-6">
           <section className={cardClass}>
+            <h2 className={sectionTitleClass}>How Film Room works</h2>
+            <ul className={`list-disc space-y-2 pl-5 ${bodyClass} ${mutedClass}`}>
+              <li>
+                <span className="text-zinc-200">Free Film Room is single-use.</span>{" "}
+                Paste a YouTube link on the home page to create a session and share
+                the room link.
+              </li>
+              <li>
+                Everyone watches the same YouTube video in sync while the host
+                controls playback.
+              </li>
+              <li>
+                Some YouTube videos may not play in Film Room if embedding is
+                disabled by the uploader.
+              </li>
+              <li>
+                Team features — rosters, saved sessions, coach marks, stats, and
+                highlights — require sign-in to Film Room Sports.
+              </li>
+            </ul>
+          </section>
+
+          <section className={cardClass}>
             <h2 className={sectionTitleClass}>Example Workflow</h2>
             <div className="space-y-5">
               {workflowSteps.map((step) => (

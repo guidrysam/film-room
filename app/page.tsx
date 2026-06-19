@@ -18,27 +18,11 @@ const inputClass =
 const primaryBtn =
   "inline-flex w-full max-w-xs items-center justify-center rounded-xl bg-blue-600 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] disabled:cursor-not-allowed disabled:opacity-60";
 
-const ghostLink =
-  "text-sm text-white transition hover:text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
+const secondaryBtn =
+  "inline-flex w-full max-w-xs items-center justify-center rounded-xl border border-white/12 bg-white/[0.05] px-6 py-3.5 text-sm font-semibold text-white transition hover:border-white/20 hover:bg-white/[0.10] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]";
 
-const featureCards = [
-  {
-    title: "Built on YouTube. Built for teams.",
-    body: "YouTube handles storage, streaming, and playback. Film Room adds shared viewing, sync, and review.",
-  },
-  {
-    title: "Watch YouTube together in sync.",
-    body: "Paste a link, share the room, and everyone stays on the same moment — live or on demand.",
-  },
-  {
-    title: "Turn game video into coach marks, stats, and highlights.",
-    body: "Mark plays, build timelines, and organize film around your roster and season.",
-  },
-  {
-    title: "Upload from any phone to YouTube, then organize in Film Room.",
-    body: "Record on the sideline, publish to your channel, and pull it into team review when you're ready.",
-  },
-];
+const helpLink =
+  "text-xs text-white/60 transition hover:text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
 
 export default function Home() {
   const [url, setUrl] = useState("");
@@ -90,24 +74,20 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-center text-white">
-      <div className="flex w-full max-w-2xl flex-col items-center space-y-10">
-        <div className="space-y-4">
+      <div className="flex w-full max-w-md flex-col items-center space-y-10">
+        <div className="space-y-3">
           <h1 className="text-4xl font-semibold tracking-tight text-white drop-shadow-[0_0_20px_rgba(255,255,255,0.08)] sm:text-5xl">
             Film Room
           </h1>
-          <p className="text-lg font-medium leading-snug text-white sm:text-xl">
-            Turn YouTube videos into a shared film room.
-          </p>
-          <p className="mx-auto max-w-lg text-sm leading-relaxed text-white/80 sm:text-base">
-            Paste a YouTube link to watch together, stay in sync, and review the
-            same moments.
+          <p className="text-base leading-relaxed text-white/85 sm:text-lg">
+            Turn a YouTube video into a shared film room.
           </p>
         </div>
 
-        <div className="flex w-full max-w-md flex-col items-center space-y-4 rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-8">
+        <div className="flex w-full flex-col items-center space-y-4 rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-8">
           <input
             type="text"
-            placeholder="Paste a YouTube link"
+            placeholder="Paste YouTube URL"
             value={url}
             onChange={(e) => {
               setUrl(e.target.value);
@@ -137,9 +117,6 @@ export default function Home() {
               ) : null}
             </div>
           ) : null}
-          <p className="text-center text-xs leading-relaxed text-white/80">
-            Works best with YouTube videos and live streams.
-          </p>
           {embedWarning ? (
             <div className="flex w-full max-w-xs flex-col gap-2">
               <button
@@ -170,31 +147,11 @@ export default function Home() {
               {starting ? "Checking…" : "Start Room"}
             </button>
           )}
-        </div>
-
-        <div className="grid w-full gap-3 sm:grid-cols-2">
-          {featureCards.map((card) => (
-            <div
-              key={card.title}
-              className="rounded-xl border border-white/[0.06] bg-zinc-950/35 p-4 text-left ring-1 ring-white/[0.03]"
-            >
-              <h2 className="text-sm font-semibold text-white">{card.title}</h2>
-              <p className="mt-2 text-xs leading-relaxed text-white/75">
-                {card.body}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-col items-center space-y-4">
-          <Link href="/about" className={ghostLink}>
-            What is Film Room?
+          <Link href="/app" className={secondaryBtn}>
+            Log In
           </Link>
-          <Link
-            href="/app"
-            className={`${ghostLink} text-xs text-white hover:text-white/85`}
-          >
-            Sign in to Film Room Sports
+          <Link href="/about" className={helpLink}>
+            How Film Room works
           </Link>
         </div>
       </div>
