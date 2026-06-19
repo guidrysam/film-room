@@ -110,7 +110,7 @@ export function VideoZoomStage({
   return (
     <div className={`relative isolate overflow-hidden ${className}`}>
       <div
-        className="relative h-full w-full will-change-transform"
+        className="relative h-full w-full"
         style={{
           transform,
           transformOrigin: "center center",
@@ -136,7 +136,10 @@ export function VideoZoomStage({
             type="button"
             className="pointer-events-auto rounded px-1.5 py-0.5 transition hover:bg-white/10 disabled:opacity-35"
             disabled={scale <= MIN_SCALE}
-            onClick={() => zoomBy(-STEP)}
+            onClick={(e) => {
+              e.stopPropagation();
+              zoomBy(-STEP);
+            }}
             aria-label="Zoom out"
             title="Zoom out"
           >
@@ -145,7 +148,10 @@ export function VideoZoomStage({
           <button
             type="button"
             className="pointer-events-auto min-w-[2.75rem] rounded px-1 py-0.5 font-mono tabular-nums transition hover:bg-white/10"
-            onClick={resetZoom}
+            onClick={(e) => {
+              e.stopPropagation();
+              resetZoom();
+            }}
             aria-label="Reset zoom"
             title="Reset zoom"
           >
@@ -155,7 +161,10 @@ export function VideoZoomStage({
             type="button"
             className="pointer-events-auto rounded px-1.5 py-0.5 transition hover:bg-white/10 disabled:opacity-35"
             disabled={scale >= MAX_SCALE}
-            onClick={() => zoomBy(STEP)}
+            onClick={(e) => {
+              e.stopPropagation();
+              zoomBy(STEP);
+            }}
             aria-label="Zoom in"
             title="Zoom in"
           >

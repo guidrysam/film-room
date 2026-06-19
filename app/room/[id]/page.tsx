@@ -632,10 +632,18 @@ function resolveViewerStackTopAngleId(state: RoomState): string {
 }
 
 /** Stable key for viewer main/PiP mute layout only (ignores playhead / heartbeat fields). */
-function viewerStackSelectionMuteKey(state: RoomState | null): string {
+function viewerStackSelectionMuteKey(
+  state: RoomState | null,
+  localMainOverride?: string | null,
+): string {
   if (!state || state.angles.length < 2) return "";
+  const top =
+    localMainOverride &&
+    state.angles.some((a) => a.id === localMainOverride)
+      ? localMainOverride
+      : resolveViewerStackTopAngleId(state);
   return [
-    resolveViewerStackTopAngleId(state),
+    top,
     state.currentAngleId,
     state.playerViewAngleId ?? "",
     state.selectedDisplayAngleId ?? "",
@@ -1863,6 +1871,14 @@ function RoomContent() {
   /** Viewer-only: set true after explicit tap so autopolicy allows playVideo (see overlay). */
   const viewerPlaybackUnlockedRef = useRef(false);
   const [viewerPlaybackUnlocked, setViewerPlaybackUnlocked] = useState(false);
+  /** Viewer-only: local main/PiP swap (does not change room Player View). */
+  const [viewerLocalMainAngleId, setViewerLocalMainAngleId] = useState<
+    string | null
+  >(null);
+  const viewerLocalMainAngleIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    viewerLocalMainAngleIdRef.current = viewerLocalMainAngleId;
+  }, [viewerLocalMainAngleId]);
   /** Save session dialog (name + optional folder). */
   const [saveSessionOpen, setSaveSessionOpen] = useState(false);
   const [saveSessionName, setSaveSessionName] = useState("");
@@ -2134,6 +2150,14 @@ function RoomContent() {
   const hostLastPlayGestureAtRef = useRef(0);
   /** Last logged YouTube `event.data` for host (avoids duplicate BUFFERING spam). */
   const hostLastYtStateCodeRef = useRef<number | null>(null);
+  /** Debounced recovery when a secondary angle stalls while host transport is playing. */
+  const hostSecondaryRecoveryTimerRef = useRef<Record<string, number>>({});
+  /** Distinguish tap vs horizontal swipe on sync angle carousel. */
+  const syncStackGestureRef = useRef({
+    startX: 0,
+    startY: 0,
+    swiped: false,
+  });
 
   const isHostRef = useRef(isHost);
 
@@ -2178,13 +2202,51 @@ function RoomContent() {
     if (!rs || rs.angles.length < 2) return;
     if (!rs.isPlaying) return;
     if (!viewerPlaybackUnlockedRef.current) return;
-    const topId = resolveViewerStackTopAngleId(rs);
+    const topOverride = viewerLocalMainAngleIdRef.current;
+    const topId =
+      topOverride && rs.angles.some((a) => a.id === topOverride)
+        ? topOverride
+        : resolveViewerStackTopAngleId(rs);
+    const activeId = rs.currentAngleId;
+    const primary = syncPlayerRefs.current[activeId];
+    const fb = rs.currentTime ?? 0;
+    let anchor = fb;
+    if (primary) {
+      try {
+        anchor = await readYoutubeCurrentTime(primary, fb);
+      } catch {
+        anchor = fb;
+      }
+    }
+    anchor = Math.max(anchor, rs.syncAnchorTime ?? 0);
+
     for (const a of rs.angles) {
       const p = syncPlayerRefs.current[a.id];
       if (!p) continue;
-      const st = await readYoutubePlayerState(p);
+      const expected =
+        a.id === activeId
+          ? anchor
+          : Math.max(0, playbackTimeForAngleFromActiveAnchor(anchor, a));
+      let st: number | undefined;
+      let ct = expected;
+      try {
+        st = await readYoutubePlayerState(p);
+        ct = await readYoutubeCurrentTime(p, expected);
+      } catch {
+        continue;
+      }
       syncLog("viewer ensure playing", a.id, st);
-      if (st !== YT_PLAYING) {
+      const needsPlay = st !== YT_PLAYING && st !== YT_BUFFERING;
+      const needsSeek =
+        expected >= 0 && Math.abs(ct - expected) >= 2.5;
+      if (needsSeek && expected >= 0) {
+        try {
+          await p.seekTo?.(expected, true);
+        } catch {
+          /* YouTube API */
+        }
+      }
+      if (needsPlay || needsSeek) {
         if (rs.sourceType === "live") {
           forceYouTubePlay(p, "ensureSelectedViewerStackPlayerPlaying", a.id, {
             delayedUnmute: a.id === topId,
@@ -2201,6 +2263,107 @@ function RoomContent() {
           }
         }
       }
+      try {
+        if (a.id === topId) p.unMute?.();
+        else p.mute?.();
+      } catch {
+        /* YouTube API */
+      }
+    }
+  }, []);
+
+  /**
+   * Host sync watchdog: mobile Safari often pauses muted PiP/secondary iframes.
+   * Re-seek and nudge play when drift or unexpected pause is detected.
+   */
+  const ensureHostSyncAnglesPlaying = useCallback(async () => {
+    if (!isHostRef.current) return;
+    if (!isSyncLayoutMode(roomViewModeRef.current)) return;
+    const s = roomStateRef.current;
+    if (!s?.isPlaying || s.angles.length < 2) return;
+    if (isManualSyncModeRef.current) return;
+
+    const activeAngle = pickAngle(s.angles, s.currentAngleId);
+    const primary = syncPlayerRefs.current[activeAngle.id];
+    if (!primary) return;
+
+    const fb = s.currentTime ?? 0;
+    let anchor: number;
+    try {
+      anchor = await readYoutubeCurrentTime(primary, fb);
+    } catch {
+      return;
+    }
+    anchor = Math.max(anchor, s.syncAnchorTime ?? 0);
+
+    for (const a of s.angles) {
+      const p = syncPlayerRefs.current[a.id];
+      if (!p) continue;
+
+      const expected =
+        a.id === activeAngle.id
+          ? anchor
+          : Math.max(0, playbackTimeForAngleFromActiveAnchor(anchor, a));
+      if (expected < 0) continue;
+
+      let st: number | undefined;
+      let ct = expected;
+      try {
+        st = await readYoutubePlayerState(p);
+        ct = await readYoutubeCurrentTime(p, expected);
+      } catch {
+        continue;
+      }
+
+      const needsPlay =
+        st === YT_PAUSED || st === YT_CUED || st === YT_UNSTARTED;
+      const needsSeek = Math.abs(ct - expected) >= 2.5;
+      if (!needsPlay && !needsSeek) continue;
+
+      syncLog("host sync watchdog recover", {
+        angleId: a.id,
+        state: st === undefined ? "?" : youtubeStateLabel(st),
+        ct,
+        expected,
+        needsPlay,
+        needsSeek,
+      });
+
+      if (needsSeek) {
+        try {
+          p.seekTo?.(expected, true);
+        } catch {
+          /* YouTube API */
+        }
+      }
+
+      if (needsPlay || needsSeek) {
+        if (s.sourceType === "live") {
+          forceYouTubePlay(p, "host-sync-watchdog", a.id, {
+            delayedUnmute: a.id === activeAngle.id,
+          });
+        } else {
+          try {
+            p.playVideo?.();
+          } catch {
+            /* YouTube API */
+          }
+        }
+      }
+
+      if (a.id !== activeAngle.id) {
+        try {
+          p.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
+    }
+
+    try {
+      primary.unMute?.();
+    } catch {
+      /* YouTube API */
     }
   }, []);
 
@@ -2211,6 +2374,10 @@ function RoomContent() {
   useEffect(() => {
     lastViewerSyncRateRef.current = Number.NaN;
     lastHostSecondaryAlignSeqRef.current = null;
+    for (const t of Object.values(hostSecondaryRecoveryTimerRef.current)) {
+      window.clearTimeout(t);
+    }
+    hostSecondaryRecoveryTimerRef.current = {};
   }, [roomId]);
 
   useEffect(() => {
@@ -2233,6 +2400,7 @@ function RoomContent() {
     viewerPlaybackUnlockedRef.current = false;
     setClipUrlDraft("");
     setViewerPlaybackUnlocked(false);
+    setViewerLocalMainAngleId(null);
     if (chapterNavFlashTimerRef.current !== null) {
       window.clearTimeout(chapterNavFlashTimerRef.current);
       chapterNavFlashTimerRef.current = null;
@@ -2301,14 +2469,36 @@ function RoomContent() {
   useEffect(() => {
     const onVisibleOrFocus = () => {
       if (document.visibilityState !== "visible") return;
-      if (isHostRef.current) return;
       const s = roomStateRef.current;
+      if (!s) return;
+
+      if (isHostRef.current) {
+        if (
+          isSyncLayoutMode(roomViewModeRef.current) &&
+          s.angles.length > 1 &&
+          s.isPlaying
+        ) {
+          syncLog("host visibility/focus → reconcile sync angles");
+          void ensureHostSyncAnglesPlaying();
+        }
+        return;
+      }
+
       const p = getPlayer();
-      if (!s || !p) return;
+      if (!p) return;
       syncLog("viewer visibility/focus → reconcile");
       const cmd = s.playbackCommand;
       void (async () => {
         try {
+          if (
+            isSyncLayoutMode(roomViewModeRef.current) &&
+            s.angles.length > 1 &&
+            viewerPlaybackUnlockedRef.current
+          ) {
+            await ensureSelectedViewerStackPlayerPlaying();
+            return;
+          }
+
           if (
             cmd &&
             (cmd.type === "play" ||
@@ -2347,7 +2537,40 @@ function RoomContent() {
       document.removeEventListener("visibilitychange", onVisibleOrFocus);
       window.removeEventListener("focus", onVisibleOrFocus);
     };
-  }, [roomId]);
+  }, [roomId, ensureHostSyncAnglesPlaying, ensureSelectedViewerStackPlayerPlaying]);
+
+  /** While playing in sync multi-angle, periodically recover stalled PiP/secondary players (common on mobile). */
+  useEffect(() => {
+    const s = roomStateRef.current;
+    if (!s?.isPlaying || !isSyncLayoutMode(roomViewMode)) return;
+    if (s.angles.length < 2) return;
+    if (isManualSyncMode) return;
+
+    const tick = () => {
+      if (!roomStateRef.current?.isPlaying) return;
+      if (isHostRef.current) {
+        void ensureHostSyncAnglesPlaying();
+      } else if (viewerPlaybackUnlockedRef.current) {
+        void ensureSelectedViewerStackPlayerPlaying();
+      }
+    };
+
+    tick();
+    const intervalMs =
+      typeof window !== "undefined" &&
+      window.matchMedia("(pointer: coarse)").matches
+        ? 2000
+        : 3500;
+    const id = window.setInterval(tick, intervalMs);
+    return () => window.clearInterval(id);
+  }, [
+    roomViewMode,
+    isManualSyncMode,
+    roomState?.isPlaying,
+    roomState?.angles?.length,
+    ensureHostSyncAnglesPlaying,
+    ensureSelectedViewerStackPlayerPlaying,
+  ]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -2762,9 +2985,13 @@ function RoomContent() {
     }
   }, [stackedAngleIdsKey, roomState?.angles]);
 
+  useEffect(() => {
+    setViewerLocalMainAngleId(null);
+  }, [roomState?.playerViewAngleId]);
+
   /* Intentionally not depending on full roomState — avoids recompute on playhead/heartbeat. */
   const viewerStackMuteLayoutKey = useMemo(
-    () => viewerStackSelectionMuteKey(roomState),
+    () => viewerStackSelectionMuteKey(roomState, viewerLocalMainAngleId),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection primitives only
     [
       roomState?.playerViewAngleId,
@@ -2772,6 +2999,7 @@ function RoomContent() {
       roomState?.currentAngleId,
       roomState?.angles?.length,
       stackedAngleIdsKey,
+      viewerLocalMainAngleId,
     ],
   );
 
@@ -2784,7 +3012,11 @@ function RoomContent() {
     if (!s || s.angles.length < 2) return;
     if (layoutKey === lastAppliedViewerSelectionKeyRef.current) return;
     lastAppliedViewerSelectionKeyRef.current = layoutKey;
-    const top = resolveViewerStackTopAngleId(s);
+    const top =
+      viewerLocalMainAngleId &&
+      s.angles.some((a) => a.id === viewerLocalMainAngleId)
+        ? viewerLocalMainAngleId
+        : resolveViewerStackTopAngleId(s);
     for (const a of s.angles) {
       const p = syncPlayerRefs.current[a.id];
       if (!p) continue;
@@ -2796,7 +3028,13 @@ function RoomContent() {
       }
     }
     void ensureSelectedViewerStackPlayerPlaying();
-  }, [isHost, roomViewMode, viewerStackMuteLayoutKey, ensureSelectedViewerStackPlayerPlaying]);
+  }, [
+    isHost,
+    roomViewMode,
+    viewerStackMuteLayoutKey,
+    viewerLocalMainAngleId,
+    ensureSelectedViewerStackPlayerPlaying,
+  ]);
 
   useEffect(() => {
     if (isHost) return;
@@ -3288,7 +3526,6 @@ function RoomContent() {
     if (!isSyncLayoutMode(roomViewModeRef.current)) return;
     if (isManualSyncModeRef.current) return;
     if (!isHostRef.current) return;
-    if (coachViewModeRef.current !== "multi") return;
     const s0 = roomStateRef.current;
     if (!s0?.angles?.length || s0.angles.length < 2) return;
 
@@ -3348,6 +3585,7 @@ function RoomContent() {
             state:
               stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
           });
+          window.setTimeout(() => syncSecondaryPlayersOnce(`${reason}-retry`), 500);
           continue;
         }
 
@@ -3528,6 +3766,15 @@ function RoomContent() {
               state:
                 stPre === undefined ? "unknown" : youtubeStateLabel(stPre),
             });
+            window.setTimeout(() => {
+              const sNow = roomStateRef.current;
+              if (!sNow?.isPlaying && opts.isPlaying) return;
+              if (isManualSyncModeRef.current) return;
+              void applyHostMultiViewSecondaryDirect({
+                ...opts,
+                reason: `${opts.reason}-retry`,
+              });
+            }, 500);
             continue;
           }
 
@@ -4307,6 +4554,42 @@ function RoomContent() {
     [writeImmediatePlaybackCommand],
   );
 
+  const handleHostSyncAngleStateChange = useCallback(
+    (angleId: string, event: { data: number; target: YouTubePlayer }) => {
+      const s = roomStateRef.current;
+      if (angleId === s?.currentAngleId) {
+        handleYoutubeStateChange(event);
+        return;
+      }
+      if (!isHostRef.current || !s?.isPlaying) return;
+      if (!isSyncLayoutMode(roomViewModeRef.current) || s.angles.length < 2) {
+        return;
+      }
+      if (isManualSyncModeRef.current) return;
+      if (
+        event.data !== YT_PAUSED &&
+        event.data !== YT_CUED &&
+        event.data !== YT_UNSTARTED
+      ) {
+        return;
+      }
+      syncLog("host secondary stalled", {
+        angleId,
+        state: youtubeStateLabel(event.data),
+      });
+      const prev = hostSecondaryRecoveryTimerRef.current[angleId];
+      if (prev) window.clearTimeout(prev);
+      hostSecondaryRecoveryTimerRef.current[angleId] = window.setTimeout(
+        () => {
+          delete hostSecondaryRecoveryTimerRef.current[angleId];
+          void ensureHostSyncAnglesPlaying();
+        },
+        350,
+      );
+    },
+    [handleYoutubeStateChange, ensureHostSyncAnglesPlaying],
+  );
+
   /** Seek on current clip, or switch clip + seek (chapter jump) using the same seek / playbackCommand path. */
   const jumpToChapter = useCallback(
     (chapter: ChapterEntry) => {
@@ -4881,6 +5164,87 @@ function RoomContent() {
       });
     },
     [isHost, roomId],
+  );
+
+  /** Single-view stack: one full-screen angle; others hidden but still mounted for sync. */
+  const applySyncStackMainAngle = useCallback(
+    (angleId: string) => {
+      const cur = roomStateRef.current;
+      if (!cur || !cur.angles.some((a) => a.id === angleId)) return;
+
+      if (isHostRef.current) {
+        if (coachViewModeRef.current !== "single") return;
+        handleSetPlayerViewAngleId(angleId);
+        return;
+      }
+
+      if (!viewerPlaybackUnlockedRef.current) return;
+      setViewerLocalMainAngleId(angleId);
+      for (const a of cur.angles) {
+        const p = syncPlayerRefs.current[a.id];
+        if (!p) continue;
+        try {
+          if (a.id === angleId) p.unMute?.();
+          else p.mute?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
+      void ensureSelectedViewerStackPlayerPlaying();
+    },
+    [handleSetPlayerViewAngleId, ensureSelectedViewerStackPlayerPlaying],
+  );
+
+  const handleSyncStackAngleCycle = useCallback(
+    (delta: 1 | -1, currentMainId: string) => {
+      const cur = roomStateRef.current;
+      if (!cur || cur.angles.length < 2) return;
+      if (isManualSyncModeRef.current) return;
+      if (telDrawOn) return;
+      const idx = Math.max(0, cur.angles.findIndex((a) => a.id === currentMainId));
+      const nextIdx = (idx + delta + cur.angles.length) % cur.angles.length;
+      applySyncStackMainAngle(cur.angles[nextIdx]!.id);
+    },
+    [applySyncStackMainAngle, telDrawOn],
+  );
+
+  const handleSyncStackTouchStart = useCallback(
+    (e: React.TouchEvent<HTMLDivElement>) => {
+      const t = e.touches[0];
+      if (!t) return;
+      syncStackGestureRef.current = {
+        startX: t.clientX,
+        startY: t.clientY,
+        swiped: false,
+      };
+    },
+    [],
+  );
+
+  const handleSyncStackTouchEnd = useCallback(
+    (e: React.TouchEvent<HTMLDivElement>, currentMainId: string) => {
+      if (telDrawOn) return;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - syncStackGestureRef.current.startX;
+      const dy = t.clientY - syncStackGestureRef.current.startY;
+      if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+        syncStackGestureRef.current.swiped = true;
+        handleSyncStackAngleCycle(dx < 0 ? 1 : -1, currentMainId);
+      }
+    },
+    [handleSyncStackAngleCycle, telDrawOn],
+  );
+
+  const handleSyncStackTapCycle = useCallback(
+    (currentMainId: string) => {
+      if (syncStackGestureRef.current.swiped) {
+        syncStackGestureRef.current.swiped = false;
+        return;
+      }
+      handleSyncStackAngleCycle(1, currentMainId);
+    },
+    [handleSyncStackAngleCycle],
   );
 
   const handleSelectAngle = useCallback(
@@ -6972,9 +7336,13 @@ function RoomContent() {
 
     const activeAngle = pickAngle(s.angles, s.currentAngleId);
     const viewerStackTopAngleId = resolveViewerStackTopAngleId(s);
-    const viewerStackTopResolvedId = s.angles.some((x) => x.id === viewerStackTopAngleId)
-      ? viewerStackTopAngleId
-      : s.angles[0]!.id;
+    const viewerStackTopResolvedId =
+      viewerLocalMainAngleId &&
+      s.angles.some((x) => x.id === viewerLocalMainAngleId)
+        ? viewerLocalMainAngleId
+        : s.angles.some((x) => x.id === viewerStackTopAngleId)
+          ? viewerStackTopAngleId
+          : s.angles[0]!.id;
     /** Same as Player View stack: valid playerViewAngleId ?? currentAngleId ?? first angle id. */
     const viewerPlayerViewDrawAngleId = viewerStackTopResolvedId;
     const viewerTopAngleForLabel =
@@ -7257,24 +7625,66 @@ function RoomContent() {
                 s.angles.findIndex((a) => a.id === featuredId),
               );
               const featured = s.angles[featuredIdx] ?? s.angles[0]!;
-              const others = s.angles.filter((a) => a.id !== featured.id);
+              const syncCarouselChrome = coachViewMode === "single" && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-2 z-[50] flex flex-col items-center gap-1.5 px-3">
+                  <div className="flex items-center gap-1">
+                    {s.angles.map((a) => (
+                      <span
+                        key={a.id}
+                        className={`rounded-full transition-all ${
+                          a.id === featured.id
+                            ? "h-1.5 w-5 bg-white"
+                            : "h-1.5 w-1.5 bg-white/35"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <div className="rounded-md bg-black/70 px-2.5 py-1 text-[10px] font-medium text-zinc-100 shadow-md">
+                    {featured.name}
+                    <span className="text-zinc-400">
+                      {" "}
+                      · {featuredIdx + 1}/{s.angles.length}
+                    </span>
+                    <span className="max-md:inline md:hidden text-zinc-400">
+                      {" "}
+                      · swipe or tap
+                    </span>
+                  </div>
+                </div>
+              );
               return (
                 <div
                   className={
                     coachViewMode === "multi"
                       ? "grid w-full grid-cols-1 gap-4 md:grid-cols-2"
-                      : "relative isolate aspect-video w-full overflow-hidden rounded-xl bg-black"
+                      : "relative isolate aspect-video w-full cursor-pointer overflow-hidden rounded-xl bg-black"
                   }
+                  {...(coachViewMode === "single"
+                    ? {
+                        role: "button" as const,
+                        tabIndex: 0,
+                        title: "Tap for next angle · swipe left/right",
+                        onTouchStart: handleSyncStackTouchStart,
+                        onTouchEnd: (e: React.TouchEvent<HTMLDivElement>) =>
+                          handleSyncStackTouchEnd(e, featured.id),
+                        onClick: () => handleSyncStackTapCycle(featured.id),
+                        onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleSyncStackAngleCycle(1, featured.id);
+                          } else if (e.key === "ArrowLeft") {
+                            e.preventDefault();
+                            handleSyncStackAngleCycle(-1, featured.id);
+                          } else if (e.key === "ArrowRight") {
+                            e.preventDefault();
+                            handleSyncStackAngleCycle(1, featured.id);
+                          }
+                        },
+                      }
+                    : {})}
                 >
                   {s.angles.map((angle) => {
                     const isFeatured = angle.id === featured.id;
-                    const pipIndex = others.findIndex((a) => a.id === angle.id);
-                    const pipStyle =
-                      pipIndex >= 0
-                        ? {
-                            transform: `translateY(-${pipIndex * 150}px)`,
-                          }
-                        : undefined;
                     const outerClass =
                       coachViewMode === "multi"
                         ? `overflow-hidden rounded-xl bg-zinc-950/35 shadow-xl shadow-black/40 backdrop-blur-sm ${
@@ -7285,29 +7695,12 @@ function RoomContent() {
                           }`
                         : isFeatured
                           ? "absolute inset-0 z-10"
-                          : "absolute bottom-4 right-4 z-20 h-36 w-64 cursor-pointer overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50";
+                          : "pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-0";
                     return (
                       <div
                         key={angle.id}
                         className={outerClass}
-                        style={coachViewMode === "single" && !isFeatured ? pipStyle : undefined}
-                        role={
-                          coachViewMode === "single" && !isFeatured ? "button" : undefined
-                        }
-                        tabIndex={
-                          coachViewMode === "single" && !isFeatured ? 0 : undefined
-                        }
-                        onClick={() => {
-                          if (coachViewMode !== "single" || isFeatured) return;
-                          handleSetPlayerViewAngleId(angle.id);
-                        }}
-                        onKeyDown={(e) => {
-                          if (coachViewMode !== "single" || isFeatured) return;
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            handleSetPlayerViewAngleId(angle.id);
-                          }
-                        }}
+                        aria-hidden={coachViewMode === "single" && !isFeatured}
                       >
                         {coachViewMode === "multi" ? (
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
@@ -7365,7 +7758,7 @@ function RoomContent() {
                                 className={`pointer-events-auto absolute right-2 top-2 z-[45] ${perAngleLiveBtnClass}`}
                                 title="Seek this angle to near live edge (local only)"
                                 onClick={(e) => {
-                                  if (!isFeatured) e.stopPropagation();
+                                  e.stopPropagation();
                                   void handleSyncAngleTileLive(angle.id);
                                 }}
                               >
@@ -7376,6 +7769,9 @@ function RoomContent() {
                         )}
                         <VideoZoomStage
                           drawLocked={drawGateOn}
+                          showControls={
+                            coachViewMode === "multi" || isFeatured
+                          }
                           className={
                             coachViewMode === "multi"
                               ? "relative aspect-video w-full bg-black"
@@ -7397,10 +7793,8 @@ function RoomContent() {
                                   "host-sync-card-onReady",
                                 );
                               }}
-                              onStateChange={
-                                angle.id === s.currentAngleId
-                                  ? handleYoutubeStateChange
-                                  : () => {}
+                              onStateChange={(e) =>
+                                handleHostSyncAngleStateChange(angle.id, e)
                               }
                               className="absolute left-0 top-0 h-full w-full"
                               iframeClassName="absolute left-0 top-0 h-full w-full"
@@ -7460,6 +7854,7 @@ function RoomContent() {
                       </div>
                     );
                   })}
+                  {syncCarouselChrome}
                 </div>
               );
             })()
@@ -7534,21 +7929,44 @@ function RoomContent() {
                   </div>
                 ) : null}
                 {!isHost && multi ? (
-                  <div className="relative isolate h-full w-full">
-                    {s.angles.map((a, i) => {
+                  <div
+                    className="relative isolate h-full w-full cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    title="Tap for next angle · swipe left/right"
+                    onTouchStart={handleSyncStackTouchStart}
+                    onTouchEnd={(e) =>
+                      handleSyncStackTouchEnd(e, viewerStackTopResolvedId)
+                    }
+                    onClick={() => {
+                      if (!viewerPlaybackUnlocked) return;
+                      handleSyncStackTapCycle(viewerStackTopResolvedId);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!viewerPlaybackUnlocked) return;
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSyncStackAngleCycle(1, viewerStackTopResolvedId);
+                      } else if (e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        handleSyncStackAngleCycle(-1, viewerStackTopResolvedId);
+                      } else if (e.key === "ArrowRight") {
+                        e.preventDefault();
+                        handleSyncStackAngleCycle(1, viewerStackTopResolvedId);
+                      }
+                    }}
+                  >
+                    {s.angles.map((a) => {
                       const isMain = a.id === viewerStackTopResolvedId;
-                      const pipIndex = isMain ? -1 : i;
                       return (
                         <div
                           key={a.id}
                           className={
                             isMain
                               ? "absolute inset-0 z-10"
-                              : "absolute bottom-4 right-4 z-20 h-36 w-64 overflow-hidden rounded-lg border border-white/25 bg-black shadow-2xl ring-1 ring-black/50"
+                              : "pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-0"
                           }
-                          style={
-                            isMain ? undefined : { transform: `translateY(-${pipIndex * 150}px)` }
-                          }
+                          aria-hidden={!isMain}
                         >
                           <VideoZoomStage
                             drawLocked={drawGateOn}
@@ -7621,8 +8039,37 @@ function RoomContent() {
                         </div>
                       );
                     })}
-                    <div className="pointer-events-none absolute left-2 top-2 z-[41] rounded border border-emerald-500/50 bg-black/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 shadow-md">
-                      Main: {viewerTopAngleForLabel.name} · PiP muted
+                    <div className="pointer-events-none absolute inset-x-0 bottom-2 z-[50] flex flex-col items-center gap-1.5 px-3">
+                      <div className="flex items-center gap-1">
+                        {s.angles.map((a) => (
+                          <span
+                            key={a.id}
+                            className={`rounded-full transition-all ${
+                              a.id === viewerStackTopResolvedId
+                                ? "h-1.5 w-5 bg-white"
+                                : "h-1.5 w-1.5 bg-white/35"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <div className="rounded-md bg-black/70 px-2.5 py-1 text-[10px] font-medium text-zinc-100 shadow-md">
+                        {viewerTopAngleForLabel.name}
+                        <span className="text-zinc-400">
+                          {" "}
+                          ·{" "}
+                          {Math.max(
+                            0,
+                            s.angles.findIndex(
+                              (x) => x.id === viewerStackTopResolvedId,
+                            ),
+                          ) + 1}
+                          /{s.angles.length}
+                        </span>
+                        <span className="max-md:inline md:hidden text-zinc-400">
+                          {" "}
+                          · swipe or tap
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -8779,6 +9226,12 @@ function RoomContent() {
                             "clean-sync-secondary-onReady",
                           );
                         }}
+                        onStateChange={(e) =>
+                          handleHostSyncAngleStateChange(
+                            fsMA?.secondaryAngle.id ?? "",
+                            e,
+                          )
+                        }
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
                         opts={youtubePlayerOpts}
@@ -8909,6 +9362,12 @@ function RoomContent() {
                             "clean-sync-secondary-onReady",
                           );
                         }}
+                        onStateChange={(e) =>
+                          handleHostSyncAngleStateChange(
+                            fsMA?.secondaryAngle.id ?? "",
+                            e,
+                          )
+                        }
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
                         opts={youtubePlayerOpts}
@@ -9501,6 +9960,12 @@ function RoomContent() {
                                 "clean-sync-secondary-onReady",
                               );
                             }}
+                            onStateChange={(e) =>
+                              handleHostSyncAngleStateChange(
+                                hostMultiAngles!.secondaryAngle.id,
+                                e,
+                              )
+                            }
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
                             opts={youtubePlayerOpts}
@@ -9635,6 +10100,12 @@ function RoomContent() {
                                 "clean-sync-secondary-onReady",
                               );
                             }}
+                            onStateChange={(e) =>
+                              handleHostSyncAngleStateChange(
+                                hostMultiAngles!.secondaryAngle.id,
+                                e,
+                              )
+                            }
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
                             opts={youtubePlayerOpts}
