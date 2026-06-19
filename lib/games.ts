@@ -20,6 +20,9 @@ import {
   isPermissionDeniedError,
 } from "@/lib/firestore-errors";
 import {
+  logFirestorePermissionError,
+} from "@/lib/firestore-permission-log";
+import {
   gameAccessDenormFromGame,
   gameAccessDenormFromUid,
   parseContributorRole,
@@ -191,6 +194,8 @@ export type Game = {
   sourceSavedSessionId?: string;
   /** Denormalized list of source doc ids (avoids subcollection list query rules). */
   sourceIds?: string[];
+  /** Denormalized list of timeline event doc ids (avoids subcollection list query rules). */
+  eventIds?: string[];
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
@@ -260,6 +265,7 @@ export async function createGame(
       contributors: { [uid]: "owner" },
       memberUids: [uid],
       sourceIds: [],
+      eventIds: [],
       visibility: data.visibility ?? "private",
       createdAt: now,
       updatedAt: now,
@@ -309,6 +315,11 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
         (id): id is string => typeof id === "string" && id.trim() !== "",
       )
     : undefined;
+  const eventIds = Array.isArray(raw.eventIds)
+    ? (raw.eventIds as unknown[]).filter(
+        (id): id is string => typeof id === "string" && id.trim() !== "",
+      )
+    : undefined;
   const visibility =
     raw.visibility === "link" || raw.visibility === "public"
       ? raw.visibility
@@ -341,6 +352,7 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
       ? { sourceSavedSessionId: (raw.sourceSavedSessionId as string).trim() }
       : {}),
     ...(sourceIds && sourceIds.length > 0 ? { sourceIds } : {}),
+    ...(eventIds && eventIds.length > 0 ? { eventIds } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -438,6 +450,53 @@ export async function listGamesForTeam(teamId: string): Promise<Game[]> {
       (b.updatedAt?.toMillis?.() ?? 0) - (a.updatedAt?.toMillis?.() ?? 0),
   );
   return out;
+}
+
+/** Patch missing access fields on legacy game docs (owner only). */
+export async function ensureGameAccessDocument(
+  game: Game,
+  uid: string,
+): Promise<Game> {
+  const hasOwner = Boolean(game.ownerId?.trim());
+  const hasMembers = game.memberUids.length > 0;
+  const hasContributor = uid in game.contributors;
+  if (hasOwner && hasMembers && hasContributor) return game;
+  if (game.ownerId && game.ownerId !== uid && game.contributors[uid] !== "owner") {
+    return game;
+  }
+
+  const ownerId = game.ownerId?.trim() || uid;
+  const memberUids =
+    game.memberUids.length > 0
+      ? game.memberUids
+      : [...new Set([ownerId, uid, ...Object.keys(game.contributors)])];
+  const contributors = {
+    ...game.contributors,
+    ...(hasContributor ? {} : { [uid]: "owner" as const }),
+  };
+
+  try {
+    await updateDoc(doc(gamesCol(), game.id), {
+      ownerId,
+      memberUids,
+      contributors,
+      updatedAt: serverTimestamp(),
+    });
+    return (
+      (await getGame(game.id, { uid })) ?? {
+        ...game,
+        ownerId,
+        memberUids,
+        contributors,
+      }
+    );
+  } catch (err) {
+    logFirestorePermissionError("update", `games/${game.id}`, err, {
+      uid,
+      reason: "ensureGameAccessDocument",
+    });
+    return game;
+  }
 }
 
 // ---- Contributors / permissions ----------------------------------------
@@ -606,12 +665,14 @@ export async function addGameSource(
   const ref = source.id
     ? doc(sourcesCol(gameId), source.id)
     : doc(sourcesCol(gameId));
-  await setDoc(ref, {
-    id: ref.id,
-    kind: source.kind,
-    label: source.label.trim() || "Source",
-    createdAt: serverTimestamp(),
-    ...accessDenorm,
+  const sourcePath = `games/${gameId}/sources/${ref.id}`;
+  try {
+    await setDoc(ref, {
+      id: ref.id,
+      kind: source.kind,
+      label: source.label.trim() || "Source",
+      createdAt: serverTimestamp(),
+      ...accessDenorm,
     ...(trimOrUndef(source.videoId) ? { videoId: source.videoId!.trim() } : {}),
     ...(trimOrUndef(source.url) ? { url: source.url!.trim() } : {}),
     ...(trimOrUndef(source.storagePath)
@@ -672,11 +733,27 @@ export async function addGameSource(
     ...(trimOrUndef(source.deviceClockStart)
       ? { deviceClockStart: source.deviceClockStart!.trim() }
       : {}),
-  });
-  await updateDoc(doc(gamesCol(), gameId), {
-    sourceIds: arrayUnion(ref.id),
-    updatedAt: serverTimestamp(),
-  });
+    });
+  } catch (err) {
+    logFirestorePermissionError("create", sourcePath, err, { gameId, actorUid });
+    throw formatFirestoreWriteError(err, "Could not attach source.");
+  }
+  try {
+    await updateDoc(doc(gamesCol(), gameId), {
+      sourceIds: arrayUnion(ref.id),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    logFirestorePermissionError("update", `games/${gameId}`, err, {
+      gameId,
+      actorUid,
+      field: "sourceIds",
+    });
+    throw formatFirestoreWriteError(
+      err,
+      "Source was saved but the game index could not be updated.",
+    );
+  }
   return ref.id;
 }
 
@@ -799,12 +876,36 @@ export async function listGameSourcesByIds(
 export async function fetchGameSources(
   gameId: string,
   game: Game,
+  uid?: string,
 ): Promise<GameVideoSource[]> {
   const ids = game.sourceIds ?? [];
   if (ids.length > 0) {
     return listGameSourcesByIds(gameId, ids);
   }
-  return listGameSources(gameId);
+  try {
+    const listed = await listGameSources(gameId);
+    if (listed.length > 0 && uid && canEditGame(game, uid)) {
+      try {
+        await updateDoc(doc(gamesCol(), gameId), {
+          sourceIds: listed.map((s) => s.id),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        logFirestorePermissionError("update", `games/${gameId}`, err, {
+          uid,
+          field: "sourceIds",
+          reason: "backfill",
+        });
+      }
+    }
+    return listed;
+  } catch (err) {
+    logFirestorePermissionError("list", `games/${gameId}/sources`, err, {
+      uid,
+      gameId,
+    });
+    throw err;
+  }
 }
 
 export type AddYouTubeSourceInput = {
@@ -1000,10 +1101,24 @@ const EVENT_TYPES: GameTimelineEventType[] = [
 export async function addGameEvent(
   gameId: string,
   event: GameTimelineEventInput,
+  opts?: { actorUid?: string },
 ): Promise<string> {
   if (!EVENT_TYPES.includes(event.type)) {
     throw new Error(`Unknown timeline event type: ${event.type}`);
   }
+  const actorUid = opts?.actorUid ?? event.createdBy?.trim();
+  let accessDenorm = actorUid ? gameAccessDenormFromUid(actorUid) : null;
+  try {
+    const game = await getGame(gameId, { uid: actorUid ?? undefined });
+    if (game) accessDenorm = gameAccessDenormFromGame(game);
+  } catch (err) {
+    logFirestorePermissionError("read", `games/${gameId}`, err, {
+      actorUid,
+      reason: "addGameEvent:getGame",
+    });
+    if (!accessDenorm) throw err;
+  }
+
   const t =
     typeof event.t === "number" && Number.isFinite(event.t)
       ? Math.max(0, event.t)
@@ -1011,11 +1126,14 @@ export async function addGameEvent(
   const ref = event.id
     ? doc(eventsCol(gameId), event.id)
     : doc(eventsCol(gameId));
-  await setDoc(ref, {
-    id: ref.id,
-    type: event.type,
-    t,
-    createdAt: serverTimestamp(),
+  const eventPath = `games/${gameId}/events/${ref.id}`;
+  try {
+    await setDoc(ref, {
+      id: ref.id,
+      type: event.type,
+      t,
+      createdAt: serverTimestamp(),
+      ...accessDenorm,
     ...(trimOrUndef(event.label) ? { label: event.label!.trim() } : {}),
     ...(trimOrUndef(event.sourceId) ? { sourceId: event.sourceId!.trim() } : {}),
     ...(event.payload && typeof event.payload === "object"
@@ -1030,7 +1148,27 @@ export async function addGameEvent(
     ...(trimOrUndef(event.createdByName)
       ? { createdByName: event.createdByName!.trim() }
       : {}),
-  });
+    });
+  } catch (err) {
+    logFirestorePermissionError("create", eventPath, err, { gameId, actorUid });
+    throw formatFirestoreWriteError(err, "Could not create timeline event.");
+  }
+  try {
+    await updateDoc(doc(gamesCol(), gameId), {
+      eventIds: arrayUnion(ref.id),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    logFirestorePermissionError("update", `games/${gameId}`, err, {
+      gameId,
+      actorUid,
+      field: "eventIds",
+    });
+    throw formatFirestoreWriteError(
+      err,
+      "Event was saved but the game index could not be updated.",
+    );
+  }
   return ref.id;
 }
 
@@ -1069,14 +1207,77 @@ function parseEvent(
 export async function listGameEvents(
   gameId: string,
 ): Promise<GameTimelineEvent[]> {
-  const snap = await getDocs(eventsCol(gameId));
+  try {
+    const snap = await getDocs(eventsCol(gameId));
+    const out: GameTimelineEvent[] = [];
+    snap.forEach((d) => {
+      const e = parseEvent(d.id, d.data() as Record<string, unknown>);
+      if (e) out.push(e);
+    });
+    out.sort((a, b) => a.t - b.t);
+    return out;
+  } catch (err) {
+    logFirestorePermissionError("list", `games/${gameId}/events`, err, { gameId });
+    throw err;
+  }
+}
+
+export async function listGameEventsByIds(
+  gameId: string,
+  eventIds: string[],
+): Promise<GameTimelineEvent[]> {
   const out: GameTimelineEvent[] = [];
-  snap.forEach((d) => {
-    const e = parseEvent(d.id, d.data() as Record<string, unknown>);
-    if (e) out.push(e);
-  });
+  for (const eventId of eventIds) {
+    try {
+      const snap = await getDoc(doc(eventsCol(gameId), eventId));
+      if (!snap.exists()) continue;
+      const e = parseEvent(snap.id, snap.data() as Record<string, unknown>);
+      if (e) out.push(e);
+    } catch (err) {
+      logFirestorePermissionError("read", `games/${gameId}/events/${eventId}`, err, {
+        gameId,
+        eventId,
+      });
+      throw err;
+    }
+  }
   out.sort((a, b) => a.t - b.t);
   return out;
+}
+
+export async function fetchGameEvents(
+  gameId: string,
+  game: Game,
+  uid?: string,
+): Promise<GameTimelineEvent[]> {
+  const ids = game.eventIds ?? [];
+  if (ids.length > 0) {
+    return listGameEventsByIds(gameId, ids);
+  }
+  try {
+    const listed = await listGameEvents(gameId);
+    if (listed.length > 0 && uid && canEditGame(game, uid)) {
+      try {
+        await updateDoc(doc(gamesCol(), gameId), {
+          eventIds: listed.map((e) => e.id),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        logFirestorePermissionError("update", `games/${gameId}`, err, {
+          uid,
+          field: "eventIds",
+          reason: "backfill",
+        });
+      }
+    }
+    return listed;
+  } catch (err) {
+    logFirestorePermissionError("list", `games/${gameId}/events`, err, {
+      uid,
+      gameId,
+    });
+    throw err;
+  }
 }
 
 export async function deleteGameEvent(

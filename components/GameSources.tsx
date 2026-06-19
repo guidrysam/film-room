@@ -6,7 +6,7 @@ import GameSourceDetail from "@/components/GameSourceDetail";
 import {
   addYouTubeSourceToGame,
   canContributeGameSources,
-  listGameSources,
+  fetchGameSources,
   updateGameSourceYouTubeMetadata,
   type Game,
   type GameTeamRole,
@@ -114,13 +114,17 @@ export default function GameSources({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setSources(await listGameSources(game.id));
-    } catch {
-      /* Leave current list on failure. */
+      setSources(await fetchGameSources(game.id, game, currentUid));
+    } catch (e) {
+      console.error("[GameSources] fetch sources failed", {
+        gameId: game.id,
+        currentUid,
+        err: e,
+      });
     } finally {
       setLoading(false);
     }
-  }, [game.id]);
+  }, [game, currentUid]);
 
   useEffect(() => {
     void refresh();

@@ -1,14 +1,16 @@
 import {
   canViewGame,
+  ensureGameAccessDocument,
+  fetchGameEvents,
   fetchGameSources,
   getGame,
   listDirectorTracks,
-  listGameEvents,
   type Game,
   type GameTimelineEvent,
   type GameVideoSource,
 } from "@/lib/games";
 import { isPermissionDeniedError } from "@/lib/firestore-errors";
+import { logFirestorePermissionError } from "@/lib/firestore-permission-log";
 import {
   highlightDraftFromTrack,
   isHighlightDraft,
@@ -50,6 +52,7 @@ function logGameDashboardError(
   gameId: string,
   uid: string,
   step: string,
+  path: string,
   err: unknown,
 ) {
   const code =
@@ -61,10 +64,17 @@ function logGameDashboardError(
     gameId,
     uid,
     step,
+    path,
     permissionDenied: isPermissionDeniedError(err),
     code,
     message,
   });
+  logFirestorePermissionError(
+    step.includes("list") ? "list" : "read",
+    path,
+    err,
+    { gameId, uid, step },
+  );
 }
 
 export async function loadGameDashboard(
@@ -73,11 +83,13 @@ export async function loadGameDashboard(
 ): Promise<GameDashboardData | null> {
   logGameDashboardLoad(gameId, uid, "start", { fetchPath: `games/${gameId}` });
 
-  const game = await getGame(gameId, { uid });
+  let game = await getGame(gameId, { uid });
   if (!game) {
     logGameDashboardLoad(gameId, uid, "getGame:missing");
     return null;
   }
+
+  game = await ensureGameAccessDocument(game, uid);
 
   console.log({
     uid,
@@ -87,6 +99,7 @@ export async function loadGameDashboard(
     contributors: game.contributors,
     teamId: game.teamId ?? null,
     sourceIds: game.sourceIds ?? [],
+    eventIds: game.eventIds ?? [],
   });
 
   let team: Team | null = null;
@@ -98,7 +111,7 @@ export async function loadGameDashboard(
         found: Boolean(team),
       });
     } catch (err) {
-      logGameDashboardError(gameId, uid, "getTeam", err);
+      logGameDashboardError(gameId, uid, "getTeam", `teams/${game.teamId}`, err);
       throw err;
     }
   }
@@ -117,23 +130,36 @@ export async function loadGameDashboard(
   let tracks: Awaited<ReturnType<typeof listDirectorTracks>>;
 
   try {
-    sources = await fetchGameSources(gameId, game);
+    sources = await fetchGameSources(gameId, game, uid);
     logGameDashboardLoad(gameId, uid, "fetchGameSources:ok", {
       count: sources.length,
       viaSourceIds: (game.sourceIds?.length ?? 0) > 0,
     });
   } catch (err) {
-    logGameDashboardError(gameId, uid, "fetchGameSources", err);
+    logGameDashboardError(
+      gameId,
+      uid,
+      "fetchGameSources",
+      `games/${gameId}/sources`,
+      err,
+    );
     throw err;
   }
 
   try {
-    events = await listGameEvents(gameId);
-    logGameDashboardLoad(gameId, uid, "listGameEvents:ok", {
+    events = await fetchGameEvents(gameId, game, uid);
+    logGameDashboardLoad(gameId, uid, "fetchGameEvents:ok", {
       count: events.length,
+      viaEventIds: (game.eventIds?.length ?? 0) > 0,
     });
   } catch (err) {
-    logGameDashboardError(gameId, uid, "listGameEvents", err);
+    logGameDashboardError(
+      gameId,
+      uid,
+      "fetchGameEvents",
+      `games/${gameId}/events`,
+      err,
+    );
     throw err;
   }
 
@@ -143,7 +169,13 @@ export async function loadGameDashboard(
       count: tracks.length,
     });
   } catch (err) {
-    logGameDashboardError(gameId, uid, "listDirectorTracks", err);
+    logGameDashboardError(
+      gameId,
+      uid,
+      "listDirectorTracks",
+      `games/${gameId}/cuts`,
+      err,
+    );
     throw err;
   }
 
@@ -155,7 +187,13 @@ export async function loadGameDashboard(
         count: players.length,
       });
     } catch (err) {
-      logGameDashboardError(gameId, uid, "listTeamPlayers", err);
+      logGameDashboardError(
+        gameId,
+        uid,
+        "listTeamPlayers",
+        `teams/${game.teamId}/players`,
+        err,
+      );
       throw err;
     }
   }

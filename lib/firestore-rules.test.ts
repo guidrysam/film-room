@@ -16,7 +16,9 @@ import {
   query,
   setDoc,
   Timestamp,
+  updateDoc,
   where,
+  arrayUnion,
 } from "firebase/firestore";
 
 const RULES = readFileSync(join(process.cwd(), "firestore.rules"), "utf8");
@@ -404,6 +406,28 @@ describeRules("firestore rules (emulator)", () => {
           ownerId: uid,
           contributors: { [uid]: "owner" },
           visibility: "private",
+        }),
+      );
+    });
+
+    it("editor can update sourceIds index on game", async () => {
+      const ownerUid = "owner-uid";
+      const editorUid = "editor-uid";
+      const gameId = "game-editor-index";
+      await seedGame(gameId, {
+        title: "Shared game",
+        ownerId: ownerUid,
+        contributors: { [ownerUid]: "owner", [editorUid]: "editor" },
+        memberUids: [ownerUid, editorUid],
+        sourceIds: [],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(editorUid).firestore();
+
+      await assertSucceeds(
+        updateDoc(doc(db, "games", gameId), {
+          sourceIds: arrayUnion("src-1"),
+          updatedAt: Timestamp.now(),
         }),
       );
     });

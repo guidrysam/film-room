@@ -212,6 +212,19 @@ service cloud.firestore {
     function isEditor(uid) {
       return roleOf(uid) == 'editor' || isOwner(uid);
     }
+    /** Game doc update/delete checks using resource.data (no get()). */
+    function isOwnerResource() {
+      return request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        gameContributorRole(resource.data, request.auth.uid) == 'owner'
+      );
+    }
+    function isEditorResource() {
+      return request.auth != null && (
+        isOwnerResource() ||
+        gameContributorRole(resource.data, request.auth.uid) == 'editor'
+      );
+    }
     function gameTeamId() {
       return 'teamId' in gameData() && gameData().teamId is string
         ? gameData().teamId
@@ -280,9 +293,15 @@ service cloud.firestore {
                         (request.resource.data.teamId is string &&
                          isTeamCoach(request.resource.data.teamId, request.auth.uid)));
 
-      allow update, delete: if request.auth != null && isOwner(request.auth.uid);
+      allow update, delete: if isOwnerResource();
+
+      // Editors may maintain subcollection index mirrors without full owner rights.
+      allow update: if isEditorResource()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['sourceIds', 'eventIds', 'updatedAt']);
 
       allow update: if request.auth != null
+        && resource.data.contributors is map
         && !(request.auth.uid in resource.data.contributors)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['contributors', 'memberUids', 'updatedAt', 'joinCode'])
@@ -303,6 +322,7 @@ service cloud.firestore {
             joinInviteData().expiresAt > request.time);
 
       allow update: if request.auth != null
+        && resource.data.contributors is map
         && (request.auth.uid in resource.data.contributors)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joinCode'])
         && !('joinCode' in request.resource.data);
