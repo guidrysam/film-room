@@ -14,7 +14,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { firestore } from "@/lib/firebase";
+import { auth, firestore } from "@/lib/firebase";
 import {
   formatFirestoreWriteError,
   isPermissionDeniedError,
@@ -255,15 +255,26 @@ export async function createGame(
   uid: string,
   data: CreateGameInput,
 ): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Sign in required to create a game.");
+  }
+  const effectiveUid = user.uid;
+  if (uid !== effectiveUid) {
+    console.warn("[createGame] uid mismatch; using auth uid", {
+      passedUid: uid,
+      authUid: effectiveUid,
+    });
+  }
   const ref = doc(gamesCol());
   const now = serverTimestamp();
   const title = data.title.trim() || "Game";
   try {
     await setDoc(ref, {
       title,
-      ownerId: uid,
-      contributors: { [uid]: "owner" },
-      memberUids: [uid],
+      ownerId: effectiveUid,
+      contributors: { [effectiveUid]: "owner" },
+      memberUids: [effectiveUid],
       sourceIds: [],
       eventIds: [],
       visibility: data.visibility ?? "private",
@@ -641,17 +652,51 @@ export async function removeGameContributor(
 
 // ---- Sources -----------------------------------------------------------
 
+export function logGameAttachPreflight(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): void {
+  const authUid = auth.currentUser?.uid ?? null;
+  console.info("[game:attach:preflight]", {
+    uid,
+    authUid,
+    authMatchesPassed: authUid === uid,
+    gameId: game.id,
+    ownerId: game.ownerId,
+    ownerIdMatchesAuth: game.ownerId === authUid,
+    memberUids: game.memberUids,
+    inMemberUids: authUid ? game.memberUids.includes(authUid) : false,
+    contributors: game.contributors,
+    contributorRole: authUid ? (game.contributors[authUid] ?? null) : null,
+    teamId: game.teamId ?? null,
+    teamRole: teamRole ?? null,
+    canEditGame: authUid ? canEditGame(game, authUid) : false,
+    canContributeSources: authUid
+      ? canContributeGameSources(game, authUid, teamRole)
+      : false,
+  });
+}
+
 export async function addGameSource(
   gameId: string,
   source: GameVideoSourceInput,
-  opts?: { actorUid?: string },
+  opts?: { actorUid?: string; game?: Game; teamRole?: GameTeamRole | null },
 ): Promise<string> {
-  const actorUid = opts?.actorUid ?? source.createdBy?.trim();
+  const authUid = auth.currentUser?.uid;
+  const actorUid = authUid ?? opts?.actorUid ?? source.createdBy?.trim();
+  if (opts?.actorUid && authUid && opts.actorUid !== authUid) {
+    console.warn("[addGameSource] actorUid !== auth.currentUser.uid", {
+      actorUid: opts.actorUid,
+      authUid,
+    });
+  }
   const gameUpdatePath = `games/${gameId}`;
   let accessDenorm = actorUid ? gameAccessDenormFromUid(actorUid) : null;
   try {
-    let game = await getGame(gameId, { uid: actorUid ?? undefined });
+    let game = opts?.game ?? (await getGame(gameId, { uid: actorUid ?? undefined }));
     if (game && actorUid) {
+      logGameAttachPreflight(game, actorUid, opts?.teamRole);
       game = await ensureGameAccessDocument(game, actorUid);
       accessDenorm = gameAccessDenormFromGame(game);
     } else if (game) {
@@ -663,7 +708,9 @@ export async function addGameSource(
       actorUid,
       permissionDenied: isPermissionDeniedError(err),
     });
-    if (!accessDenorm) throw err;
+    if (opts?.game) {
+      accessDenorm = gameAccessDenormFromGame(opts.game);
+    } else if (!accessDenorm) throw err;
   }
 
   const ref = source.id
@@ -903,7 +950,7 @@ export async function listGameSourcesByIds(
   return out;
 }
 
-/** Prefer indexed source ids; fall back to subcollection list when index is empty. */
+/** Prefer indexed source ids; skip list query when index is empty (list rules reject get()). */
 export async function fetchGameSources(
   gameId: string,
   game: Game,
@@ -913,9 +960,12 @@ export async function fetchGameSources(
   if (ids.length > 0) {
     return listGameSourcesByIds(gameId, ids);
   }
+  if (!uid || !canEditGame(game, uid)) {
+    return [];
+  }
   try {
     const listed = await listGameSources(gameId);
-    if (listed.length > 0 && uid && canEditGame(game, uid)) {
+    if (listed.length > 0) {
       try {
         await updateDoc(doc(gamesCol(), gameId), {
           sourceIds: listed.map((s) => s.id),
@@ -935,7 +985,7 @@ export async function fetchGameSources(
       uid,
       gameId,
     });
-    throw err;
+    return [];
   }
 }
 
@@ -956,6 +1006,7 @@ export async function addYouTubeSourceToGame(
   gameId: string,
   uid: string,
   input: AddYouTubeSourceInput,
+  opts?: { game?: Game; teamRole?: GameTeamRole | null },
 ): Promise<string> {
   const videoId = extractYouTubeVideoId(input.urlOrId ?? "");
   if (!videoId) {
@@ -976,7 +1027,7 @@ export async function addYouTubeSourceToGame(
       offsetFromGameTime: offset,
       ...(uid ? { createdBy: uid } : {}),
     },
-    { actorUid: uid },
+    { actorUid: uid, game: opts?.game, teamRole: opts?.teamRole },
   );
 }
 
@@ -1286,9 +1337,12 @@ export async function fetchGameEvents(
   if (ids.length > 0) {
     return listGameEventsByIds(gameId, ids);
   }
+  if (!uid || !canEditGame(game, uid)) {
+    return [];
+  }
   try {
     const listed = await listGameEvents(gameId);
-    if (listed.length > 0 && uid && canEditGame(game, uid)) {
+    if (listed.length > 0) {
       try {
         await updateDoc(doc(gamesCol(), gameId), {
           eventIds: listed.map((e) => e.id),
@@ -1308,7 +1362,7 @@ export async function fetchGameEvents(
       uid,
       gameId,
     });
-    throw err;
+    return [];
   }
 }
 

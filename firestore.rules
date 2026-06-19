@@ -235,28 +235,26 @@ service cloud.firestore {
       let tid = gameTeamId();
       return tid != null && tid.size() > 0;
     }
-    /** Source/event writes: owner, editor, memberUids mirror, or team contributor. */
+    /** Source/event writes: owner, editor, or team coach/parent/admin on linked games. */
     function canAttachGameSource(uid) {
       let g = gameData();
       return g.ownerId == uid ||
              gameContributorRole(g, uid) == 'owner' ||
              gameContributorRole(g, uid) == 'editor' ||
-             (g.memberUids is list && uid in g.memberUids &&
-              (g.ownerId == uid ||
-               gameContributorRole(g, uid) == 'owner' ||
-               gameContributorRole(g, uid) == 'editor')) ||
-             (gameHasTeam() && canTeamContributeSources(gameTeamId(), uid));
+             ('teamId' in g &&
+              g.teamId is string &&
+              g.teamId.size() > 0 &&
+              canTeamContributeSources(g.teamId, uid));
     }
     function canWriteGameEvent(uid) {
       let g = gameData();
       return g.ownerId == uid ||
              gameContributorRole(g, uid) == 'owner' ||
              gameContributorRole(g, uid) == 'editor' ||
-             (g.memberUids is list && uid in g.memberUids &&
-              (g.ownerId == uid ||
-               gameContributorRole(g, uid) == 'owner' ||
-               gameContributorRole(g, uid) == 'editor')) ||
-             (gameHasTeam() && isTeamCoach(gameTeamId(), uid));
+             ('teamId' in g &&
+              g.teamId is string &&
+              g.teamId.size() > 0 &&
+              isTeamCoach(g.teamId, uid));
     }
     /** Parent game doc read via get() — for single-doc subcollection reads. */
     function canReadGameFromParent(uid) {
@@ -322,6 +320,14 @@ service cloud.firestore {
 
       // Editors may maintain subcollection index mirrors without full owner rights.
       allow update: if isEditorResource()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['sourceIds', 'eventIds', 'updatedAt']);
+
+      // Team coaches/parents may maintain index mirrors on team-linked games.
+      allow update: if request.auth != null
+        && resource.data.teamId is string
+        && resource.data.teamId.size() > 0
+        && canTeamContributeSources(resource.data.teamId, request.auth.uid)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['sourceIds', 'eventIds', 'updatedAt']);
 

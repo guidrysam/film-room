@@ -149,7 +149,7 @@ export default function GameSources({
         urlOrId,
         label,
         offsetFromGameTime: Number.isFinite(off) ? off : 0,
-      });
+      }, { game, teamRole });
       console.info("[GameSources] source attached", {
         gameId: game.id,
         sourceId,
@@ -186,7 +186,7 @@ export default function GameSources({
     } finally {
       setAdding(false);
     }
-  }, [urlOrId, label, offset, game, currentUid, refresh, onChanged]);
+  }, [urlOrId, label, offset, game, currentUid, teamRole, refresh, onChanged]);
 
   const handleOpen = useCallback(async () => {
     setOpening(true);

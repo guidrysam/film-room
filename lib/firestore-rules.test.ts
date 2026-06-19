@@ -498,6 +498,12 @@ describeRules("firestore rules (emulator)", () => {
           createdAt: Timestamp.now(),
         }),
       );
+      await assertSucceeds(
+        updateDoc(doc(db, "games", gameId), {
+          sourceIds: arrayUnion("src-coach"),
+          updatedAt: Timestamp.now(),
+        }),
+      );
     });
   });
 });
