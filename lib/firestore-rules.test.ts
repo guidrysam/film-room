@@ -349,16 +349,49 @@ describeRules("firestore rules (emulator)", () => {
           kind: "youtube",
           label: "Main",
           videoId: "dQw4w9WgXcQ",
+          gameOwnerId: uid,
+          gameMemberUids: [uid],
         });
         await setDoc(doc(adminDb, "games", gameId, "events", "ev-1"), {
           type: "note",
           t: 0,
+          gameOwnerId: uid,
+          gameMemberUids: [uid],
         });
       });
       const db = testEnv!.authenticatedContext(uid).firestore();
 
       await assertSucceeds(getDocs(collection(db, "games", gameId, "sources")));
       await assertSucceeds(getDocs(collection(db, "games", gameId, "events")));
+      await assertSucceeds(getDoc(doc(db, "games", gameId, "sources", "src-1")));
+    });
+
+    it("owner can read source by id with parent denorm fallback", async () => {
+      const uid = "owner-uid";
+      const gameId = "game-src-get";
+      await seedGame(gameId, {
+        title: "vs Hawks",
+        ownerId: uid,
+        contributors: { [uid]: "owner" },
+        memberUids: [uid],
+        sourceIds: ["src-1"],
+        visibility: "private",
+      });
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(context.firestore(), "games", gameId, "sources", "src-1"),
+          {
+            kind: "youtube",
+            label: "Main",
+            videoId: "dQw4w9WgXcQ",
+            gameOwnerId: uid,
+            gameMemberUids: [uid],
+          },
+        );
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(getDoc(doc(db, "games", gameId, "sources", "src-1")));
     });
 
     it("requires memberUids on game create", async () => {

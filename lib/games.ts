@@ -19,6 +19,11 @@ import {
   formatFirestoreWriteError,
   isPermissionDeniedError,
 } from "@/lib/firestore-errors";
+import {
+  gameAccessDenormFromGame,
+  gameAccessDenormFromUid,
+  parseContributorRole,
+} from "@/lib/game-access-denorm";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 /**
@@ -184,6 +189,8 @@ export type Game = {
   visibility: GameVisibility;
   /** Back-link to the saved session this Game was created from (optional). */
   sourceSavedSessionId?: string;
+  /** Denormalized list of source doc ids (avoids subcollection list query rules). */
+  sourceIds?: string[];
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
@@ -252,6 +259,7 @@ export async function createGame(
       ownerId: uid,
       contributors: { [uid]: "owner" },
       memberUids: [uid],
+      sourceIds: [],
       visibility: data.visibility ?? "private",
       createdAt: now,
       updatedAt: now,
@@ -286,13 +294,21 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
       : {};
   const contributors: Record<string, GameRole> = {};
   for (const [k, v] of Object.entries(contributorsRaw)) {
-    if (v === "owner" || v === "editor" || v === "viewer") contributors[k] = v;
+    const role = parseContributorRole(v);
+    if (role === "owner" || role === "editor" || role === "viewer") {
+      contributors[k] = role;
+    }
   }
   const memberUids = Array.isArray(raw.memberUids)
     ? (raw.memberUids as unknown[]).filter(
         (u): u is string => typeof u === "string",
       )
     : Object.keys(contributors);
+  const sourceIds = Array.isArray(raw.sourceIds)
+    ? (raw.sourceIds as unknown[]).filter(
+        (id): id is string => typeof id === "string" && id.trim() !== "",
+      )
+    : undefined;
   const visibility =
     raw.visibility === "link" || raw.visibility === "public"
       ? raw.visibility
@@ -324,32 +340,41 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
     ...(trimOrUndef(raw.sourceSavedSessionId)
       ? { sourceSavedSessionId: (raw.sourceSavedSessionId as string).trim() }
       : {}),
+    ...(sourceIds && sourceIds.length > 0 ? { sourceIds } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
 }
 
-export async function getGame(gameId: string): Promise<Game | null> {
+export async function getGame(
+  gameId: string,
+  opts?: { uid?: string },
+): Promise<Game | null> {
   const path = `games/${gameId}`;
+  const uid = opts?.uid;
   try {
     const snap = await getDoc(doc(gamesCol(), gameId));
     console.info("[game:getGame]", {
+      uid: uid ?? null,
       gameId,
       path,
       exists: snap.exists(),
     });
     if (!snap.exists()) return null;
-    const game = parseGame(snap.id, snap.data() as Record<string, unknown>);
-    console.info("[game:getGame]", {
+    const raw = snap.data() as Record<string, unknown>;
+    const game = parseGame(snap.id, raw);
+    console.log({
+      uid: uid ?? null,
       gameId,
       ownerId: game.ownerId,
       memberUids: game.memberUids,
-      contributors: Object.keys(game.contributors),
+      contributors: game.contributors,
       teamId: game.teamId ?? null,
     });
     return game;
   } catch (err) {
     console.error("[game:getGame]", {
+      uid: uid ?? null,
       gameId,
       path,
       permissionDenied: isPermissionDeniedError(err),
@@ -560,7 +585,24 @@ export async function removeGameContributor(
 export async function addGameSource(
   gameId: string,
   source: GameVideoSourceInput,
+  opts?: { actorUid?: string },
 ): Promise<string> {
+  const actorUid = opts?.actorUid ?? source.createdBy?.trim();
+  let accessDenorm = actorUid ? gameAccessDenormFromUid(actorUid) : null;
+  try {
+    const game = await getGame(gameId, { uid: actorUid ?? undefined });
+    if (game) {
+      accessDenorm = gameAccessDenormFromGame(game);
+    }
+  } catch (err) {
+    console.warn("[game:addGameSource] getGame failed; using actor denorm", {
+      gameId,
+      actorUid,
+      permissionDenied: isPermissionDeniedError(err),
+    });
+    if (!accessDenorm) throw err;
+  }
+
   const ref = source.id
     ? doc(sourcesCol(gameId), source.id)
     : doc(sourcesCol(gameId));
@@ -569,6 +611,7 @@ export async function addGameSource(
     kind: source.kind,
     label: source.label.trim() || "Source",
     createdAt: serverTimestamp(),
+    ...accessDenorm,
     ...(trimOrUndef(source.videoId) ? { videoId: source.videoId!.trim() } : {}),
     ...(trimOrUndef(source.url) ? { url: source.url!.trim() } : {}),
     ...(trimOrUndef(source.storagePath)
@@ -629,6 +672,10 @@ export async function addGameSource(
     ...(trimOrUndef(source.deviceClockStart)
       ? { deviceClockStart: source.deviceClockStart!.trim() }
       : {}),
+  });
+  await updateDoc(doc(gamesCol(), gameId), {
+    sourceIds: arrayUnion(ref.id),
+    updatedAt: serverTimestamp(),
   });
   return ref.id;
 }
@@ -729,6 +776,37 @@ export async function listGameSources(
   return out;
 }
 
+/** Load sources by id (getDoc per source — works when subcollection list queries fail rules). */
+export async function listGameSourcesByIds(
+  gameId: string,
+  sourceIds: string[],
+): Promise<GameVideoSource[]> {
+  const out: GameVideoSource[] = [];
+  for (const sourceId of sourceIds) {
+    const snap = await getDoc(doc(sourcesCol(gameId), sourceId));
+    if (!snap.exists()) continue;
+    const s = parseSource(snap.id, snap.data() as Record<string, unknown>);
+    if (s) out.push(s);
+  }
+  out.sort(
+    (a, b) =>
+      (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0),
+  );
+  return out;
+}
+
+/** Prefer indexed source ids; fall back to subcollection list when index is empty. */
+export async function fetchGameSources(
+  gameId: string,
+  game: Game,
+): Promise<GameVideoSource[]> {
+  const ids = game.sourceIds ?? [];
+  if (ids.length > 0) {
+    return listGameSourcesByIds(gameId, ids);
+  }
+  return listGameSources(gameId);
+}
+
 export type AddYouTubeSourceInput = {
   /** Full YouTube URL or a raw 11-character video id. */
   urlOrId: string;
@@ -756,13 +834,17 @@ export async function addYouTubeSourceToGame(
     Number.isFinite(input.offsetFromGameTime)
       ? input.offsetFromGameTime
       : 0;
-  return addGameSource(gameId, {
-    kind: "youtube",
-    label: input.label?.trim() || "YouTube source",
-    videoId,
-    offsetFromGameTime: offset,
-    ...(uid ? { createdBy: uid } : {}),
-  });
+  return addGameSource(
+    gameId,
+    {
+      kind: "youtube",
+      label: input.label?.trim() || "YouTube source",
+      videoId,
+      offsetFromGameTime: offset,
+      ...(uid ? { createdBy: uid } : {}),
+    },
+    { actorUid: uid },
+  );
 }
 
 export type AddGameSourceFromYouTubeUploadInput = {
@@ -789,34 +871,38 @@ export async function addGameSourceFromYouTubeUpload(
     throw new Error("Invalid YouTube video id.");
   }
   const label = input.label.trim() || "Camera";
-  return addGameSource(gameId, {
-    kind: "youtube",
-    label,
-    videoId,
-    offsetFromGameTime: 0,
-    uploadOwner: "parent",
-    uploadedBy: uid,
-    createdBy: uid,
-    youtubePrivacyStatus: input.youtubePrivacyStatus ?? "unlisted",
-    syncStatus: "unsynced",
-    ...(trimOrUndef(input.createdByName)
-      ? { createdByName: input.createdByName!.trim() }
-      : {}),
-    ...(typeof input.durationSec === "number" &&
-    Number.isFinite(input.durationSec) &&
-    input.durationSec > 0
-      ? { durationSec: input.durationSec }
-      : {}),
-    ...(trimOrUndef(input.youtubeChannelId)
-      ? { youtubeChannelId: input.youtubeChannelId!.trim() }
-      : {}),
-    ...(trimOrUndef(input.youtubeChannelTitle)
-      ? { youtubeChannelTitle: input.youtubeChannelTitle!.trim() }
-      : {}),
-    ...(typeof input.youtubeEmbeddable === "boolean"
-      ? { youtubeEmbeddable: input.youtubeEmbeddable }
-      : {}),
-  });
+  return addGameSource(
+    gameId,
+    {
+      kind: "youtube",
+      label,
+      videoId,
+      offsetFromGameTime: 0,
+      uploadOwner: "parent",
+      uploadedBy: uid,
+      createdBy: uid,
+      youtubePrivacyStatus: input.youtubePrivacyStatus ?? "unlisted",
+      syncStatus: "unsynced",
+      ...(trimOrUndef(input.createdByName)
+        ? { createdByName: input.createdByName!.trim() }
+        : {}),
+      ...(typeof input.durationSec === "number" &&
+      Number.isFinite(input.durationSec) &&
+      input.durationSec > 0
+        ? { durationSec: input.durationSec }
+        : {}),
+      ...(trimOrUndef(input.youtubeChannelId)
+        ? { youtubeChannelId: input.youtubeChannelId!.trim() }
+        : {}),
+      ...(trimOrUndef(input.youtubeChannelTitle)
+        ? { youtubeChannelTitle: input.youtubeChannelTitle!.trim() }
+        : {}),
+      ...(typeof input.youtubeEmbeddable === "boolean"
+        ? { youtubeEmbeddable: input.youtubeEmbeddable }
+        : {}),
+    },
+    { actorUid: uid },
+  );
 }
 
 export type GameSourceYouTubeMetadataPatch = {
@@ -1164,12 +1250,20 @@ export async function listDirectorTracks(
     });
 
   if (uid) {
-    const [mine, shared] = await Promise.all([
-      getDocs(query(col, where("createdBy", "==", uid))),
-      getDocs(query(col, where("visibility", "in", ["game", "team"]))),
-    ]);
+    const mine = await getDocs(query(col, where("createdBy", "==", uid)));
     collect(mine);
-    collect(shared);
+    try {
+      const shared = await getDocs(
+        query(col, where("visibility", "in", ["game", "team"])),
+      );
+      collect(shared);
+    } catch (err) {
+      console.warn("[game:listDirectorTracks] shared cuts query denied", {
+        gameId,
+        uid,
+        permissionDenied: isPermissionDeniedError(err),
+      });
+    }
   } else {
     collect(await getDocs(col));
   }

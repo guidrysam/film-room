@@ -1,9 +1,9 @@
 import {
   canViewGame,
+  fetchGameSources,
   getGame,
   listDirectorTracks,
   listGameEvents,
-  listGameSources,
   type Game,
   type GameTimelineEvent,
   type GameVideoSource,
@@ -52,16 +52,18 @@ function logGameDashboardError(
   step: string,
   err: unknown,
 ) {
+  const code =
+    err && typeof err === "object" && "code" in err
+      ? (err as { code?: string }).code
+      : undefined;
+  const message = err instanceof Error ? err.message : String(err);
   console.error("[game:dashboard:load]", {
     gameId,
     uid,
     step,
     permissionDenied: isPermissionDeniedError(err),
-    message: err instanceof Error ? err.message : String(err),
-    code:
-      err && typeof err === "object" && "code" in err
-        ? (err as { code?: string }).code
-        : undefined,
+    code,
+    message,
   });
 }
 
@@ -71,17 +73,20 @@ export async function loadGameDashboard(
 ): Promise<GameDashboardData | null> {
   logGameDashboardLoad(gameId, uid, "start", { fetchPath: `games/${gameId}` });
 
-  const game = await getGame(gameId);
+  const game = await getGame(gameId, { uid });
   if (!game) {
     logGameDashboardLoad(gameId, uid, "getGame:missing");
     return null;
   }
 
-  logGameDashboardLoad(gameId, uid, "getGame:ok", {
+  console.log({
+    uid,
+    gameId,
     ownerId: game.ownerId,
     memberUids: game.memberUids,
-    contributors: Object.keys(game.contributors),
+    contributors: game.contributors,
     teamId: game.teamId ?? null,
+    sourceIds: game.sourceIds ?? [],
   });
 
   let team: Team | null = null;
@@ -112,12 +117,13 @@ export async function loadGameDashboard(
   let tracks: Awaited<ReturnType<typeof listDirectorTracks>>;
 
   try {
-    sources = await listGameSources(gameId);
-    logGameDashboardLoad(gameId, uid, "listGameSources:ok", {
+    sources = await fetchGameSources(gameId, game);
+    logGameDashboardLoad(gameId, uid, "fetchGameSources:ok", {
       count: sources.length,
+      viaSourceIds: (game.sourceIds?.length ?? 0) > 0,
     });
   } catch (err) {
-    logGameDashboardError(gameId, uid, "listGameSources", err);
+    logGameDashboardError(gameId, uid, "fetchGameSources", err);
     throw err;
   }
 
