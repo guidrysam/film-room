@@ -431,5 +431,73 @@ describeRules("firestore rules (emulator)", () => {
         }),
       );
     });
+
+    it("owner can create source and update sourceIds index", async () => {
+      const uid = "owner-uid";
+      const gameId = "game-src-create";
+      await seedGame(gameId, {
+        title: "Cup final",
+        ownerId: uid,
+        contributors: { [uid]: "owner" },
+        memberUids: [uid],
+        sourceIds: [],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(
+        setDoc(doc(db, "games", gameId, "sources", "src-new"), {
+          id: "src-new",
+          gameId,
+          kind: "youtube",
+          label: "Main",
+          videoId: "dQw4w9WgXcQ",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          createdBy: uid,
+          gameOwnerId: uid,
+          gameMemberUids: [uid],
+          createdAt: Timestamp.now(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "games", gameId), {
+          sourceIds: arrayUnion("src-new"),
+          updatedAt: Timestamp.now(),
+        }),
+      );
+    });
+
+    it("team coach can create source on team game without contributor entry", async () => {
+      const coachUid = "coach-uid";
+      const ownerUid = "other-owner";
+      const teamId = "team-src";
+      const gameId = "game-team-src";
+      await seedTeam(teamId, coachUid);
+      await seedGame(gameId, {
+        title: "Team game",
+        ownerId: ownerUid,
+        contributors: { [ownerUid]: "owner" },
+        memberUids: [ownerUid],
+        teamId,
+        sourceIds: [],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(coachUid).firestore();
+
+      await assertSucceeds(
+        setDoc(doc(db, "games", gameId, "sources", "src-coach"), {
+          id: "src-coach",
+          gameId,
+          kind: "youtube",
+          label: "Parent cam",
+          videoId: "dQw4w9WgXcQ",
+          createdBy: coachUid,
+          gameOwnerId: ownerUid,
+          gameMemberUids: [ownerUid],
+          gameTeamId: teamId,
+          createdAt: Timestamp.now(),
+        }),
+      );
+    });
   });
 });

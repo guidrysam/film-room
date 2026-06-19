@@ -227,11 +227,36 @@ service cloud.firestore {
     }
     function gameTeamId() {
       return 'teamId' in gameData() && gameData().teamId is string
+        && gameData().teamId.size() > 0
         ? gameData().teamId
         : null;
     }
     function gameHasTeam() {
-      return gameTeamId() != null;
+      let tid = gameTeamId();
+      return tid != null && tid.size() > 0;
+    }
+    /** Source/event writes: owner, editor, memberUids mirror, or team contributor. */
+    function canAttachGameSource(uid) {
+      let g = gameData();
+      return g.ownerId == uid ||
+             gameContributorRole(g, uid) == 'owner' ||
+             gameContributorRole(g, uid) == 'editor' ||
+             (g.memberUids is list && uid in g.memberUids &&
+              (g.ownerId == uid ||
+               gameContributorRole(g, uid) == 'owner' ||
+               gameContributorRole(g, uid) == 'editor')) ||
+             (gameHasTeam() && canTeamContributeSources(gameTeamId(), uid));
+    }
+    function canWriteGameEvent(uid) {
+      let g = gameData();
+      return g.ownerId == uid ||
+             gameContributorRole(g, uid) == 'owner' ||
+             gameContributorRole(g, uid) == 'editor' ||
+             (g.memberUids is list && uid in g.memberUids &&
+              (g.ownerId == uid ||
+               gameContributorRole(g, uid) == 'owner' ||
+               gameContributorRole(g, uid) == 'editor')) ||
+             (gameHasTeam() && isTeamCoach(gameTeamId(), uid));
     }
     /** Parent game doc read via get() — for single-doc subcollection reads. */
     function canReadGameFromParent(uid) {
@@ -332,16 +357,14 @@ service cloud.firestore {
                        (request.auth != null &&
                         canReadGameFromParent(request.auth.uid));
         allow create, update, delete: if request.auth != null &&
-          (isEditor(request.auth.uid) ||
-           (gameHasTeam() && canTeamContributeSources(gameTeamId(), request.auth.uid)));
+          canAttachGameSource(request.auth.uid);
       }
       match /events/{eventId} {
         allow read: if canReadGameSubdocData(resource.data) ||
                        (request.auth != null &&
                         canReadGameFromParent(request.auth.uid));
         allow create, update, delete: if request.auth != null &&
-          (isEditor(request.auth.uid) ||
-           (gameHasTeam() && isTeamCoach(gameTeamId(), request.auth.uid)));
+          canWriteGameEvent(request.auth.uid);
       }
       match /cuts/{cutId} {
         allow read: if request.auth != null &&

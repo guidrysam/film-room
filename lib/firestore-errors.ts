@@ -16,8 +16,12 @@ export function isPermissionDeniedError(error: unknown): boolean {
 export function formatFirestoreWriteError(
   error: unknown,
   permissionMessage: string,
+  context?: { path?: string; operation?: string },
 ): Error {
-  console.error("Firestore write failed", error);
+  console.error("Firestore write failed", {
+    ...context,
+    error,
+  });
 
   if (isPermissionDeniedError(error)) {
     const message = new Error(permissionMessage) as Error & {

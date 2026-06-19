@@ -647,10 +647,14 @@ export async function addGameSource(
   opts?: { actorUid?: string },
 ): Promise<string> {
   const actorUid = opts?.actorUid ?? source.createdBy?.trim();
+  const gameUpdatePath = `games/${gameId}`;
   let accessDenorm = actorUid ? gameAccessDenormFromUid(actorUid) : null;
   try {
-    const game = await getGame(gameId, { uid: actorUid ?? undefined });
-    if (game) {
+    let game = await getGame(gameId, { uid: actorUid ?? undefined });
+    if (game && actorUid) {
+      game = await ensureGameAccessDocument(game, actorUid);
+      accessDenorm = gameAccessDenormFromGame(game);
+    } else if (game) {
       accessDenorm = gameAccessDenormFromGame(game);
     }
   } catch (err) {
@@ -665,14 +669,14 @@ export async function addGameSource(
   const ref = source.id
     ? doc(sourcesCol(gameId), source.id)
     : doc(sourcesCol(gameId));
-  const sourcePath = `games/${gameId}/sources/${ref.id}`;
-  try {
-    await setDoc(ref, {
-      id: ref.id,
-      kind: source.kind,
-      label: source.label.trim() || "Source",
-      createdAt: serverTimestamp(),
-      ...accessDenorm,
+  const sourceDocPath = `games/${gameId}/sources/${ref.id}`;
+  const sourcePayload: Record<string, unknown> = {
+    id: ref.id,
+    gameId,
+    kind: source.kind,
+    label: source.label.trim() || "Source",
+    createdAt: serverTimestamp(),
+    ...accessDenorm,
     ...(trimOrUndef(source.videoId) ? { videoId: source.videoId!.trim() } : {}),
     ...(trimOrUndef(source.url) ? { url: source.url!.trim() } : {}),
     ...(trimOrUndef(source.storagePath)
@@ -733,26 +737,53 @@ export async function addGameSource(
     ...(trimOrUndef(source.deviceClockStart)
       ? { deviceClockStart: source.deviceClockStart!.trim() }
       : {}),
-    });
+  };
+
+  console.log({
+    operation: "addGameSource",
+    uid: actorUid ?? null,
+    gameId,
+    sourceDocPath,
+    gameUpdatePath,
+    payload: {
+      ...sourcePayload,
+      createdAt: "[serverTimestamp]",
+      uploadedAt: sourcePayload.uploadedAt ? "[serverTimestamp]" : undefined,
+    },
+  });
+
+  try {
+    await setDoc(ref, sourcePayload);
+    console.info("[addGameSource] source created", { sourceDocPath, sourceId: ref.id });
   } catch (err) {
-    logFirestorePermissionError("create", sourcePath, err, { gameId, actorUid });
-    throw formatFirestoreWriteError(err, "Could not attach source.");
+    logFirestorePermissionError("create", sourceDocPath, err, { gameId, actorUid });
+    throw formatFirestoreWriteError(err, "Could not attach source.", {
+      path: sourceDocPath,
+      operation: "create",
+    });
   }
   try {
     await updateDoc(doc(gamesCol(), gameId), {
       sourceIds: arrayUnion(ref.id),
       updatedAt: serverTimestamp(),
     });
+    console.info("[addGameSource] game index updated", {
+      gameUpdatePath,
+      sourceId: ref.id,
+    });
   } catch (err) {
-    logFirestorePermissionError("update", `games/${gameId}`, err, {
+    logFirestorePermissionError("update", gameUpdatePath, err, {
       gameId,
       actorUid,
       field: "sourceIds",
     });
-    throw formatFirestoreWriteError(
-      err,
-      "Source was saved but the game index could not be updated.",
-    );
+    console.error("[addGameSource] source created but game index update failed", {
+      sourceDocPath,
+      gameUpdatePath,
+      sourceId: ref.id,
+      uid: actorUid ?? null,
+    });
+    return ref.id;
   }
   return ref.id;
 }
@@ -941,6 +972,7 @@ export async function addYouTubeSourceToGame(
       kind: "youtube",
       label: input.label?.trim() || "YouTube source",
       videoId,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
       offsetFromGameTime: offset,
       ...(uid ? { createdBy: uid } : {}),
     },

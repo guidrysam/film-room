@@ -7,6 +7,7 @@ import {
   addYouTubeSourceToGame,
   canContributeGameSources,
   fetchGameSources,
+  listGameSourcesByIds,
   updateGameSourceYouTubeMetadata,
   type Game,
   type GameTeamRole,
@@ -144,22 +145,48 @@ export default function GameSources({
     setError(null);
     try {
       const off = offset.trim() === "" ? 0 : Number(offset);
-      await addYouTubeSourceToGame(game.id, currentUid, {
+      const sourceId = await addYouTubeSourceToGame(game.id, currentUid, {
         urlOrId,
         label,
         offsetFromGameTime: Number.isFinite(off) ? off : 0,
       });
+      console.info("[GameSources] source attached", {
+        gameId: game.id,
+        sourceId,
+        currentUid,
+      });
       setUrlOrId("");
       setLabel("");
       setOffset("");
-      await refresh();
+      const added = await listGameSourcesByIds(game.id, [sourceId]);
+      if (added.length > 0) {
+        setSources((prev) => {
+          const seen = new Set(prev.map((s) => s.id));
+          const merged = [...prev];
+          for (const s of added) {
+            if (!seen.has(s.id)) merged.push(s);
+          }
+          merged.sort(
+            (a, b) =>
+              (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0),
+          );
+          return merged;
+        });
+      } else {
+        await refresh();
+      }
       onChanged?.();
     } catch (e) {
+      console.error("[GameSources] add source failed", {
+        gameId: game.id,
+        currentUid,
+        err: e,
+      });
       setError(e instanceof Error ? e.message : "Could not add source.");
     } finally {
       setAdding(false);
     }
-  }, [urlOrId, label, offset, game.id, currentUid, refresh, onChanged]);
+  }, [urlOrId, label, offset, game, currentUid, refresh, onChanged]);
 
   const handleOpen = useCallback(async () => {
     setOpening(true);
