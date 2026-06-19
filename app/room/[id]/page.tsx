@@ -1583,64 +1583,84 @@ function SyncAngleDebugStrip({
 const gameMarkQuickBtnClass =
   "rounded-md border border-white/12 bg-zinc-900/85 px-2 py-1 text-[11px] font-medium text-zinc-100 shadow-sm transition hover:border-white/20 hover:bg-zinc-800/90 disabled:cursor-not-allowed disabled:opacity-40";
 
+const gameMarkBandBtnClass =
+  "shrink-0 rounded-md border border-white/10 bg-zinc-950/70 px-2.5 py-1 text-[11px] font-medium text-zinc-200 transition hover:border-white/18 hover:bg-zinc-900/80 disabled:cursor-not-allowed disabled:opacity-40";
+
+const GAME_MARK_QUICK_LABELS = [
+  "Mark",
+  "Goal",
+  "Defensive error",
+  "Transition",
+  "Set piece",
+] as const;
+
 function GameMarksToolbar({
   busy,
   onQuickMark,
   onCustomMark,
+  variant = "panel",
 }: {
   busy: boolean;
   onQuickMark: (label: string) => void;
   onCustomMark: () => void;
+  variant?: "panel" | "band";
 }) {
+  const btnClass =
+    variant === "band" ? gameMarkBandBtnClass : gameMarkQuickBtnClass;
+
+  if (variant === "band") {
+    return (
+      <div
+        className="pointer-events-auto flex w-full items-center gap-1.5 overflow-x-auto rounded-lg border border-white/[0.06] bg-black/45 px-2 py-1.5 backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        role="toolbar"
+        aria-label="Coach marks"
+      >
+        <span className="shrink-0 pr-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+          Marks
+        </span>
+        {GAME_MARK_QUICK_LABELS.map((label) => (
+          <button
+            key={label}
+            type="button"
+            disabled={busy}
+            className={btnClass}
+            onClick={() => onQuickMark(label)}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={busy}
+          className={btnClass}
+          onClick={onCustomMark}
+        >
+          Custom
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
         Marks
       </span>
+      {GAME_MARK_QUICK_LABELS.map((label) => (
+        <button
+          key={label}
+          type="button"
+          disabled={busy}
+          className={btnClass}
+          onClick={() => onQuickMark(label)}
+        >
+          {label}
+        </button>
+      ))}
       <button
         type="button"
         disabled={busy}
-        className={gameMarkQuickBtnClass}
-        onClick={() => onQuickMark("Mark")}
-      >
-        Mark
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        className={gameMarkQuickBtnClass}
-        onClick={() => onQuickMark("Goal")}
-      >
-        Goal
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        className={gameMarkQuickBtnClass}
-        onClick={() => onQuickMark("Defensive error")}
-      >
-        Defensive error
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        className={gameMarkQuickBtnClass}
-        onClick={() => onQuickMark("Transition")}
-      >
-        Transition
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        className={gameMarkQuickBtnClass}
-        onClick={() => onQuickMark("Set piece")}
-      >
-        Set piece
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        className={gameMarkQuickBtnClass}
+        className={btnClass}
         onClick={onCustomMark}
       >
         Custom
@@ -8983,18 +9003,20 @@ function RoomContent() {
           </div>
             {isHost && !isManualSyncMode ? (
             <div className="z-30 w-full shrink-0 px-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
-              <div className="mx-auto flex w-full max-w-none flex-col items-center gap-1">
+              <div
+                ref={hostControlsRef}
+                className="mx-auto flex w-full max-w-none flex-col items-center gap-1.5"
+              >
                 {isLiveRoom ? (
                   <span className="pointer-events-none rounded-full border border-red-500/40 bg-red-950/55 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-100 shadow-sm shadow-red-950/40">
                     LIVE
                   </span>
                 ) : null}
                 <div
-                  className={isManualSyncMode ? "w-full" : ""}
+                  className={`w-full ${isManualSyncMode ? "" : ""}`}
                   aria-hidden={isManualSyncMode}
                 >
                   <div
-                    ref={hostControlsRef}
                     className={`${hostControlsBarClean} ${
                       isManualSyncMode ? "pointer-events-none opacity-35" : ""
                     }`}
@@ -9105,6 +9127,12 @@ function RoomContent() {
                     </div>
                   ) : null}
                 </div>
+                <GameMarksToolbar
+                  variant="band"
+                  busy={gameMarksBusy}
+                  onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+                  onCustomMark={handleGameMarkCustomPrompt}
+                />
               </div>
               <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
             </div>
