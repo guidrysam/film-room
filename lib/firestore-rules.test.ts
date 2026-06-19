@@ -315,5 +315,64 @@ describeRules("firestore rules (emulator)", () => {
 
       await assertFails(getDoc(doc(db, "games", "game-private")));
     });
+
+    it("team member can read team-linked game without contributor entry", async () => {
+      const coachUid = "coach-uid";
+      const teamId = "team-1";
+      await seedTeam(teamId, coachUid);
+      await seedGame("game-team", {
+        title: "Past game",
+        ownerId: coachUid,
+        contributors: { [coachUid]: "owner" },
+        memberUids: [coachUid],
+        teamId,
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(coachUid).firestore();
+
+      await assertSucceeds(getDoc(doc(db, "games", "game-team")));
+    });
+
+    it("owner can list sources and events subcollections", async () => {
+      const uid = "owner-uid";
+      const gameId = "game-1";
+      await seedGame(gameId, {
+        title: "vs Hawks",
+        ownerId: uid,
+        contributors: { [uid]: "owner" },
+        memberUids: [uid],
+        visibility: "private",
+      });
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const adminDb = context.firestore();
+        await setDoc(doc(adminDb, "games", gameId, "sources", "src-1"), {
+          kind: "youtube",
+          label: "Main",
+          videoId: "dQw4w9WgXcQ",
+        });
+        await setDoc(doc(adminDb, "games", gameId, "events", "ev-1"), {
+          type: "note",
+          t: 0,
+        });
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(getDocs(collection(db, "games", gameId, "sources")));
+      await assertSucceeds(getDocs(collection(db, "games", gameId, "events")));
+    });
+
+    it("requires memberUids on game create", async () => {
+      const uid = "owner-uid";
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertFails(
+        setDoc(doc(db, "games", "game-bad"), {
+          title: "Missing memberUids",
+          ownerId: uid,
+          contributors: { [uid]: "owner" },
+          visibility: "private",
+        }),
+      );
+    });
   });
 });

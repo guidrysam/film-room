@@ -200,9 +200,6 @@ service cloud.firestore {
     function isEditor(uid) {
       return roleOf(uid) == 'editor' || isOwner(uid);
     }
-    function isMember(uid) {
-      return roleOf(uid) != null || isOwner(uid);
-    }
     function gameTeamId() {
       return 'teamId' in gameData() && gameData().teamId is string
         ? gameData().teamId
@@ -211,27 +208,30 @@ service cloud.firestore {
     function gameHasTeam() {
       return gameTeamId() != null;
     }
-    function canReadGame(uid) {
-      return isMember(uid) ||
-             gameData().visibility == 'public' ||
-             gameData().visibility == 'link' ||
-             (gameHasTeam() && isTeamMember(gameTeamId(), uid));
+    /** Parent game doc read via get() — for subcollection rules. */
+    function canReadGameFromParent(uid) {
+      let g = gameData();
+      return g.ownerId == uid ||
+             (g.contributors is map && g.contributors[uid] != null) ||
+             (g.memberUids is list && uid in g.memberUids) ||
+             g.visibility == 'public' ||
+             g.visibility == 'link' ||
+             ('teamId' in g && g.teamId is string && isTeamMember(g.teamId, uid));
     }
     /** Query-compatible game read (resource.data — not get()). */
     function canReadGameResource() {
       return request.auth != null && (
         resource.data.ownerId == request.auth.uid ||
-        resource.data.contributors[request.auth.uid] != null ||
-        request.auth.uid in resource.data.memberUids ||
+        (resource.data.contributors is map &&
+         resource.data.contributors[request.auth.uid] != null) ||
+        (resource.data.memberUids is list &&
+         request.auth.uid in resource.data.memberUids) ||
         resource.data.visibility == 'public' ||
-        resource.data.visibility == 'link'
+        resource.data.visibility == 'link' ||
+        ('teamId' in resource.data &&
+         resource.data.teamId is string &&
+         isTeamMember(resource.data.teamId, request.auth.uid))
       );
-    }
-    /** Team member read for games linked to a team (single-doc; uses get). */
-    function canReadGameViaTeam(uid) {
-      return 'teamId' in resource.data &&
-             resource.data.teamId is string &&
-             isTeamMember(resource.data.teamId, uid);
     }
 
     function isGameOwnerOf(gid) {
@@ -245,13 +245,15 @@ service cloud.firestore {
     }
 
     match /games/{gameId} {
-      allow read: if canReadGameResource() ||
-                     (request.auth != null && canReadGameViaTeam(request.auth.uid));
+      allow read: if canReadGameResource();
 
       // Standalone games (no teamId) or team games created by admin/coach.
       allow create: if request.auth != null &&
                        request.resource.data.ownerId == request.auth.uid &&
+                       request.resource.data.contributors is map &&
                        request.resource.data.contributors[request.auth.uid] == 'owner' &&
+                       request.resource.data.memberUids is list &&
+                       request.resource.data.memberUids.hasAll([request.auth.uid]) &&
                        (!('teamId' in request.resource.data) ||
                         (request.resource.data.teamId is string &&
                          isTeamCoach(request.resource.data.teamId, request.auth.uid)));
@@ -284,13 +286,15 @@ service cloud.firestore {
         && !('joinCode' in request.resource.data);
 
       match /sources/{sourceId} {
-        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        allow read: if request.auth != null &&
+                       canReadGameFromParent(request.auth.uid);
         allow create, update, delete: if request.auth != null &&
           (isEditor(request.auth.uid) ||
            (gameHasTeam() && canTeamContributeSources(gameTeamId(), request.auth.uid)));
       }
       match /events/{eventId} {
-        allow read: if request.auth != null && canReadGame(request.auth.uid);
+        allow read: if request.auth != null &&
+                       canReadGameFromParent(request.auth.uid);
         allow create, update, delete: if request.auth != null &&
           (isEditor(request.auth.uid) ||
            (gameHasTeam() && isTeamCoach(gameTeamId(), request.auth.uid)));
@@ -298,7 +302,7 @@ service cloud.firestore {
       match /cuts/{cutId} {
         allow read: if request.auth != null &&
                        (resource.data.createdBy == request.auth.uid ||
-                        (canReadGame(request.auth.uid) &&
+                        (canReadGameFromParent(request.auth.uid) &&
                          resource.data.visibility != 'private'));
         allow create: if request.auth != null &&
                          request.resource.data.createdBy == request.auth.uid &&

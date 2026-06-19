@@ -6,6 +6,7 @@ import GameCapUpload from "@/components/GameCapUpload";
 import GameSources from "@/components/GameSources";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-load";
+import { isPermissionDeniedError } from "@/lib/firestore-errors";
 import { topPlayerStatLines } from "@/lib/game-dashboard";
 import {
   buildGameStatCsvRows,
@@ -82,8 +83,24 @@ export default function GameDashboard({
         return;
       }
       setData(loaded);
-    } catch {
-      setError("Could not load this game.");
+    } catch (err) {
+      console.error("[GameDashboard] load failed", {
+        gameId,
+        currentUid,
+        permissionDenied: isPermissionDeniedError(err),
+        err,
+      });
+      if (isPermissionDeniedError(err)) {
+        setError(
+          "Could not load this game. Firestore denied read access — check that rules are deployed.",
+        );
+      } else {
+        setError(
+          err instanceof Error && err.message.trim()
+            ? err.message
+            : "Could not load this game.",
+        );
+      }
     } finally {
       setLoading(false);
     }

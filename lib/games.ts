@@ -15,6 +15,10 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
+import {
+  formatFirestoreWriteError,
+  isPermissionDeniedError,
+} from "@/lib/firestore-errors";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 /**
@@ -242,29 +246,36 @@ export async function createGame(
   const ref = doc(gamesCol());
   const now = serverTimestamp();
   const title = data.title.trim() || "Game";
-  await setDoc(ref, {
-    title,
-    ownerId: uid,
-    contributors: { [uid]: "owner" },
-    memberUids: [uid],
-    visibility: data.visibility ?? "private",
-    createdAt: now,
-    updatedAt: now,
-    ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
-    ...(trimOrUndef(data.date) ? { date: data.date!.trim() } : {}),
-    ...(trimOrUndef(data.homeTeam) ? { homeTeam: data.homeTeam!.trim() } : {}),
-    ...(trimOrUndef(data.awayTeam) ? { awayTeam: data.awayTeam!.trim() } : {}),
-    ...(trimOrUndef(data.teamId) ? { teamId: data.teamId!.trim() } : {}),
-    ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
-    ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
-    ...(trimOrUndef(data.opponent) ? { opponent: data.opponent!.trim() } : {}),
-    ...(trimOrUndef(data.scheduledStartAt)
-      ? { scheduledStartAt: data.scheduledStartAt!.trim() }
-      : {}),
-    ...(trimOrUndef(data.sourceSavedSessionId)
-      ? { sourceSavedSessionId: data.sourceSavedSessionId!.trim() }
-      : {}),
-  });
+  try {
+    await setDoc(ref, {
+      title,
+      ownerId: uid,
+      contributors: { [uid]: "owner" },
+      memberUids: [uid],
+      visibility: data.visibility ?? "private",
+      createdAt: now,
+      updatedAt: now,
+      ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
+      ...(trimOrUndef(data.date) ? { date: data.date!.trim() } : {}),
+      ...(trimOrUndef(data.homeTeam) ? { homeTeam: data.homeTeam!.trim() } : {}),
+      ...(trimOrUndef(data.awayTeam) ? { awayTeam: data.awayTeam!.trim() } : {}),
+      ...(trimOrUndef(data.teamId) ? { teamId: data.teamId!.trim() } : {}),
+      ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
+      ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
+      ...(trimOrUndef(data.opponent) ? { opponent: data.opponent!.trim() } : {}),
+      ...(trimOrUndef(data.scheduledStartAt)
+        ? { scheduledStartAt: data.scheduledStartAt!.trim() }
+        : {}),
+      ...(trimOrUndef(data.sourceSavedSessionId)
+        ? { sourceSavedSessionId: data.sourceSavedSessionId!.trim() }
+        : {}),
+    });
+  } catch (err) {
+    throw formatFirestoreWriteError(
+      err,
+      "Game creation failed. Check Firestore rules deployment.",
+    );
+  }
   return ref.id;
 }
 
@@ -319,9 +330,37 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
 }
 
 export async function getGame(gameId: string): Promise<Game | null> {
-  const snap = await getDoc(doc(gamesCol(), gameId));
-  if (!snap.exists()) return null;
-  return parseGame(snap.id, snap.data() as Record<string, unknown>);
+  const path = `games/${gameId}`;
+  try {
+    const snap = await getDoc(doc(gamesCol(), gameId));
+    console.info("[game:getGame]", {
+      gameId,
+      path,
+      exists: snap.exists(),
+    });
+    if (!snap.exists()) return null;
+    const game = parseGame(snap.id, snap.data() as Record<string, unknown>);
+    console.info("[game:getGame]", {
+      gameId,
+      ownerId: game.ownerId,
+      memberUids: game.memberUids,
+      contributors: Object.keys(game.contributors),
+      teamId: game.teamId ?? null,
+    });
+    return game;
+  } catch (err) {
+    console.error("[game:getGame]", {
+      gameId,
+      path,
+      permissionDenied: isPermissionDeniedError(err),
+      message: err instanceof Error ? err.message : String(err),
+      code:
+        err && typeof err === "object" && "code" in err
+          ? (err as { code?: string }).code
+          : undefined,
+    });
+    throw err;
+  }
 }
 
 /** Games where the user is a contributor (owner/editor/viewer), newest first. */
