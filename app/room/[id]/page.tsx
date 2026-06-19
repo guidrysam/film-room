@@ -58,6 +58,7 @@ import {
 import { addGameEvent } from "@/lib/games";
 import { roomGameMarkToTimelineEvent } from "@/lib/game-events";
 import CutStudio from "@/components/CutStudio";
+import { VideoZoomStage } from "@/components/VideoZoomStage";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -7347,11 +7348,12 @@ function RoomContent() {
                             ) : null}
                           </>
                         )}
-                        <div
+                        <VideoZoomStage
+                          drawLocked={drawGateOn}
                           className={
                             coachViewMode === "multi"
-                              ? "relative aspect-video w-full overflow-hidden bg-black"
-                              : "absolute inset-0"
+                              ? "relative aspect-video w-full bg-black"
+                              : "absolute inset-0 h-full w-full bg-black"
                           }
                         >
                           <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
@@ -7416,7 +7418,7 @@ function RoomContent() {
                               allowLegacyWithoutAngleId={false}
                             />
                           ) : null}
-                        </div>
+                        </VideoZoomStage>
                         {coachViewMode === "multi" && showIndependentControls
                           ? renderSyncSetupControls({
                               label: angle.name,
@@ -7522,7 +7524,11 @@ function RoomContent() {
                             isMain ? undefined : { transform: `translateY(-${pipIndex * 150}px)` }
                           }
                         >
-                          <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                          <VideoZoomStage
+                            drawLocked={drawGateOn}
+                            showControls={isMain}
+                            className="absolute inset-0 z-10 min-h-0 min-w-0 bg-black"
+                          >
                             <YouTube
                               videoId={safeDecodeVideoId(a.videoId)}
                               onReady={(e) => {
@@ -7537,18 +7543,6 @@ function RoomContent() {
                               iframeClassName="absolute left-0 top-0 h-full w-full"
                               opts={youtubePlayerOpts}
                             />
-                          </div>
-                        {!viewerPlaybackUnlocked && isMain ? (
-                          <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/55 px-4">
-                            <button
-                              type="button"
-                              onClick={handleViewerPlaybackUnlock}
-                              className="rounded-xl border border-blue-500/35 bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
-                            >
-                              Tap to join playback
-                            </button>
-                          </div>
-                        ) : null}
                           {roomId && isMain ? (
                             <TelestratorOverlay
                               roomId={roomId}
@@ -7560,6 +7554,18 @@ function RoomContent() {
                               viewerDebug={debugUiEnabled}
                             />
                           ) : null}
+                          </VideoZoomStage>
+                        {!viewerPlaybackUnlocked && isMain ? (
+                          <div className="pointer-events-auto absolute inset-0 z-[35] flex items-center justify-center bg-black/55 px-4">
+                            <button
+                              type="button"
+                              onClick={handleViewerPlaybackUnlock}
+                              className="rounded-xl border border-blue-500/35 bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-xl shadow-blue-950/30 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                            >
+                              Tap to join playback
+                            </button>
+                          </div>
+                        ) : null}
                           {debugUiEnabled ? (
                           <SyncAngleDebugStrip
                             angleId={a.id}
@@ -7594,7 +7600,10 @@ function RoomContent() {
                     </div>
                   </div>
                 ) : (
-                  <div className="absolute inset-0 z-10 min-h-0 min-w-0 overflow-hidden">
+                  <VideoZoomStage
+                    drawLocked={drawGateOn}
+                    className="absolute inset-0 z-10 min-h-0 min-w-0 bg-black"
+                  >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key="sync-primary"
@@ -7615,7 +7624,26 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
-                  </div>
+                    {roomId ? (
+                      <TelestratorOverlay
+                        roomId={roomId}
+                        isHost={isHost}
+                        drawEnabled={telDrawOn}
+                        onBroadcastStroke={broadcastTelestratorStroke}
+                        strokeAngleId={isHost ? activeAngle.id : undefined}
+                        renderAngleId={
+                          isHost ? activeAngle.id : viewerPlayerViewDrawAngleId
+                        }
+                        allowLegacyWithoutAngleId
+                        wrapClassName={
+                          !isHost
+                            ? "pointer-events-none absolute inset-0 z-30 touch-none"
+                            : undefined
+                        }
+                        viewerDebug={debugUiEnabled}
+                      />
+                    ) : null}
+                  </VideoZoomStage>
                 )}
                 {showPerAngleLiveTiles && !multi ? (
                   <button
@@ -7628,25 +7656,6 @@ function RoomContent() {
                   >
                     Live
                   </button>
-                ) : null}
-                {roomId && (isHost || !multi) ? (
-                  <TelestratorOverlay
-                    roomId={roomId}
-                    isHost={isHost}
-                    drawEnabled={telDrawOn}
-                    onBroadcastStroke={broadcastTelestratorStroke}
-                    strokeAngleId={isHost ? activeAngle.id : undefined}
-                    renderAngleId={
-                      isHost ? activeAngle.id : viewerPlayerViewDrawAngleId
-                    }
-                    allowLegacyWithoutAngleId
-                    wrapClassName={
-                      !isHost
-                        ? "pointer-events-none absolute inset-0 z-30 touch-none"
-                        : undefined
-                    }
-                    viewerDebug={debugUiEnabled}
-                  />
                 ) : null}
                 {debugUiEnabled && (!isHost && multi ? null : (
                   <SyncAngleDebugStrip
@@ -8621,6 +8630,14 @@ function RoomContent() {
                         Tap to switch
                       </span>
                     )}
+                    <VideoZoomStage
+                      drawLocked={drawGateOn}
+                      showControls={
+                        !hostFocusAngleId ||
+                        hostFocusAngleId === hostMultiAngles.activeAngle.id
+                      }
+                      className="absolute inset-0 h-full w-full bg-black"
+                    >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key={fsMA?.activeAngle.id ?? "active"}
@@ -8648,6 +8665,7 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
+                    </VideoZoomStage>
                     {renderSyncSetupControls({
                       label: hostMultiAngles.activeAngle.name,
                       which: "primary",
@@ -8712,6 +8730,13 @@ function RoomContent() {
                         {hostMultiAngles.secondaryAngle.name}
                       </span>
                     )}
+                    <VideoZoomStage
+                      drawLocked={drawGateOn}
+                      showControls={
+                        hostFocusAngleId === hostMultiAngles.secondaryAngle.id
+                      }
+                      className="absolute inset-0 h-full w-full bg-black"
+                    >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key={hostMultiAngles.secondaryAngle.id}
@@ -8733,6 +8758,7 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
+                    </VideoZoomStage>
                         <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
                       {hostMultiAngles.secondaryAngle.name}
                     </span>
@@ -8893,7 +8919,10 @@ function RoomContent() {
                 </div>
               )
             ) : (
-              <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
+              <VideoZoomStage
+                drawLocked={drawGateOn}
+                className={`absolute inset-0 bg-black ${fsStageClass}`}
+              >
                 <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                   <YouTube
                     key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
@@ -8906,14 +8935,14 @@ function RoomContent() {
                     opts={youtubePlayerOpts}
                   />
                 </YoutubePointerGate>
-              </div>
+                <TelestratorOverlay
+                  roomId={roomId}
+                  isHost={isHost}
+                  drawEnabled={telDrawOn}
+                  wrapClassName={telestratorWrapFs}
+                />
+              </VideoZoomStage>
             )}
-            <TelestratorOverlay
-              roomId={roomId}
-              isHost={isHost}
-              drawEnabled={telDrawOn}
-              wrapClassName={telestratorWrapFs}
-            />
             {fsActive ? (
               <button
                 type="button"
@@ -9616,7 +9645,10 @@ function RoomContent() {
                     </div>
                   )
                 ) : (
-                  <div className={`absolute inset-0 overflow-hidden ${fsStageClass}`}>
+                  <VideoZoomStage
+                    drawLocked={drawGateOn}
+                    className={`absolute inset-0 bg-black ${fsStageClass}`}
+                  >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
                         key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
@@ -9629,14 +9661,14 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
-                  </div>
+                    <TelestratorOverlay
+                      roomId={roomId}
+                      isHost={isHost}
+                      drawEnabled={telDrawOn}
+                      wrapClassName={telestratorWrapFs}
+                    />
+                  </VideoZoomStage>
                 )}
-                <TelestratorOverlay
-                  roomId={roomId}
-                  isHost={isHost}
-                  drawEnabled={telDrawOn}
-                  wrapClassName={telestratorWrapFs}
-                />
                 {fsActive ? (
                   <button
                     type="button"
