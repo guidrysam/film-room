@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -12,9 +13,12 @@ import {
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
+  type CollectionReference,
 } from "firebase/firestore";
 import { auth, firestore } from "@/lib/firebase";
 import { formatFirestoreWriteError } from "@/lib/firestore-errors";
+import { deleteTeamInvitesForTeam } from "@/lib/team-invites";
 import {
   createGame,
   listGamesForTeam,
@@ -285,6 +289,52 @@ export function teamRoleFor(team: Team, uid: string): TeamMemberRole | null {
 export function canManageTeam(team: Team, uid: string): boolean {
   if (!uid) return false;
   return team.ownerId === uid || team.members[uid] === "admin";
+}
+
+/** Only the team owner may permanently delete the team (MVP). */
+export function canDeleteTeam(team: Team, uid: string): boolean {
+  if (!uid) return false;
+  return team.ownerId === uid;
+}
+
+export const TEAM_DELETE_BLOCKED_GAMES_MSG =
+  "This team has games. Delete or move games before removing the team.";
+
+async function deleteCollectionDocs(
+  colRef: CollectionReference,
+): Promise<number> {
+  const snap = await getDocs(colRef);
+  if (snap.empty) return 0;
+  const batch = writeBatch(firestore);
+  for (const docSnap of snap.docs) {
+    batch.delete(docSnap.ref);
+  }
+  await batch.commit();
+  return snap.size;
+}
+
+/**
+ * Permanently delete a team and its subcollections. Blocked when games exist.
+ * Caller must be the team owner.
+ */
+export async function deleteTeam(teamId: string, uid: string): Promise<void> {
+  const team = await getTeam(teamId);
+  if (!team) throw new Error("Team not found.");
+  if (!canDeleteTeam(team, uid)) {
+    throw new Error("Only the team owner can delete this team.");
+  }
+
+  const games = await listGamesForTeam(teamId);
+  if (games.length > 0) {
+    throw new Error(TEAM_DELETE_BLOCKED_GAMES_MSG);
+  }
+
+  await deleteCollectionDocs(playersCol(teamId));
+  await deleteCollectionDocs(
+    collection(firestore, "teams", teamId, "parentInviteTargets"),
+  );
+  await deleteTeamInvitesForTeam(teamId);
+  await deleteDoc(doc(teamsCol(), teamId));
 }
 
 export function canCoachTeam(team: Team, uid: string): boolean {

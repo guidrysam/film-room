@@ -1,6 +1,7 @@
 import {
   arrayUnion,
   collection,
+  deleteDoc,
   deleteField,
   doc,
   getDoc,
@@ -143,6 +144,15 @@ export async function listTeamInvites(teamId: string): Promise<TeamInvite[]> {
       (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
   );
   return out;
+}
+
+export async function deleteTeamInvitesForTeam(teamId: string): Promise<number> {
+  const invites = await listTeamInvites(teamId);
+  if (invites.length === 0) return 0;
+  await Promise.all(
+    invites.map((invite) => deleteDoc(doc(teamInvitesCol(), invite.code))),
+  );
+  return invites.length;
 }
 
 export async function setTeamInviteActive(

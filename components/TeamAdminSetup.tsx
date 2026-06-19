@@ -3,6 +3,7 @@
 import { useState } from "react";
 import ParentInviteTargets from "@/components/ParentInviteTargets";
 import RosterImportResultSummary from "@/components/RosterImportResultSummary";
+import TeamDeleteZone from "@/components/TeamDeleteZone";
 import TeamInvites from "@/components/TeamInvites";
 import TeamRosterImport from "@/components/TeamRosterImport";
 import {
@@ -93,6 +94,8 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
           Shared team channel configuration — coming soon.
         </p>
       </section>
+
+      <TeamDeleteZone team={team} currentUid={currentUid} />
     </div>
   );
 }

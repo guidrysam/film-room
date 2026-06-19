@@ -87,7 +87,10 @@ service cloud.firestore {
       // Team creation: auth only — must NOT call isTeamAdmin/isTeamMember (doc does not exist yet).
       allow create: if isValidNewTeamCreate();
 
-      allow update, delete: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
+      allow update: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
+
+      allow delete: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
 
       // Self-join via team invite (no admin role; no role escalation for existing members).
       allow update: if request.auth != null
@@ -120,9 +123,12 @@ service cloud.firestore {
 
       match /players/{playerId} {
         allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
-        allow create, delete: if request.auth != null &&
+        allow create, update: if request.auth != null &&
                                  isTeamCoach(teamId, request.auth.uid);
-        allow update: if request.auth != null && isTeamCoach(teamId, request.auth.uid);
+        allow delete: if request.auth != null && (
+          isTeamCoach(teamId, request.auth.uid) ||
+          teamData(teamId).ownerId == request.auth.uid
+        );
         // Parent self-onboarding: may add only their uid to parentUids.
         allow update: if request.auth != null &&
                          isTeamMember(teamId, request.auth.uid) &&
@@ -143,10 +149,12 @@ service cloud.firestore {
           (isTeamMember(teamId, request.auth.uid) &&
            resource.data.joinedUid == request.auth.uid)
         );
-        allow create, delete: if request.auth != null &&
+        allow create, update: if request.auth != null &&
                                  isTeamCoach(teamId, request.auth.uid);
-        allow update: if request.auth != null &&
-                         isTeamCoach(teamId, request.auth.uid);
+        allow delete: if request.auth != null && (
+          isTeamCoach(teamId, request.auth.uid) ||
+          teamData(teamId).ownerId == request.auth.uid
+        );
         // Parent self-onboarding after invite redeem (email must match roster).
         allow update: if request.auth != null &&
                          isTeamMember(teamId, request.auth.uid) &&

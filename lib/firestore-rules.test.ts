@@ -9,6 +9,7 @@ import {
 } from "@firebase/rules-unit-testing";
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -151,6 +152,65 @@ describeRules("firestore rules (emulator)", () => {
           ),
         ),
       );
+    });
+  });
+
+  describe("team deletion", () => {
+    it("owner can delete team with no games", async () => {
+      const uid = "owner-uid";
+      const teamId = "team-1";
+      await seedTeam(teamId, uid);
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(deleteDoc(doc(db, "teams", teamId)));
+    });
+
+    it("non-owner admin cannot delete team", async () => {
+      const teamId = "team-1";
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "teams", teamId), {
+          name: "Test Team",
+          ownerId: "owner-uid",
+          members: { "owner-uid": "admin", "admin-uid": "admin" },
+          memberUids: ["owner-uid", "admin-uid"],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+      });
+      const db = testEnv!.authenticatedContext("admin-uid").firestore();
+
+      await assertFails(deleteDoc(doc(db, "teams", teamId)));
+    });
+
+    it("owner can delete players and parent targets during cleanup", async () => {
+      const uid = "owner-uid";
+      const teamId = "team-1";
+      await seedTeam(teamId, uid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const adminDb = context.firestore();
+        await setDoc(doc(adminDb, "teams", teamId, "players", "p1"), {
+          name: "Alex",
+        });
+        await setDoc(doc(adminDb, "teams", teamId, "parentInviteTargets", "t1"), {
+          parentName: "Jane",
+          email: "jane@example.com",
+        });
+        await setDoc(doc(adminDb, "teamInvites", "invite-1"), {
+          code: "invite-1",
+          teamId,
+          teamName: "Test Team",
+          role: "parent",
+          createdBy: uid,
+          active: true,
+        });
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(deleteDoc(doc(db, "teams", teamId, "players", "p1")));
+      await assertSucceeds(
+        deleteDoc(doc(db, "teams", teamId, "parentInviteTargets", "t1")),
+      );
+      await assertSucceeds(deleteDoc(doc(db, "teamInvites", "invite-1")));
     });
   });
 
