@@ -2617,7 +2617,6 @@ function RoomContent() {
       const player =
         (isSyncLayoutMode(roomViewModeRef.current) &&
           state.angles.length > 1 &&
-          coachViewModeRef.current === "multi" &&
           syncPlayerRefs.current[state.currentAngleId]) ||
         (playerRef.current?.getInternalPlayer() as
           | YouTubePlayer
@@ -3466,7 +3465,6 @@ function RoomContent() {
       if (!isSyncLayoutMode(roomViewModeRef.current)) return;
       if (!opts.allowWhileManualSync && isManualSyncModeRef.current) return;
       if (!isHostRef.current) return;
-      if (coachViewModeRef.current !== "multi") return;
       const s = roomStateRef.current;
       if (!s?.angles?.length || s.angles.length < 2) return;
 
@@ -4095,7 +4093,7 @@ function RoomContent() {
       setFfMode(0);
       void (async () => {
         const cur = roomStateRef.current;
-        if (!cur || coachViewModeRef.current !== "multi") return;
+        if (!cur || cur.angles.length < 2) return;
         const p = getPlayer();
         const t = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
         applyHostMultiViewSecondaryDirect({
@@ -4113,7 +4111,7 @@ function RoomContent() {
     setFfMode(next);
     void (async () => {
       const cur = roomStateRef.current;
-      if (!cur || coachViewModeRef.current !== "multi") return;
+      if (!cur || cur.angles.length < 2) return;
       const p = getPlayer();
       const t = await readYoutubeCurrentTime(p, cur.currentTime ?? 0);
       applyHostMultiViewSecondaryDirect({
@@ -5598,6 +5596,11 @@ function RoomContent() {
       const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
       const tRaw = await readYoutubeCurrentTime(player, fb);
       const t = Math.max(tRaw, syncAnchorTime);
+      try {
+        player?.pauseVideo?.();
+      } catch {
+        /* YouTube API */
+      }
       writeImmediatePlaybackCommand("pause", {
         isPlaying: false,
         currentTime: t,
@@ -5624,6 +5627,18 @@ function RoomContent() {
       const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
       const back = await clampHostSeekBackwardSeconds(player, fb, 10);
       const clamped = Math.max(syncAnchorTime, back);
+      try {
+        player?.seekTo?.(clamped, true);
+      } catch {
+        /* YouTube API */
+      }
+      if (playing) {
+        try {
+          player?.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -5650,6 +5665,18 @@ function RoomContent() {
       const syncAnchorTime = roomStateRef.current?.syncAnchorTime ?? 0;
       const back = await clampHostSeekBackwardSeconds(player, fb, 30);
       const clamped = Math.max(syncAnchorTime, back);
+      try {
+        player?.seekTo?.(clamped, true);
+      } catch {
+        /* YouTube API */
+      }
+      if (playing) {
+        try {
+          player?.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
       writeImmediatePlaybackCommand("seek", {
         isPlaying: playing,
         currentTime: clamped,
@@ -6099,7 +6126,6 @@ function RoomContent() {
         }
         return;
       }
-      if (coachViewModeRef.current !== "multi") return;
       const player = getPlayer();
       const fb = cur.currentTime ?? 0;
       const t = await readYoutubeCurrentTime(player, fb);
