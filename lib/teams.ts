@@ -211,16 +211,6 @@ export async function createTeam(
     ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
   };
 
-  console.log("Creating team", {
-    uid: effectiveUid,
-    path: ref.path,
-    payload: {
-      ...payload,
-      createdAt: "<serverTimestamp>",
-      updatedAt: "<serverTimestamp>",
-    },
-  });
-
   try {
     await setDoc(ref, payload);
   } catch (error) {

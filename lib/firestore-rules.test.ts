@@ -7,7 +7,16 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, setDoc, Timestamp } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  Timestamp,
+  where,
+} from "firebase/firestore";
 
 const RULES = readFileSync(join(process.cwd(), "firestore.rules"), "utf8");
 const PROJECT_ID = "film-room-rules-test";
@@ -49,6 +58,19 @@ describeRules("firestore rules (emulator)", () => {
         memberUids: [uid],
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
+      });
+    });
+  }
+
+  async function seedGame(
+    gameId: string,
+    data: Record<string, unknown>,
+  ) {
+    await testEnv!.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), "games", gameId), {
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        ...data,
       });
     });
   }
@@ -97,6 +119,41 @@ describeRules("firestore rules (emulator)", () => {
     });
   });
 
+  describe("team query reads", () => {
+    it("owner can query teams by memberUids", async () => {
+      const uid = "coach-uid";
+      await seedTeam("team-1", uid);
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(
+        getDocs(
+          query(collection(db, "teams"), where("memberUids", "array-contains", uid)),
+        ),
+      );
+    });
+
+    it("non-member cannot read team doc", async () => {
+      await seedTeam("team-1", "coach-uid");
+      const db = testEnv!.authenticatedContext("other-uid").firestore();
+
+      await assertFails(getDoc(doc(db, "teams", "team-1")));
+    });
+
+    it("non-member cannot query another user teams", async () => {
+      await seedTeam("team-1", "coach-uid");
+      const db = testEnv!.authenticatedContext("other-uid").firestore();
+
+      await assertFails(
+        getDocs(
+          query(
+            collection(db, "teams"),
+            where("memberUids", "array-contains", "coach-uid"),
+          ),
+        ),
+      );
+    });
+  });
+
   describe("roster import", () => {
     it("allows team owner to create players and parent invite targets", async () => {
       const uid = "coach-uid";
@@ -124,6 +181,79 @@ describeRules("firestore rules (emulator)", () => {
           updatedAt: Timestamp.now(),
         }),
       );
+    });
+  });
+
+  describe("game query reads", () => {
+    it("contributor can query games by memberUids", async () => {
+      const uid = "editor-uid";
+      await seedGame("game-1", {
+        title: "vs Hawks",
+        ownerId: uid,
+        contributors: { [uid]: "owner" },
+        memberUids: [uid],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(
+        getDocs(
+          query(collection(db, "games"), where("memberUids", "array-contains", uid)),
+        ),
+      );
+    });
+
+    it("standalone game contributor can read own game", async () => {
+      const uid = "editor-uid";
+      await seedGame("game-1", {
+        title: "vs Hawks",
+        ownerId: uid,
+        contributors: { [uid]: "editor" },
+        memberUids: [uid],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext(uid).firestore();
+
+      await assertSucceeds(getDoc(doc(db, "games", "game-1")));
+    });
+
+    it("authenticated user can read public game", async () => {
+      await seedGame("game-public", {
+        title: "Public scrimmage",
+        ownerId: "owner-uid",
+        contributors: { "owner-uid": "owner" },
+        memberUids: ["owner-uid"],
+        visibility: "public",
+      });
+      const db = testEnv!.authenticatedContext("viewer-uid").firestore();
+
+      await assertSucceeds(getDoc(doc(db, "games", "game-public")));
+    });
+
+    it("authenticated user can read link game", async () => {
+      await seedGame("game-link", {
+        title: "Link share",
+        ownerId: "owner-uid",
+        contributors: { "owner-uid": "owner" },
+        memberUids: ["owner-uid"],
+        visibility: "link",
+      });
+      const db = testEnv!.authenticatedContext("viewer-uid").firestore();
+
+      await assertSucceeds(getDoc(doc(db, "games", "game-link")));
+    });
+
+    it("non-member cannot read private game", async () => {
+      await seedGame("game-private", {
+        title: "Private",
+        ownerId: "owner-uid",
+        contributors: { "owner-uid": "owner" },
+        memberUids: ["owner-uid"],
+        visibility: "private",
+      });
+      const db = testEnv!.authenticatedContext("other-uid").firestore();
+
+      await assertFails(getDoc(doc(db, "games", "game-private")));
     });
   });
 });

@@ -64,6 +64,13 @@ service cloud.firestore {
              request.resource.data.members[request.auth.uid] == 'admin' &&
              request.resource.data.memberUids.hasAll([request.auth.uid]);
     }
+    /** Query-compatible team read (resource.data — not get()). */
+    function canReadTeamResource() {
+      return request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.memberUids
+      );
+    }
     function parentInviteEmailMatchesAuth() {
       return request.auth != null &&
              request.auth.token.email is string &&
@@ -75,7 +82,7 @@ service cloud.firestore {
     }
 
     match /teams/{teamId} {
-      allow read: if request.auth != null && isTeamMember(teamId, request.auth.uid);
+      allow read: if canReadTeamResource();
 
       // Team creation: auth only — must NOT call isTeamAdmin/isTeamMember (doc does not exist yet).
       allow create: if isValidNewTeamCreate();
@@ -202,6 +209,22 @@ service cloud.firestore {
              gameData().visibility == 'link' ||
              (gameHasTeam() && isTeamMember(gameTeamId(), uid));
     }
+    /** Query-compatible game read (resource.data — not get()). */
+    function canReadGameResource() {
+      return request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        resource.data.contributors[request.auth.uid] != null ||
+        request.auth.uid in resource.data.memberUids ||
+        resource.data.visibility == 'public' ||
+        resource.data.visibility == 'link'
+      );
+    }
+    /** Team member read for games linked to a team (single-doc; uses get). */
+    function canReadGameViaTeam(uid) {
+      return 'teamId' in resource.data &&
+             resource.data.teamId is string &&
+             isTeamMember(resource.data.teamId, uid);
+    }
 
     function isGameOwnerOf(gid) {
       return request.auth != null &&
@@ -214,7 +237,8 @@ service cloud.firestore {
     }
 
     match /games/{gameId} {
-      allow read: if request.auth != null && canReadGame(request.auth.uid);
+      allow read: if canReadGameResource() ||
+                     (request.auth != null && canReadGameViaTeam(request.auth.uid));
 
       // Standalone games (no teamId) or team games created by admin/coach.
       allow create: if request.auth != null &&

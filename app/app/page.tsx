@@ -169,6 +169,8 @@ export default function DashboardPage() {
     try {
       const rows = await listSavedSessions(user.uid);
       setSessions(rows);
+    } catch (error) {
+      console.error("[dashboard:savedSessions:error]", error);
     } finally {
       setListLoading(false);
     }
@@ -183,6 +185,8 @@ export default function DashboardPage() {
     setGamesLoading(true);
     try {
       setGames(await listMyGames(user.uid));
+    } catch (error) {
+      console.error("[dashboard:games:error]", error);
     } finally {
       setGamesLoading(false);
     }
@@ -192,7 +196,10 @@ export default function DashboardPage() {
     if (!user) return;
     setTeamsLoading(true);
     try {
-      setTeams(await listMyTeams(user.uid));
+      const rows = await listMyTeams(user.uid);
+      setTeams(rows);
+    } catch (error) {
+      console.error("[dashboard:teams:error]", error);
     } finally {
       setTeamsLoading(false);
     }
