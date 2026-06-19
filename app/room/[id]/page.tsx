@@ -56,6 +56,7 @@ import {
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
 import { addGameEvent } from "@/lib/games";
+import { roomGameMarkToTimelineEvent } from "@/lib/game-events";
 import CutStudio from "@/components/CutStudio";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
@@ -3116,6 +3117,17 @@ function RoomContent() {
           ...(createdByName ? { createdByName } : {}),
         };
 
+        const linkedGameId = gameIdFromUrl?.trim() ?? "";
+        if (linkedGameId && user?.uid) {
+          const gameEvent = roomGameMarkToTimelineEvent(markPayload, {
+            sourceId: angleId,
+          });
+          await addGameEvent(linkedGameId, {
+            ...gameEvent,
+            createdBy: user.uid,
+          });
+        }
+
         await set(newMarkRef, markPayload);
         await set(ref(db, `rooms/${roomId}/coachAlerts/latest`), alertPayload);
 
@@ -3125,27 +3137,8 @@ function RoomContent() {
           timestamp,
           angleId: angleId ?? null,
           createdByRole,
+          gameId: linkedGameId || null,
         });
-
-        // Phase 0 bridge (best-effort, isolated): if this room is tied to a
-        // durable Game, mirror the mark as a `coach_mark` timeline event.
-        // Never blocks or fails mark creation.
-        if (gameIdFromUrl && user?.uid) {
-          try {
-            await addGameEvent(gameIdFromUrl, {
-              type: "coach_mark",
-              t: timestamp,
-              label: trimmed,
-              createdBy: user.uid,
-              createdByRole,
-              ...(angleId ? { sourceId: angleId } : {}),
-              ...(createdByName ? { createdByName } : {}),
-              ...(angleId ? { payload: { angleId } } : {}),
-            });
-          } catch (gameErr) {
-            console.warn("[room] game coach_mark write-through failed:", gameErr);
-          }
-        }
       } catch (e) {
         window.alert(
           e instanceof Error ? e.message : "Could not save mark. Try again.",
@@ -3177,58 +3170,61 @@ function RoomContent() {
       const player = syncPlayerRefs.current[angleId];
       if (!player) return;
 
-      const anchor = Math.max(0, rs.currentTime ?? 0, rs.syncAnchorTime ?? 0);
-      const target =
-        angleId === rs.currentAngleId
-          ? anchor
-          : Math.max(0, anchor + (angle.offsetFromGameTime ?? 0));
       const isPlaying = rs.isPlaying;
-      syncLog("sync angle ready apply", { angleId, target, isPlaying });
       void reason;
 
       void (async () => {
+        let anchor = Math.max(0, rs.currentTime ?? 0, rs.syncAnchorTime ?? 0);
+        if (isHostRef.current && !isManualSyncModeRef.current) {
+          const primary = syncPlayerRefs.current[rs.currentAngleId];
+          if (primary) {
+            try {
+              const live = await readYoutubeCurrentTime(primary, anchor);
+              anchor = Math.max(live, rs.syncAnchorTime ?? 0);
+            } catch {
+              /* YouTube API */
+            }
+          }
+        }
+        const target =
+          angleId === rs.currentAngleId
+            ? anchor
+            : Math.max(0, anchor + (angle.offsetFromGameTime ?? 0));
+        syncLog("sync angle ready apply", { angleId, target, isPlaying });
+
         const rate = rs.playbackRate ?? DEFAULT_PLAYBACK_RATE;
         try {
           await safeSetPlaybackRate(player, rate);
         } catch {
           /* YouTube API */
         }
-        const liveMultiAngle =
-          rs.sourceType === "live" && rs.angles.length > 1;
-        if (liveMultiAngle) {
-          try {
-            const ct = await readYoutubeCurrentTime(player, target);
-            if (Math.abs(ct - target) < VIEWER_SEEK_DEADBAND_S) {
-              syncLog("LIVE SEEK skip (deadband)", {
-                reason,
-                angleId,
-                target,
-                ct,
-                commandId: rs.playbackCommand?.commandId ?? null,
-              });
-            } else {
-              syncLog("LIVE SEEK", {
-                reason,
-                angleId,
-                target,
-                commandId: rs.playbackCommand?.commandId ?? null,
-              });
-              player.seekTo?.(target, true);
-            }
-          } catch {
-            syncLog("LIVE SEEK", {
+        try {
+          const ct = await readYoutubeCurrentTime(player, target);
+          if (Math.abs(ct - target) < VIEWER_SEEK_DEADBAND_S) {
+            syncLog("sync angle seek skip (deadband)", {
               reason,
               angleId,
               target,
+              ct,
               commandId: rs.playbackCommand?.commandId ?? null,
             });
-            try {
-              player.seekTo?.(target, true);
-            } catch {
-              /* YouTube API */
-            }
+          } else {
+            syncLog("sync angle seek", {
+              reason,
+              angleId,
+              target,
+              ct,
+              commandId: rs.playbackCommand?.commandId ?? null,
+            });
+            player.seekTo?.(target, true);
           }
-        } else {
+        } catch {
+          syncLog("sync angle seek", {
+            reason,
+            angleId,
+            target,
+            commandId: rs.playbackCommand?.commandId ?? null,
+          });
           try {
             player.seekTo?.(target, true);
           } catch {
@@ -3287,28 +3283,6 @@ function RoomContent() {
       if (coachViewMode !== "single") setCoachViewMode("single");
     }
   }, [isHost, roomState, coachViewMode]);
-
-  /** When host enters Sync + Multi, nudge every mounted angle once iframes are up. */
-  useEffect(() => {
-    if (!isHost) return;
-    if (!isSyncLayoutMode(roomViewMode) || coachViewMode !== "multi") return;
-    const s = roomStateRef.current;
-    if (!s || s.angles.length < 2) return;
-    const tid = window.setTimeout(() => {
-      const snap = roomStateRef.current;
-      if (!snap || snap.angles.length < 2) return;
-      for (const a of snap.angles) {
-        applySyncStateToAnglePlayer(a.id, "enter-sync-multi");
-      }
-    }, 320);
-    return () => window.clearTimeout(tid);
-  }, [
-    isHost,
-    roomViewMode,
-    coachViewMode,
-    stackedAngleIdsKey,
-    applySyncStateToAnglePlayer,
-  ]);
 
   const syncSecondaryPlayersOnce = useCallback((reason: string) => {
     if (!isSyncLayoutMode(roomViewModeRef.current)) return;
@@ -3680,15 +3654,6 @@ function RoomContent() {
     },
     [],
   );
-
-  /** First time entering Multi View: align secondary once (host). */
-  useEffect(() => {
-    if (!isHost || coachViewMode !== "multi" || isManualSyncMode) return;
-    const tid = window.setTimeout(() => {
-      syncSecondaryPlayersOnce("enter-multi-view");
-    }, 220);
-    return () => window.clearTimeout(tid);
-  }, [isHost, coachViewMode, isManualSyncMode, syncSecondaryPlayersOnce]);
 
   useEffect(() => {
     if (coachViewMode !== "multi") {
@@ -6776,6 +6741,10 @@ function RoomContent() {
       roomState &&
       (roomState.manualSyncLocked === true || manualSyncManualCount >= 1),
   );
+  /** Coach marks toolbar writes game marks; legacy Mark Play chapters are clip-only without a game. */
+  const showHostMarkPlay = Boolean(
+    isHost && !gameIdFromUrl?.trim() && !isSyncLayoutMode(roomViewMode),
+  );
 
   const hostMultiAngles =
     isHost &&
@@ -7886,17 +7855,19 @@ function RoomContent() {
               >
                 +1s
               </button>
-              <button
-                type="button"
-                onClick={() => void handleMarkPlay()}
-                className={`${hostChip} ${
-                  markPlayState === "marked"
-                    ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
-                    : ""
-                }`}
-              >
-                {markPlayState === "marked" ? "Marked" : "Mark Play"}
-              </button>
+              {showHostMarkPlay ? (
+                <button
+                  type="button"
+                  onClick={() => void handleMarkPlay()}
+                  className={`${hostChip} ${
+                    markPlayState === "marked"
+                      ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                      : ""
+                  }`}
+                >
+                  {markPlayState === "marked" ? "Marked" : "Mark Play"}
+                </button>
+              ) : null}
               {isLiveRoom ? (
                 <button
                   type="button"
@@ -9016,17 +8987,19 @@ function RoomContent() {
                   >
                     -10s
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleMarkPlay()}
-                    className={`${hostChipClean} ${
-                      markPlayState === "marked"
-                        ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
-                        : ""
-                    }`}
-                  >
-                    {markPlayState === "marked" ? "Marked" : "Mark Play"}
-                  </button>
+                  {showHostMarkPlay ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleMarkPlay()}
+                      className={`${hostChipClean} ${
+                        markPlayState === "marked"
+                          ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                          : ""
+                      }`}
+                    >
+                      {markPlayState === "marked" ? "Marked" : "Mark Play"}
+                    </button>
+                  ) : null}
                   {isLiveRoom ? (
                     <button
                       type="button"
@@ -9153,17 +9126,19 @@ function RoomContent() {
                       >
                         -10s
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleMarkPlay()}
-                        className={`${hostChip} ${
-                          markPlayState === "marked"
-                            ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
-                            : ""
-                        }`}
-                      >
-                        {markPlayState === "marked" ? "Marked" : "Mark Play"}
-                      </button>
+                      {showHostMarkPlay ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleMarkPlay()}
+                          className={`${hostChip} ${
+                            markPlayState === "marked"
+                              ? "border-emerald-500/55 bg-emerald-950/50 font-semibold text-emerald-100 ring-2 ring-emerald-400/40 shadow-[0_0_12px_-4px_rgba(16,185,129,0.45)]"
+                              : ""
+                          }`}
+                        >
+                          {markPlayState === "marked" ? "Marked" : "Mark Play"}
+                        </button>
+                      ) : null}
                       {isLiveRoom ? (
                         <button
                           type="button"
