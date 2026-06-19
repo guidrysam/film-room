@@ -6887,7 +6887,7 @@ function RoomContent() {
   if (!effectiveVideoId) {
     const invalidMsg =
       videoFromUrl?.trim() && !videoIdFromUrl
-        ? "Invalid YouTube link."
+        ? "Film Room currently works best with YouTube links. Please paste a YouTube video or live stream URL."
         : !videoFromUrl?.trim()
           ? "No video selected. Add a ?video= link with a YouTube id, or open a room that already has a session."
           : "Missing video id.";

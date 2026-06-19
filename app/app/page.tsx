@@ -32,6 +32,7 @@ import {
   teamSetupUrl,
 } from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import { NON_YOUTUBE_LINK_MESSAGE } from "@/lib/public-copy";
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-50 placeholder:text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -235,7 +236,7 @@ export default function DashboardPage() {
   const startNewSession = () => {
     const videoId = extractYouTubeVideoId(url);
     if (!videoId) {
-      alert("Invalid YouTube link");
+      alert(NON_YOUTUBE_LINK_MESSAGE);
       return;
     }
     const roomId = Math.random().toString(36).substring(2, 8);

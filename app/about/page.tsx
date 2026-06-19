@@ -77,12 +77,12 @@ export default function AboutPage() {
             Film Room
           </p>
           <h1 className="mb-3 text-3xl font-semibold tracking-tight text-white sm:text-5xl">
-            Watch film together, anywhere.
+            Turn YouTube videos into a shared film room.
           </h1>
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-zinc-200 sm:text-base">
-            Film Room lets coaches, teachers, and teams teach from video in real
-            time. The host controls playback, speed, chapters, clips, and
-            telestration — everyone else stays in sync.
+            Film Room is built on YouTube. Coaches, teachers, and teams watch
+            together in sync while the host controls playback, speed, chapters,
+            clips, and telestration.
           </p>
         </header>
 

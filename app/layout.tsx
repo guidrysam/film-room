@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Film Room",
   description:
-    "Watch film together, anywhere — synced playback for coaches and teams.",
+    "Film Room turns YouTube sports video into synchronized team review, coach marks, stats, and player highlights.",
 };
 
 export default function RootLayout({
