@@ -6,7 +6,6 @@ import {
   useState,
   type PointerEvent,
   type ReactNode,
-  type WheelEvent,
 } from "react";
 
 const MIN_SCALE = 1;
@@ -59,16 +58,6 @@ export function VideoZoomStage({
     applyScale(MIN_SCALE);
   }, [applyScale]);
 
-  const onWheel = useCallback(
-    (e: WheelEvent<HTMLDivElement>) => {
-      if (scale <= MIN_SCALE && e.deltaY > 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      zoomBy(e.deltaY < 0 ? STEP : -STEP);
-    },
-    [scale, zoomBy],
-  );
-
   const onPanPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (drawLocked || scale <= MIN_SCALE) return;
     e.preventDefault();
@@ -119,10 +108,7 @@ export function VideoZoomStage({
       : undefined;
 
   return (
-    <div
-      className={`relative isolate overflow-hidden ${className}`}
-      onWheel={onWheel}
-    >
+    <div className={`relative isolate overflow-hidden ${className}`}>
       <div
         className="relative h-full w-full will-change-transform"
         style={{
