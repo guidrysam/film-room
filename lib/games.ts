@@ -658,24 +658,60 @@ export function logGameAttachPreflight(
   teamRole?: GameTeamRole | null,
 ): void {
   const authUid = auth.currentUser?.uid ?? null;
-  console.info("[game:attach:preflight]", {
-    uid,
-    authUid,
-    authMatchesPassed: authUid === uid,
-    gameId: game.id,
-    ownerId: game.ownerId,
-    ownerIdMatchesAuth: game.ownerId === authUid,
-    memberUids: game.memberUids,
-    inMemberUids: authUid ? game.memberUids.includes(authUid) : false,
-    contributors: game.contributors,
-    contributorRole: authUid ? (game.contributors[authUid] ?? null) : null,
-    teamId: game.teamId ?? null,
-    teamRole: teamRole ?? null,
-    canEditGame: authUid ? canEditGame(game, authUid) : false,
-    canContributeSources: authUid
-      ? canContributeGameSources(game, authUid, teamRole)
-      : false,
-  });
+  console.info(
+    "[game:attach:preflight]",
+    JSON.stringify(
+      {
+        uid,
+        authUid,
+        authMatchesPassed: authUid === uid,
+        gameId: game.id,
+        ownerId: game.ownerId,
+        ownerIdMatchesAuth: game.ownerId === authUid,
+        memberUids: game.memberUids,
+        inMemberUids: authUid ? game.memberUids.includes(authUid) : false,
+        contributors: game.contributors,
+        contributorRole: authUid ? (game.contributors[authUid] ?? null) : null,
+        teamId: game.teamId ?? null,
+        teamRole: teamRole ?? null,
+        canEditGame: authUid ? canEditGame(game, authUid) : false,
+        canContributeSources: authUid
+          ? canContributeGameSources(game, authUid, teamRole)
+          : false,
+      },
+      null,
+      0,
+    ),
+  );
+}
+
+/** Team coaches/parents self-add as game editor before first attach. */
+export async function bootstrapGameAccessForAttach(
+  game: Game,
+  uid: string,
+  teamRole?: GameTeamRole | null,
+): Promise<Game> {
+  if (canEditGame(game, uid)) return game;
+  if (!game.teamId || !teamRole) return game;
+  if (teamRole !== "admin" && teamRole !== "coach" && teamRole !== "parent") {
+    return game;
+  }
+  if (uid in game.contributors) return game;
+
+  try {
+    await updateDoc(doc(gamesCol(), game.id), {
+      [`contributors.${uid}`]: "editor",
+      memberUids: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+    });
+    return (await getGame(game.id, { uid })) ?? game;
+  } catch (err) {
+    logFirestorePermissionError("update", `games/${game.id}`, err, {
+      uid,
+      reason: "bootstrapGameAccessForAttach",
+    });
+    return game;
+  }
 }
 
 export async function addGameSource(
@@ -698,6 +734,7 @@ export async function addGameSource(
     if (game && actorUid) {
       logGameAttachPreflight(game, actorUid, opts?.teamRole);
       game = await ensureGameAccessDocument(game, actorUid);
+      game = await bootstrapGameAccessForAttach(game, actorUid, opts?.teamRole);
       accessDenorm = gameAccessDenormFromGame(game);
     } else if (game) {
       accessDenorm = gameAccessDenormFromGame(game);
