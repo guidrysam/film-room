@@ -6384,10 +6384,18 @@ function RoomContent() {
       );
     };
     const s = roomStateRef.current;
+    const syncMultiCoach =
+      Boolean(
+        s &&
+          isSyncLayoutMode(roomViewModeRef.current) &&
+          s.angles.length > 1 &&
+          coachViewModeRef.current === "multi",
+      );
     if (
       !s ||
       !isSyncLayoutMode(roomViewModeRef.current) ||
-      s.angles.length <= 1
+      s.angles.length <= 1 ||
+      syncMultiCoach
     ) {
       dispatchTelestratorClear({ scope: "all" });
       void remove(ref(db, `rooms/${roomId}/telestrator/strokes`));
@@ -7123,48 +7131,6 @@ function RoomContent() {
           </div>
         ) : null}
 
-        <div className="mb-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm">
-          <GameMarksToolbar
-            busy={gameMarksBusy}
-            onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
-            onCustomMark={handleGameMarkCustomPrompt}
-          />
-          {gameMarks.length > 0 ? (
-            <div className="mt-3 max-h-44 overflow-y-auto border-t border-white/[0.08] pt-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                Recent marks
-              </div>
-              <ul className="mt-1.5 space-y-1.5">
-                {gameMarks.slice(0, 40).map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/[0.06] bg-black/25 px-2 py-1.5 text-[11px]"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <span className="font-medium text-zinc-100">{m.label}</span>
-                      <span className="ml-2 font-mono text-zinc-400 tabular-nums">
-                        {formatCountdownMmSs(m.timestamp)}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md border border-blue-500/40 bg-blue-950/50 px-2 py-0.5 text-[10px] font-semibold text-blue-100 transition hover:bg-blue-900/55"
-                      onClick={() => {
-                        void handleJumpToMarkReplay({
-                          timestamp: m.timestamp,
-                          angleId: m.angleId,
-                        });
-                      }}
-                    >
-                      Jump
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-
         <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
           <div className="md:col-span-2">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
@@ -7827,8 +7793,14 @@ function RoomContent() {
 
         {isHost ? (
           <div className="mt-3 w-full">
+            <GameMarksToolbar
+              variant="band"
+              busy={gameMarksBusy}
+              onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+              onCustomMark={handleGameMarkCustomPrompt}
+            />
             <div
-              className={`${hostControlsBar} ${
+              className={`${hostControlsBar} mt-2 ${
                 isManualSyncMode ? "pointer-events-none opacity-35" : ""
               }`}
             >
