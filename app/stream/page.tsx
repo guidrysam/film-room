@@ -20,6 +20,13 @@ import {
   isPersistentChannelOrHandleLiveUrl,
   parsePersistentLiveUrlTarget,
 } from "@/lib/youtube-id";
+import { useAuth } from "@/components/AuthProvider";
+import {
+  deleteCameraPresetFromCloud,
+  loadCameraPresets,
+  mergeCameraPresets,
+  saveCameraPresetToCloud,
+} from "@/lib/camera-presets";
 
 const EMBED_NOT_ALLOWED_MESSAGE =
   "YouTube did not allow this channel/broadcast to be embedded. Open YouTube Studio and enable embedding for the live broadcast/channel, or use fallback sideline link.";
@@ -368,6 +375,8 @@ function StreamRoomPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
   const [angles, setAnglesState] = useState<StreamAngleRow[]>(() => defaultRows());
 
   const setAngles = useCallback((update: SetStateAction<StreamAngleRow[]>) => {
@@ -480,6 +489,40 @@ function StreamRoomPageInner() {
       parseCamerasFromStorage(window.localStorage.getItem(CAMERAS_STORAGE_KEY)),
     );
   }, []);
+
+  // Sync presets with the user's account: Firestore is authoritative, local
+  // cache fills in offline. Local-only presets are migrated up to the cloud so
+  // existing users keep their reusable stream key after Safari/iOS evicts it.
+  useEffect(() => {
+    if (!uid || typeof window === "undefined") return;
+    let active = true;
+    void (async () => {
+      try {
+        const local = parseCamerasFromStorage(
+          window.localStorage.getItem(CAMERAS_STORAGE_KEY),
+        );
+        const cloud = await loadCameraPresets(uid);
+        if (!active) return;
+        const merged = mergeCameraPresets(cloud, local);
+        setSavedCameras(merged);
+        window.localStorage.setItem(
+          CAMERAS_STORAGE_KEY,
+          JSON.stringify(merged),
+        );
+        const cloudIds = new Set(cloud.map((c) => c.id));
+        for (const preset of local) {
+          if (!cloudIds.has(preset.id)) {
+            void saveCameraPresetToCloud(uid, preset).catch(() => {});
+          }
+        }
+      } catch {
+        // Offline or rules not yet deployed — keep the local cache.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [uid]);
 
   const copyText = useCallback(async (label: string, text: string) => {
     const t = text.trim();
@@ -827,7 +870,8 @@ function StreamRoomPageInner() {
       }
       return next;
     });
-  }, [ytCreateResult, cameraPresetName]);
+    if (uid) void saveCameraPresetToCloud(uid, preset).catch(() => {});
+  }, [ytCreateResult, cameraPresetName, uid]);
 
   const fillFirstAngleWithUrl = useCallback(
     (
@@ -944,6 +988,16 @@ function StreamRoomPageInner() {
         }
         return next;
       });
+      if (uid) {
+        void saveCameraPresetToCloud(uid, {
+          ...cam,
+          lastVerifiedAt: verifiedAt,
+          lastVerifiedStreamTitle:
+            typeof ok.streamTitle === "string" ? ok.streamTitle.trim() : "",
+          lastVerifiedStreamStatus:
+            typeof ok.streamStatus === "string" ? ok.streamStatus.trim() : "",
+        }).catch(() => {});
+      }
       setCameraVerifySummary({
         camId: cam.id,
         streamId: ok.streamId ?? cam.streamId,
@@ -965,7 +1019,7 @@ function StreamRoomPageInner() {
     } finally {
       setVerifyCameraLoadingId(null);
     }
-  }, [verifyCameraLoadingId]);
+  }, [verifyCameraLoadingId, uid]);
 
   const deleteCameraPreset = useCallback(
     (cam: YouTubeCameraPreset) => {
@@ -980,8 +1034,9 @@ function StreamRoomPageInner() {
         }
         return next;
       });
+      if (uid) void deleteCameraPresetFromCloud(uid, cam.id).catch(() => {});
     },
-    [setSavedCameras],
+    [setSavedCameras, uid],
   );
 
   const startSessionWithCamera = useCallback(
@@ -1926,8 +1981,10 @@ function StreamRoomPageInner() {
                 </button>
                 <span className="text-xs text-zinc-500">
                   Saves stream id, RTMP, optional channel reference URLs — never auto-loads
-                  playback into angles (use Create / Get Today’s Watch Link). Stored in{" "}
-                  {CAMERAS_STORAGE_KEY}.
+                  playback into angles (use Create / Get Today’s Watch Link).{" "}
+                  {uid
+                    ? "Synced to your account and cached on this device."
+                    : "Cached on this device only — sign in to sync to your account."}
                 </span>
               </div>
             </div>

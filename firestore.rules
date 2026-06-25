@@ -25,6 +25,10 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    match /users/{userId}/cameraPresets/{presetId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /{path=**}/savedSessions/{sessionId} {
       allow read: if isPublicSharedSession();
     }
