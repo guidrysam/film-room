@@ -1787,6 +1787,16 @@ function RoomContent() {
   const isLiveRoom = roomState?.sourceType === "live";
 
   /**
+   * Surfaced when the YouTube IFrame reports a fatal embed error (e.g. 101/150
+   * "embedding disabled", 2 "bad id", 100/153). Without this the player just
+   * renders black while the same video still plays on youtube.com.
+   */
+  const [embedError, setEmbedError] = useState<{
+    code: number;
+    videoId: string;
+  } | null>(null);
+
+  /**
    * Host: minimal native chrome + no iframe fullscreen (app controls drawing / layout).
    * Viewer: keep defaults so playback unlock and scrubbing stay familiar.
    * Live sessions: suggest muted autoplay-friendly embed params (host still unmutes after play).
@@ -1797,6 +1807,9 @@ function RoomContent() {
       height: YOUTUBE_PLAYER_OPTS_BASE.height,
       playerVars: {
         ...YOUTUBE_PLAYER_OPTS_BASE.playerVars,
+        ...(typeof window !== "undefined"
+          ? { origin: window.location.origin }
+          : {}),
         ...(isLiveRoom
           ? {
               autoplay: 1,
@@ -4503,8 +4516,31 @@ function RoomContent() {
    * Everyone: seek slightly before the true end + pause locally.
    * Host: also writes paused state to the room so viewers stay in sync.
    */
+  /** Fatal embed errors from the YouTube IFrame API (codes per YT.PlayerError). */
+  const handlePlayerError = useCallback(
+    (event: { data?: number }) => {
+      const code = typeof event?.data === "number" ? event.data : -1;
+      const videoId = (
+        roomStateRef.current?.videoId ??
+        activeYouTubeVideoId ??
+        ""
+      ).trim();
+      console.warn("YT_EMBED_ERROR", { code, videoId });
+      // 2 = bad id, 5 = HTML5 error, 100 = removed/private,
+      // 101 & 150 = embedding disabled by owner, 153 = no referer.
+      if ([2, 5, 100, 101, 150, 153].includes(code)) {
+        setEmbedError({ code, videoId });
+      }
+    },
+    [activeYouTubeVideoId],
+  );
+
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
+      // Any successful playback clears a previously surfaced embed error.
+      if (event.data === YT_PLAYING || event.data === YT_BUFFERING) {
+        setEmbedError((prev) => (prev ? null : prev));
+      }
       if (isHostRef.current && event.data !== hostLastYtStateCodeRef.current) {
         hostLastYtStateCodeRef.current = event.data;
         syncLog("host yt player state", {
@@ -7798,7 +7834,8 @@ function RoomContent() {
                               }
                               className="absolute left-0 top-0 h-full w-full"
                               iframeClassName="absolute left-0 top-0 h-full w-full"
-                              opts={youtubePlayerOpts}
+                              onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                             />
                           </YoutubePointerGate>
                           {debugUiEnabled ? (
@@ -7985,7 +8022,8 @@ function RoomContent() {
                               }}
                               className="absolute left-0 top-0 h-full w-full"
                               iframeClassName="absolute left-0 top-0 h-full w-full"
-                              opts={youtubePlayerOpts}
+                              onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                             />
                           {roomId && isMain ? (
                             <TelestratorOverlay
@@ -8094,6 +8132,7 @@ function RoomContent() {
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
@@ -8603,6 +8642,46 @@ function RoomContent() {
 
   return (
     <>
+    {embedError ? (
+      <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-3 pt-3">
+        <div className="flex w-full max-w-2xl flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-950/90 px-4 py-3 text-sm text-amber-50 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="font-semibold text-amber-100">
+              This stream can’t play embedded here
+            </p>
+            <p className="mt-0.5 text-[12px] leading-snug text-amber-100/85">
+              {embedError.code === 101 || embedError.code === 150
+                ? "YouTube has embedding disabled for this broadcast. Open YouTube Studio → the live broadcast → enable “Allow embedding”, or watch on YouTube."
+                : embedError.code === 100
+                  ? "The video is private or was removed. Re-create today’s watch link from Stream Room."
+                  : embedError.code === 2
+                    ? "The video id is invalid. Re-create today’s watch link from Stream Room."
+                    : "YouTube reported a playback error for the embedded player. You can still watch on YouTube."}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {embedError.videoId &&
+            /^[a-zA-Z0-9_-]{11}$/.test(embedError.videoId) ? (
+              <a
+                href={`https://www.youtube.com/watch?v=${embedError.videoId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md border border-amber-300/40 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/30"
+              >
+                Open on YouTube
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setEmbedError(null)}
+              className="rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-xs font-medium text-amber-50/90 transition hover:bg-white/[0.12]"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
         cleanMode
@@ -9135,6 +9214,7 @@ function RoomContent() {
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
@@ -9234,6 +9314,7 @@ function RoomContent() {
                         }
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
@@ -9311,6 +9392,7 @@ function RoomContent() {
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
@@ -9370,6 +9452,7 @@ function RoomContent() {
                         }
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
@@ -9417,7 +9500,8 @@ function RoomContent() {
                     onStateChange={handleYoutubeStateChange}
                     className="absolute left-0 top-0 h-full w-full"
                     iframeClassName="absolute left-0 top-0 h-full w-full"
-                    opts={youtubePlayerOpts}
+                    onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                   />
                 </YoutubePointerGate>
                 <TelestratorOverlay
@@ -9877,7 +9961,8 @@ function RoomContent() {
                             onStateChange={handleYoutubeStateChange}
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
+                            onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
                         {renderSyncSetupControls({
@@ -9968,7 +10053,8 @@ function RoomContent() {
                             }
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
+                            onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
                         <span className="pointer-events-none absolute left-1 top-1 z-[1] rounded bg-black/75 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/90">
@@ -10047,7 +10133,8 @@ function RoomContent() {
                             onStateChange={handleYoutubeStateChange}
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
+                            onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
                         {renderSyncSetupControls({
@@ -10108,7 +10195,8 @@ function RoomContent() {
                             }
                             className="absolute left-0 top-0 h-full w-full"
                             iframeClassName="absolute left-0 top-0 h-full w-full"
-                            opts={youtubePlayerOpts}
+                            onError={handlePlayerError}
+                        opts={youtubePlayerOpts}
                           />
                         </YoutubePointerGate>
                         {multiViewSecondaryHold?.angleId ===
@@ -10155,6 +10243,7 @@ function RoomContent() {
                         onStateChange={handleYoutubeStateChange}
                         className="absolute left-0 top-0 h-full w-full"
                         iframeClassName="absolute left-0 top-0 h-full w-full"
+                        onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
