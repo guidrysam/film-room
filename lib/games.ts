@@ -184,6 +184,12 @@ export type Game = {
   opponent?: string;
   /** ISO-8601 scheduled kickoff (optional, for clock sync). */
   scheduledStartAt?: string;
+  /** Venue / field location (optional, from schedule imports). */
+  location?: string;
+  /** Stable external match/game number used to dedupe schedule imports. */
+  matchNumber?: string;
+  /** Division / age-group label from a schedule (optional). */
+  division?: string;
   ownerId: string;
   /** uid -> role. Owner is always present. */
   contributors: Record<string, GameRole>;
@@ -212,6 +218,9 @@ export type CreateGameInput = {
   season?: string;
   opponent?: string;
   scheduledStartAt?: string;
+  location?: string;
+  matchNumber?: string;
+  division?: string;
   visibility?: GameVisibility;
   sourceSavedSessionId?: string;
 };
@@ -291,6 +300,11 @@ export async function createGame(
       ...(trimOrUndef(data.scheduledStartAt)
         ? { scheduledStartAt: data.scheduledStartAt!.trim() }
         : {}),
+      ...(trimOrUndef(data.location) ? { location: data.location!.trim() } : {}),
+      ...(trimOrUndef(data.matchNumber)
+        ? { matchNumber: data.matchNumber!.trim() }
+        : {}),
+      ...(trimOrUndef(data.division) ? { division: data.division!.trim() } : {}),
       ...(trimOrUndef(data.sourceSavedSessionId)
         ? { sourceSavedSessionId: data.sourceSavedSessionId!.trim() }
         : {}),
@@ -302,6 +316,47 @@ export async function createGame(
     );
   }
   return ref.id;
+}
+
+/** Fields a schedule import may patch on an existing game (owner-only). */
+export type GameScheduleFields = Partial<
+  Pick<
+    Game,
+    | "title"
+    | "date"
+    | "homeTeam"
+    | "awayTeam"
+    | "opponent"
+    | "scheduledStartAt"
+    | "location"
+    | "matchNumber"
+    | "division"
+    | "season"
+  >
+>;
+
+/**
+ * Patch schedule-related fields on an existing game. Empty-string values clear
+ * the field; omitted keys are left untouched. Owner-only per Firestore rules.
+ */
+export async function updateGameScheduleFields(
+  gameId: string,
+  patch: GameScheduleFields,
+): Promise<void> {
+  const update: Record<string, unknown> = { updatedAt: serverTimestamp() };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    const trimmed = typeof value === "string" ? value.trim() : value;
+    update[key] = trimmed === "" ? deleteField() : trimmed;
+  }
+  try {
+    await updateDoc(doc(gamesCol(), gameId), update);
+  } catch (err) {
+    throw formatFirestoreWriteError(
+      err,
+      "Game update failed. Check Firestore rules deployment.",
+    );
+  }
 }
 
 function parseGame(id: string, raw: Record<string, unknown>): Game {
@@ -358,6 +413,15 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
       : {}),
     ...(trimOrUndef(raw.scheduledStartAt)
       ? { scheduledStartAt: (raw.scheduledStartAt as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.location)
+      ? { location: (raw.location as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.matchNumber)
+      ? { matchNumber: (raw.matchNumber as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.division)
+      ? { division: (raw.division as string).trim() }
       : {}),
     ...(trimOrUndef(raw.sourceSavedSessionId)
       ? { sourceSavedSessionId: (raw.sourceSavedSessionId as string).trim() }

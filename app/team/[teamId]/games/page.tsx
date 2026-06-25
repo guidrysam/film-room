@@ -49,9 +49,17 @@ export default function TeamGamesPage() {
     <TeamPageShell teamId={teamId} currentUid={user.uid} active="games">
       {(team) => (
         <>
-          <p className="mb-5 text-sm text-zinc-400">
-            Open a game hub or attach video in Game Cap.
-          </p>
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-zinc-400">
+              Open a game hub or attach video in Game Cap.
+            </p>
+            <Link
+              href="/schedule-import"
+              className="rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08]"
+            >
+              Import schedule CSV
+            </Link>
+          </div>
           <TeamGames team={team} currentUid={user.uid} />
         </>
       )}
