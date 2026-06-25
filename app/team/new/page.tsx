@@ -80,8 +80,8 @@ export default function NewTeamPage() {
                 Import TeamLinkt CSV
               </p>
               <p className="mt-2 text-xs leading-relaxed text-zinc-400">
-                Upload a roster export to create the team and import players and
-                parent contacts in one step.
+                Upload a roster export to create or update one or more teams and
+                import players and parent contacts in one step.
               </p>
             </button>
           </div>

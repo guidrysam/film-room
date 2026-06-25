@@ -183,6 +183,21 @@ export function normalizeCreateTeamInput(input: {
   };
 }
 
+/** Stable key for matching teams by name (case/whitespace-insensitive). */
+export function teamNameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Find a team with a matching name (used to avoid duplicate teams on import). */
+export function findTeamByName(
+  teams: Team[],
+  name: string,
+): Team | undefined {
+  const key = teamNameKey(name);
+  if (!key) return undefined;
+  return teams.find((team) => teamNameKey(team.name) === key);
+}
+
 export async function createTeam(
   uid: string,
   data: CreateTeamInput,
@@ -501,16 +516,58 @@ export async function getTeamPlayer(
   return parsePlayer(snap.id, snap.data() as Record<string, unknown>);
 }
 
+/** Result of an idempotent upsert: created (new), updated (changed), or unchanged. */
+export type UpsertStatus = "created" | "updated" | "unchanged";
+
+/**
+ * Compare the roster-import-relevant fields of a player. Used by both the
+ * preview classifier and the writer so previews and writes stay consistent.
+ */
+export function playerImportFieldsEqual(
+  existing: Pick<Player, "name" | "jerseyNumber" | "position">,
+  next: { name: string; jerseyNumber?: string; position?: string },
+): boolean {
+  return (
+    existing.name.trim() === next.name.trim() &&
+    (existing.jerseyNumber ?? "") === (next.jerseyNumber?.trim() ?? "") &&
+    (existing.position ?? "") === (next.position?.trim() ?? "")
+  );
+}
+
+/**
+ * Additive, non-destructive player upsert.
+ * - No match → create.
+ * - Match with changed fields → update.
+ * - Match with identical fields → no write (idempotent re-imports).
+ *
+ * Never deletes, disables, or archives a player.
+ */
 export async function upsertTeamPlayer(
   teamId: string,
   input: PlayerInput,
   existingByKey?: Map<string, Player>,
-): Promise<{ player: Player; created: boolean }> {
+): Promise<{ player: Player; status: UpsertStatus }> {
   const name = input.name.trim();
   if (!name) throw new Error("Player name is required.");
   const jerseyNumber = trimOrUndef(input.jerseyNumber);
+  const position = trimOrUndef(input.position);
+  const linkedUid = trimOrUndef(input.linkedUid);
   const key = playerRosterKey(name, jerseyNumber);
   const existing = existingByKey?.get(key);
+
+  if (existing) {
+    const coreSame = playerImportFieldsEqual(existing, {
+      name,
+      ...(jerseyNumber ? { jerseyNumber } : {}),
+      ...(position ? { position } : {}),
+    });
+    const linkedSame =
+      linkedUid === undefined || (existing.linkedUid ?? "") === linkedUid;
+    if (coreSame && linkedSame) {
+      return { player: existing, status: "unchanged" };
+    }
+  }
+
   const ref = existing
     ? doc(playersCol(teamId), existing.id)
     : doc(playersCol(teamId));
@@ -518,8 +575,8 @@ export async function upsertTeamPlayer(
   const payload = {
     name,
     ...(jerseyNumber ? { jerseyNumber } : {}),
-    ...(trimOrUndef(input.position) ? { position: input.position!.trim() } : {}),
-    ...(trimOrUndef(input.linkedUid) ? { linkedUid: input.linkedUid!.trim() } : {}),
+    ...(position ? { position } : {}),
+    ...(linkedUid ? { linkedUid } : {}),
     updatedAt: now,
     ...(!existing ? { createdAt: now } : {}),
   };
@@ -529,10 +586,11 @@ export async function upsertTeamPlayer(
       id: ref.id,
       name,
       ...(jerseyNumber ? { jerseyNumber } : {}),
-      ...(trimOrUndef(input.position) ? { position: input.position!.trim() } : {}),
-      ...(trimOrUndef(input.linkedUid) ? { linkedUid: input.linkedUid!.trim() } : {}),
+      ...(position ? { position } : {}),
+      ...(linkedUid ? { linkedUid } : {}),
+      ...(existing?.parentUids ? { parentUids: existing.parentUids } : {}),
     },
-    created: !existing,
+    status: existing ? "updated" : "created",
   };
 }
 

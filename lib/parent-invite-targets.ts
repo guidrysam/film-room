@@ -14,7 +14,7 @@ import { firestore } from "@/lib/firebase";
 import { findParentTargetsToLink } from "@/lib/parent-onboarding";
 import type { ParentInviteTargetStatus } from "@/lib/parent-onboarding";
 import { normalizeEmail } from "@/lib/roster-csv";
-import { addParentUidToPlayer } from "@/lib/teams";
+import { addParentUidToPlayer, type UpsertStatus } from "@/lib/teams";
 
 /**
  * Parent invite targets — roster-imported contacts for parent onboarding.
@@ -214,11 +214,39 @@ export async function setParentTargetIgnored(
   });
 }
 
+/**
+ * Compare the roster-import-relevant fields of a parent invite target. Used by
+ * both the preview classifier and the writer so they stay consistent. Invite
+ * status / join state are intentionally excluded — imports never touch them.
+ */
+export function parentTargetImportFieldsEqual(
+  existing: Pick<
+    ParentInviteTarget,
+    "parentName" | "email" | "phone" | "playerName"
+  >,
+  next: { parentName: string; email: string; phone?: string; playerName?: string },
+): boolean {
+  return (
+    existing.parentName.trim() === next.parentName.trim() &&
+    existing.email.trim().toLowerCase() === next.email.trim().toLowerCase() &&
+    (existing.phone ?? "") === (next.phone?.trim() ?? "") &&
+    (existing.playerName ?? "") === (next.playerName?.trim() ?? "")
+  );
+}
+
+/**
+ * Additive, non-destructive parent invite target upsert.
+ * - No match → create.
+ * - Match with changed contact fields → update (preserving invite/join state).
+ * - Match with identical fields → no write (idempotent re-imports).
+ *
+ * Never deletes a contact or resets its invite status.
+ */
 export async function upsertParentInviteTarget(
   teamId: string,
   input: ParentInviteTargetInput,
   existingByKey?: Map<string, ParentInviteTarget>,
-): Promise<ParentInviteTarget> {
+): Promise<{ target: ParentInviteTarget; status: UpsertStatus }> {
   const email = normalizeEmail(input.email);
   const parentName = trimOrUndef(input.parentName);
   if (!email || !parentName) {
@@ -226,9 +254,23 @@ export async function upsertParentInviteTarget(
   }
 
   const playerId = trimOrUndef(input.playerId);
+  const phone = trimOrUndef(input.phone);
+  const playerName = trimOrUndef(input.playerName);
   const key = playerId ? parentInviteTargetKey(email, playerId) : null;
   const existing =
     key && existingByKey ? existingByKey.get(key) : undefined;
+
+  if (
+    existing &&
+    parentTargetImportFieldsEqual(existing, {
+      parentName,
+      email,
+      ...(phone ? { phone } : {}),
+      ...(playerName ? { playerName } : {}),
+    })
+  ) {
+    return { target: existing, status: "unchanged" };
+  }
 
   const ref = existing
     ? doc(targetsCol(teamId), existing.id)
@@ -239,11 +281,9 @@ export async function upsertParentInviteTarget(
     parentName,
     email,
     status: existing?.status ?? "not_invited",
-    ...(trimOrUndef(input.phone) ? { phone: input.phone!.trim() } : {}),
+    ...(phone ? { phone } : {}),
     ...(playerId ? { playerId } : {}),
-    ...(trimOrUndef(input.playerName)
-      ? { playerName: input.playerName!.trim() }
-      : {}),
+    ...(playerName ? { playerName } : {}),
     updatedAt: now,
     ...(!existing ? { createdAt: now } : {}),
   };
@@ -251,17 +291,18 @@ export async function upsertParentInviteTarget(
   await setDoc(ref, payload, { merge: true });
 
   return {
-    id: ref.id,
-    parentName,
-    email,
-    status: existing?.status ?? "not_invited",
-    ...(trimOrUndef(input.phone) ? { phone: input.phone!.trim() } : {}),
-    ...(playerId ? { playerId } : {}),
-    ...(trimOrUndef(input.playerName)
-      ? { playerName: input.playerName!.trim() }
-      : {}),
-    ...(existing?.inviteCode ? { inviteCode: existing.inviteCode } : {}),
-    ...(existing?.joinedUid ? { joinedUid: existing.joinedUid } : {}),
+    target: {
+      id: ref.id,
+      parentName,
+      email,
+      status: existing?.status ?? "not_invited",
+      ...(phone ? { phone } : {}),
+      ...(playerId ? { playerId } : {}),
+      ...(playerName ? { playerName } : {}),
+      ...(existing?.inviteCode ? { inviteCode: existing.inviteCode } : {}),
+      ...(existing?.joinedUid ? { joinedUid: existing.joinedUid } : {}),
+    },
+    status: existing ? "updated" : "created",
   };
 }
 

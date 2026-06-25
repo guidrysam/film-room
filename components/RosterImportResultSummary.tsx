@@ -21,8 +21,10 @@ export default function RosterImportResultSummary({
       : []),
     { label: "Players created", value: result.playersCreated },
     { label: "Players updated", value: result.playersUpdated },
-    { label: "Parent contacts created", value: result.parentsSaved },
-    { label: "Invalid rows skipped", value: result.skipped },
+    { label: "Players unchanged", value: result.playersUnchanged },
+    { label: "Parents created", value: result.parentsCreated },
+    { label: "Parents updated", value: result.parentsUpdated },
+    { label: "Parents unchanged", value: result.parentsUnchanged },
   ];
 
   return (

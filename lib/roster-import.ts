@@ -1,6 +1,7 @@
 import {
   indexParentInviteTargets,
   listParentInviteTargets,
+  parentInviteTargetKey,
   upsertParentInviteTarget,
 } from "@/lib/parent-invite-targets";
 import {
@@ -38,7 +39,10 @@ export type RosterImportPreviewRow = {
 export type RosterImportResult = {
   playersCreated: number;
   playersUpdated: number;
-  parentsSaved: number;
+  playersUnchanged: number;
+  parentsCreated: number;
+  parentsUpdated: number;
+  parentsUnchanged: number;
   skipped: number;
 };
 
@@ -207,11 +211,14 @@ export async function importRosterPreview(
 
   let playersCreated = 0;
   let playersUpdated = 0;
-  let parentsSaved = 0;
+  let playersUnchanged = 0;
+  let parentsCreated = 0;
+  let parentsUpdated = 0;
+  let parentsUnchanged = 0;
   const skipped = preview.length - importable.length;
 
   for (const row of importable) {
-    const { player, created } = await upsertTeamPlayer(
+    const { player, status } = await upsertTeamPlayer(
       teamId,
       {
         name: row.playerName,
@@ -222,8 +229,9 @@ export async function importRosterPreview(
     );
     playersByKey = new Map(playersByKey);
     playersByKey.set(playerRosterKey(player.name, player.jerseyNumber), player);
-    if (created) playersCreated++;
-    else playersUpdated++;
+    if (status === "created") playersCreated++;
+    else if (status === "updated") playersUpdated++;
+    else playersUnchanged++;
 
     const contacts =
       row.parentContacts ??
@@ -238,7 +246,7 @@ export async function importRosterPreview(
         : []);
 
     for (const contact of contacts) {
-      await upsertParentInviteTarget(
+      const { target, status: contactStatus } = await upsertParentInviteTarget(
         teamId,
         {
           parentName: contact.name,
@@ -249,9 +257,25 @@ export async function importRosterPreview(
         },
         parentsByKey,
       );
-      parentsSaved++;
+      if (target.playerId) {
+        parentsByKey.set(
+          parentInviteTargetKey(target.email, target.playerId),
+          target,
+        );
+      }
+      if (contactStatus === "created") parentsCreated++;
+      else if (contactStatus === "updated") parentsUpdated++;
+      else parentsUnchanged++;
     }
   }
 
-  return { playersCreated, playersUpdated, parentsSaved, skipped };
+  return {
+    playersCreated,
+    playersUpdated,
+    playersUnchanged,
+    parentsCreated,
+    parentsUpdated,
+    parentsUnchanged,
+    skipped,
+  };
 }
