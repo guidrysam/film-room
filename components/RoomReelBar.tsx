@@ -45,13 +45,15 @@ export default function RoomReelBar({
   const repeatPassRef = useRef(0);
   const settleUntilRef = useRef(0);
   const stepsRef = useRef(steps);
-  stepsRef.current = steps;
   const applyStepRef = useRef(applyStep);
-  applyStepRef.current = applyStep;
   const getTimeRef = useRef(getActiveTime);
-  getTimeRef.current = getActiveTime;
   const onStopRef = useRef(onStop);
-  onStopRef.current = onStop;
+  useEffect(() => {
+    stepsRef.current = steps;
+    applyStepRef.current = applyStep;
+    getTimeRef.current = getActiveTime;
+    onStopRef.current = onStop;
+  });
 
   const goToStep = useCallback((index: number, pass: number) => {
     const step = stepsRef.current[index];

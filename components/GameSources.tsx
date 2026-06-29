@@ -308,7 +308,7 @@ export default function GameSources({
       {showHeader ? (
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-          Sources
+          Videos
         </p>
         <button
           type="button"
@@ -320,14 +320,14 @@ export default function GameSources({
               ? "Add a YouTube source first"
               : playableCount > 1
                 ? "Open all angles in sync"
-                : "Open in Film Room"
+                : "Open Review"
           }
         >
           {opening
             ? "Opening…"
             : playableCount > 1
-              ? `Open in Film Room (${playableCount} angles)`
-              : "Open in Film Room"}
+              ? `Open Review (${playableCount} angles)`
+              : "Open Review"}
         </button>
       </div>
       ) : (
@@ -342,14 +342,14 @@ export default function GameSources({
                 ? "Add a YouTube source first"
                 : playableCount > 1
                   ? "Open all angles in sync"
-                  : "Open in Film Room"
+                  : "Open Review"
             }
           >
             {opening
               ? "Opening…"
               : playableCount > 1
-                ? `Open in Film Room (${playableCount} angles)`
-                : "Open in Film Room"}
+                ? `Open Review (${playableCount} angles)`
+                : "Open Review"}
           </button>
         </div>
       )}
@@ -429,7 +429,9 @@ export default function GameSources({
                       </button>
                     </span>
                   ) : null}
-                  <span className="text-zinc-600">{open ? "▲" : "▼"} sync</span>
+                  <span className="text-zinc-400">
+                    {open ? "▲ Hide" : "▼ Line up"}
+                  </span>
                 </div>
               </button>
               {open ? (

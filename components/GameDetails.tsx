@@ -94,11 +94,11 @@ export default function GameDetails({
           href={`/game/${game.id}/review`}
           className="inline-flex items-center justify-center rounded-lg border border-blue-500/40 bg-blue-950/40 px-3 py-2 text-xs font-semibold text-blue-100 transition hover:bg-blue-900/55"
         >
-          Review synced game
+          Open Review
         </Link>
       </div>
 
-      {/* 1. Sources */}
+      {/* 1. Videos */}
       <div className="mb-4 border-b border-white/[0.06] pb-4">
         <GameSources
           game={game}
@@ -107,17 +107,16 @@ export default function GameDetails({
         />
       </div>
 
-      {/* 2. Perspectives */}
+      {/* 2. Saved Views */}
       <div className="mb-4 border-b border-white/[0.06] pb-4">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-          Perspectives
+          Saved Views
         </p>
         {cuts === null ? (
-          <p className="text-[11px] text-zinc-500">Loading perspectives…</p>
+          <p className="text-[11px] text-zinc-500">Loading saved views…</p>
         ) : cuts.length === 0 ? (
           <p className="text-[10px] leading-snug text-zinc-500">
-            No perspectives yet. Open the game in Film Room and record a cut to
-            create one.
+            No saved views yet. Open Review and record a cut to create one.
           </p>
         ) : (
           <ul className="space-y-1.5">

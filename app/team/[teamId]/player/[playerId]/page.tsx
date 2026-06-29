@@ -31,7 +31,7 @@ export default function PlayerProfilePage() {
           Sign in with Google
         </button>
         <Link href="/game-cap" className="text-sm text-zinc-400 hover:text-zinc-100">
-          ← Game Cap
+          + Add video
         </Link>
       </div>
     );

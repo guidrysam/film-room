@@ -97,13 +97,13 @@ export function syncStatusLabel(
 ): string {
   switch (status) {
     case "clock_synced":
-      return "Clock Synced";
+      return "Lined Up (auto)";
     case "manually_synced":
-      return "Manual Sync";
+      return "Lined Up";
     case "audio_synced":
-      return "Audio Sync";
+      return "Lined Up (audio)";
     default:
-      return "Unsynced";
+      return "Needs alignment";
   }
 }
 

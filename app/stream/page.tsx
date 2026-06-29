@@ -1703,7 +1703,7 @@ function StreamRoomPageInner() {
             <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
               Film Room
             </p>
-            <h1 className="text-3xl font-semibold tracking-tight">Stream Room</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Go Live</h1>
             <p className="max-w-2xl text-sm leading-relaxed text-zinc-300">
               Set up live angles before starting a synced session.
             </p>

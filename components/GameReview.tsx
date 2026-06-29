@@ -75,7 +75,7 @@ function formatOffsetSec(sec: number): string {
 function eventTypeLabel(type: GameTimelineEventType): string {
   switch (type) {
     case "coach_mark":
-      return "Coach Mark";
+      return "Tagged Play";
     case "sync_point":
       return "Sync Point";
     case "note":
@@ -631,8 +631,8 @@ export default function GameReview({
         {playableSources.length === 0 ? (
           <div className={panelClass}>
             <p className="text-sm text-zinc-400">
-              No playable YouTube sources yet. Attach video from the game hub or
-              Game Cap, then return here to review synced angles.
+              No playable videos yet. Add video from the game page or Add Video,
+              then return here to review lined-up angles.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href={`/game/${gameId}`} className={primaryBtn}>
@@ -766,8 +766,8 @@ export default function GameReview({
                 </p>
                 {events.length === 0 ? (
                   <p className="text-[11px] leading-snug text-zinc-500">
-                    No coach marks or timeline events yet. Open in Film Room to
-                    add marks — they appear here for synced review.
+                    No tagged plays or timeline events yet. Use Tag Plays to
+                    add marks — they appear here for lined-up review.
                   </p>
                 ) : (
                   <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1">
@@ -822,7 +822,7 @@ export default function GameReview({
               </section>
 
               {canManageStats ? (
-                <section className={panelClass}>
+                <section id="stats" className={`${panelClass} scroll-mt-6`}>
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Add stat
                   </p>
@@ -976,7 +976,7 @@ export default function GameReview({
 
               <section className={panelClass}>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                  Highlight Draft
+                  Highlight Reel
                 </p>
                 <p className="mb-4 text-[11px] leading-snug text-zinc-500">
                   This saves instructions, not a rendered video yet.
@@ -1159,7 +1159,7 @@ export default function GameReview({
                   disabled={draftSaving || !momentSource}
                   className={`${primaryBtn} w-full`}
                 >
-                  {draftSaving ? "Saving…" : "Save to Highlight Draft"}
+                  {draftSaving ? "Saving…" : "Save to Highlight Reel"}
                 </button>
 
                 {draftMessage ? (

@@ -51,7 +51,7 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
           </button>
           {canCreate ? (
             <Link href={gameCapUrl({ teamId: team.id })} className={ghostBtn}>
-              New game in Game Cap
+              + Add Video / New game
             </Link>
           ) : null}
         </div>
@@ -61,7 +61,7 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
       ) : games.length === 0 ? (
         <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
           {canCreate
-            ? "No games yet. Create one in Game Cap."
+            ? "No games yet. Use Add Video to start one."
             : "No games yet for this team."}
         </p>
       ) : (

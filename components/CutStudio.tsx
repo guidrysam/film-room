@@ -177,7 +177,7 @@ export default function CutStudio({
     <div className="rounded-xl border border-white/[0.08] bg-zinc-950/40 p-3">
       <div className="mb-1 flex items-center justify-between">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">
-          Perspectives
+          Saved Views
         </p>
         {gameId ? (
           <button

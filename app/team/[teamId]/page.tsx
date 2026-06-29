@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import TeamPageShell from "@/components/TeamPageShell";
+import TeamGameOverview from "@/components/TeamGameOverview";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { canCoachTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 
@@ -36,7 +37,13 @@ function TeamRosterContent({ team, teamId, currentUid }: {
 
   return (
   <>
-    <p className="mb-5 text-sm text-zinc-400">
+    <TeamGameOverview team={team} currentUid={currentUid} />
+    <div className="mb-3 flex items-center justify-between gap-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+        Roster
+      </p>
+    </div>
+    <p className="mb-3 text-sm text-zinc-400">
       Open a player profile to see highlights, tagged moments, and linked parents.
     </p>
     <section className={panelClass}>
@@ -50,7 +57,7 @@ function TeamRosterContent({ team, teamId, currentUid }: {
               href={`/team/${teamId}/setup`}
               className="text-blue-300 hover:underline"
             >
-              Import a roster in Team Setup
+              Import a roster in Team Settings
             </Link>
           ) : (
             "Ask a coach to import the roster."
@@ -114,7 +121,7 @@ export default function TeamRosterPage() {
           Sign in with Google
         </button>
         <Link href="/game-cap" className="text-sm text-zinc-400 hover:text-zinc-100">
-          ← Game Cap
+          + Add video
         </Link>
       </div>
     );

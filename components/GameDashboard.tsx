@@ -218,7 +218,7 @@ export default function GameDashboard({
                 </Link>
                 {canCoachTeam(team, currentUid) ? (
                   <Link href={teamSetupUrl(team.id)} className={ghostBtn}>
-                    Team setup
+                    Team settings
                   </Link>
                 ) : null}
               </>
@@ -227,7 +227,7 @@ export default function GameDashboard({
               href={gameCapUrl({ teamId: team?.id, gameId: game.id })}
               className={ghostBtn}
             >
-              Game Cap
+              + Add video
             </Link>
           </div>
         </div>
@@ -236,25 +236,25 @@ export default function GameDashboard({
         <section className={`${panelClass} mb-5`}>
           <h2 className="mb-3 text-sm font-semibold text-white">Overview</h2>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-            {metricCard("Sources", metrics.sourceCount)}
-            {metricCard("Synced", metrics.syncedSourceCount)}
+            {metricCard("Videos", metrics.sourceCount)}
+            {metricCard("Lined up", metrics.syncedSourceCount)}
             {metricCard("Players", metrics.playerCount)}
             {metricCard("Parents", metrics.parentContributorCount)}
-            {metricCard("Marks", metrics.coachMarkCount)}
+            {metricCard("Plays", metrics.coachMarkCount)}
             {metricCard("Highlights", metrics.highlightDraftCount)}
             {metricCard("Stats", metrics.statCount)}
           </div>
         </section>
 
-        {/* Add video */}
+        {/* Videos */}
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-white">Add video</h2>
+            <h2 className="text-sm font-semibold text-white">Videos</h2>
             <Link
               href={gameCapUrl({ teamId: team?.id, gameId: game.id })}
-              className={ghostBtn}
+              className={primaryBtn}
             >
-              Game Cap
+              + Add Video
             </Link>
           </div>
 
@@ -312,11 +312,11 @@ export default function GameDashboard({
           <div className="border-t border-white/[0.06] pt-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                Attached sources
+                Attached videos
               </h3>
-              <Link href={`/game/${game.id}/review`} className={ghostBtn}>
-                Review synced game
-              </Link>
+              <p className="text-[10px] text-zinc-500">
+                Use “Line up” on any video that needs alignment.
+              </p>
             </div>
 
             <GameSources
@@ -338,17 +338,52 @@ export default function GameDashboard({
           <h2 className="mb-2 text-sm font-semibold text-white">Review</h2>
           <p className="mb-3 text-xs text-zinc-400">
             {metrics.sourceCount === 0
-              ? "Add video above, then review synced angles."
-              : `${metrics.syncedSourceCount} of ${metrics.sourceCount} source${metrics.sourceCount === 1 ? "" : "s"} synced for multi-angle review.`}
+              ? "Add video above, then review lined-up angles."
+              : `${metrics.syncedSourceCount} of ${metrics.sourceCount} video${metrics.sourceCount === 1 ? "" : "s"} lined up for multi-angle review.`}
           </p>
           <div className="flex flex-wrap gap-2">
             <Link href={`/game/${game.id}/review`} className={primaryBtn}>
-              Review synced game
-            </Link>
-            <Link href={`/game/${game.id}/reel`} className={ghostBtn}>
-              Build highlight reel
+              Open Review
             </Link>
           </div>
+        </section>
+
+        {/* Highlights */}
+        <section className={`${panelClass} mb-5`}>
+          <h2 className="mb-2 text-sm font-semibold text-white">Highlights</h2>
+          <p className="mb-3 text-xs text-zinc-400">
+            {highlightDrafts.length === 0
+              ? "Cut a multi-angle highlight reel from this game."
+              : `${highlightDrafts.length} highlight reel${highlightDrafts.length === 1 ? "" : "s"} in progress.`}
+          </p>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Link href={`/game/${game.id}/reel`} className={primaryBtn}>
+              Build Highlight Reel
+            </Link>
+          </div>
+          {recentDrafts.length > 0 ? (
+            <ul className="space-y-1.5">
+              {recentDrafts.map((d) => (
+                <li
+                  key={d.id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm text-zinc-200">
+                      {d.name}
+                    </span>
+                    <span className="text-[10px] text-zinc-500">
+                      {d.moments.length}{" "}
+                      {d.moments.length === 1 ? "moment" : "moments"}
+                    </span>
+                  </span>
+                  <Link href={`/game/${game.id}/reel`} className={ghostBtn}>
+                    Open reel
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </section>
 
         {/* Stats */}
@@ -356,8 +391,8 @@ export default function GameDashboard({
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">Stats</h2>
             <div className="flex flex-wrap gap-2">
-              <Link href={`/game/${game.id}/review`} className={ghostBtn}>
-                Log stats in review
+              <Link href={`/game/${game.id}/review#stats`} className={primaryBtn}>
+                Add stats
               </Link>
               {team ? (
                 <Link href={teamStatsUrl(team.id)} className={ghostBtn}>
@@ -444,52 +479,12 @@ export default function GameDashboard({
           )}
         </section>
 
-        {/* Highlights */}
-        <section className={`${panelClass} mb-5`}>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-white">Highlights</h2>
-            <Link href={`/game/${game.id}/review`} className={ghostBtn}>
-              Create in review
-            </Link>
-          </div>
-          {highlightDrafts.length === 0 ? (
-            <p className="text-sm text-zinc-400">
-              Create highlights from review.
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {recentDrafts.map((d) => (
-                <li
-                  key={d.id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm text-zinc-200">
-                      {d.name}
-                    </span>
-                    <span className="text-[10px] text-zinc-500">
-                      {d.moments.length}{" "}
-                      {d.moments.length === 1 ? "moment" : "moments"}
-                    </span>
-                  </span>
-                  <Link
-                    href={`/game/${game.id}/review`}
-                    className={ghostBtn}
-                  >
-                    Open draft
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Coach Marks */}
+        {/* Tagged plays */}
         <section className={panelClass}>
-          <h2 className="mb-3 text-sm font-semibold text-white">Coach Marks</h2>
+          <h2 className="mb-3 text-sm font-semibold text-white">Tagged plays</h2>
           {recentMarks.length === 0 ? (
             <p className="text-sm text-zinc-400">
-              No coach marks yet. Add marks in Film Room or review.
+              No tagged plays yet. Add them with Tag Plays or in Review.
             </p>
           ) : (
             <ul className="space-y-1.5">
@@ -500,7 +495,7 @@ export default function GameDashboard({
                     className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2 transition hover:bg-white/[0.04]"
                   >
                     <span className="min-w-0 truncate text-sm text-zinc-200">
-                      {ev.label ?? "Coach mark"}
+                      {ev.label ?? "Tagged play"}
                     </span>
                     <span className="shrink-0 font-mono text-xs text-zinc-500">
                       {formatTimelineSeconds(ev.t)}

@@ -639,7 +639,7 @@ export function YouTubeEmbedDiagnostics({
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-2">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-            Stream Room · Diagnostics
+            Go Live · Diagnostics
           </p>
           <h1 className="text-2xl font-semibold tracking-tight text-white">
             YouTube embed diagnostics
@@ -651,7 +651,7 @@ export function YouTubeEmbedDiagnostics({
           </p>
         </div>
         <Link href="/stream" className="shrink-0 text-sm text-zinc-400 hover:text-zinc-100">
-          ← Stream Room
+          ← Go Live
         </Link>
       </div>
 

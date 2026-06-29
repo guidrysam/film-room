@@ -223,11 +223,11 @@ function GameCapPageInner() {
             Film Room Sports
           </p>
           <h1 className="mb-3 text-2xl font-semibold tracking-tight text-white">
-            Game Cap
+            Add Video
           </h1>
           <p className="mb-8 text-sm leading-relaxed text-zinc-300">
-            Sign in to select your team, create games, attach YouTube sources,
-            and open Film Room.
+            Sign in to select your team, create games, attach YouTube videos,
+            and open Review.
           </p>
           <button
             type="button"
@@ -252,12 +252,12 @@ function GameCapPageInner() {
             Film Room Sports
           </p>
           <h1 className="text-xl font-semibold tracking-tight text-white">
-            Game Cap
+            Add Video
           </h1>
           <p className="mt-2 max-w-prose text-sm leading-relaxed text-zinc-300">
             {isParent
-              ? "Upload video from your phone to help build the synced team game. Pick a game below and attach your angle."
-              : "Select your team, create or pick a game, then attach a source by pasting a YouTube link or uploading to your own channel. Open in Film Room for review and sync."}
+              ? "Upload video from your phone to help build the lined-up team game. Pick a game below and attach your angle."
+              : "Select your team, create or pick a game, then add a video by pasting a YouTube link or uploading to your own channel. Open Review to line up angles."}
           </p>
         </div>
 

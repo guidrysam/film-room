@@ -98,7 +98,6 @@ function momentToInput(m: HighlightMoment): AddHighlightMomentInput {
  */
 export default function HighlightReelStudio({
   gameId,
-  game,
   sources,
   events,
   currentUid,

@@ -720,7 +720,7 @@ const MIXED_LIVE_ARCHIVE_MSG =
   "Live and recorded videos can't be mixed in the same sync room.";
 
 const LIVE_VIA_STREAM_ROOM_MSG =
-  "Live streams must be started from Stream Room.";
+  "Live streams must be started from Go Live.";
 
 /** Subset of `/api/youtube-video-meta` used for live vs iframe-state reconciliation. */
 type YoutubeVideoMetaBrief = {
@@ -7719,7 +7719,7 @@ function RoomContent() {
               </div>
               {isHost && !isLiveSource ? (
                 <p className="text-[10px] leading-snug text-zinc-500">
-                  For live streams, use Stream Room.
+                  For live streams, use Go Live.
                 </p>
               ) : null}
             </div>
@@ -8760,9 +8760,9 @@ function RoomContent() {
               {embedError.code === 101 || embedError.code === 150
                 ? "YouTube has embedding disabled for this broadcast. Open YouTube Studio → the live broadcast → enable “Allow embedding”, or watch on YouTube."
                 : embedError.code === 100
-                  ? "The video is private or was removed. Re-create today’s watch link from Stream Room."
+                  ? "The video is private or was removed. Re-create today’s watch link from Go Live."
                   : embedError.code === 2
-                    ? "The video id is invalid. Re-create today’s watch link from Stream Room."
+                    ? "The video id is invalid. Re-create today’s watch link from Go Live."
                     : "YouTube reported a playback error for the embedded player. You can still watch on YouTube."}
             </p>
           </div>

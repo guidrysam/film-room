@@ -31,7 +31,7 @@ export default function TeamGamesPage() {
           Sign in with Google
         </button>
         <Link href="/game-cap" className="text-sm text-zinc-400 hover:text-zinc-100">
-          ← Game Cap
+          + Add video
         </Link>
       </div>
     );
@@ -51,7 +51,7 @@ export default function TeamGamesPage() {
         <>
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-zinc-400">
-              Open a game hub or attach video in Game Cap.
+              Open a game or add video to start a new one.
             </p>
             <Link
               href="/schedule-import"

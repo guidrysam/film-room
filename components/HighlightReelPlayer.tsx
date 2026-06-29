@@ -54,7 +54,9 @@ const HighlightReelPlayer = forwardRef<
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
   const stepsRef = useRef(steps);
-  stepsRef.current = steps;
+  useEffect(() => {
+    stepsRef.current = steps;
+  });
   const playingRef = useRef(false);
   const stepIndexRef = useRef(-1);
   const repeatPassRef = useRef(0);

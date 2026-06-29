@@ -185,16 +185,16 @@ function TimelineSyncInner() {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center gap-6 px-4 py-12 text-white">
         <div className={cardClass}>
-          <h1 className="text-2xl font-semibold">Timeline Sync</h1>
+          <h1 className="text-2xl font-semibold">Line Up Videos</h1>
           <p className="mt-3 text-sm leading-relaxed text-white/70">
-            No saved timelines yet. Record one with Coach Mark first, then come
+            No saved timelines yet. Record one with Tag Plays first, then come
             back here to line it up with the video.
           </p>
           <Link
             href="/coach-mark"
             className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-500"
           >
-            Open Coach Mark
+            Open Tag Plays
           </Link>
         </div>
         <div className="text-center">
@@ -210,7 +210,7 @@ function TimelineSyncInner() {
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-5 px-4 py-8 text-white">
       <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Timeline Sync</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Line Up Videos</h1>
           <p className="text-sm text-white/65">
             Attach a recorded timeline to its video.
           </p>
@@ -332,7 +332,7 @@ function TimelineSyncInner() {
           </div>
 
           <p className="mt-2 text-xs text-white/55">
-            Synced: <span className="font-medium text-white/80">
+            Lined up: <span className="font-medium text-white/80">
               {anchorEvent?.label ?? "anchor"}
             </span>{" "}
             happens at {formatClock(anchorVideoSec)} in the video.

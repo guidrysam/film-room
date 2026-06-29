@@ -64,7 +64,7 @@ export default function TeamPageShell({
             ← Dashboard
           </Link>
           <Link href="/game-cap" className={ghostBtn}>
-            Game Cap
+            Add video
           </Link>
         </div>
       </div>

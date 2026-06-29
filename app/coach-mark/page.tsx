@@ -200,8 +200,8 @@ export default function CoachMarkPage() {
             {saved.events.length} marks · {formatClock(saved.durationSec)} long
           </p>
           <p className="mt-4 text-sm leading-relaxed text-white/70">
-            Next, open Timeline Sync, paste the recorded video link, and line it
-            up with this timeline.
+            Next, open Line Up Videos, paste the recorded video link, and line
+            it up with this timeline.
           </p>
           <div className="mt-6 flex flex-col gap-3">
             <Link
@@ -232,9 +232,9 @@ export default function CoachMarkPage() {
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-5 px-4 py-8 text-white">
       <header className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Coach Mark</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Tag Plays</h1>
           <p className="text-sm text-white/65">
-            Tap an event the moment it happens. Sync to the video later.
+            Tap an event the moment it happens. Line it up with the video later.
           </p>
         </div>
         <Link href="/" className={ghostLink}>
@@ -363,7 +363,7 @@ export default function CoachMarkPage() {
 
       <div className="text-center">
         <Link href="/timeline-sync" className={ghostLink}>
-          Open Timeline Sync
+          Open Line Up Videos
         </Link>
       </div>
     </main>
