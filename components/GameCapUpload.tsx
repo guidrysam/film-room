@@ -1,19 +1,29 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
-import { getYouTubeUploadAccessToken } from "@/lib/auth-google";
+import { useCallback, useMemo, useRef, useState } from "react";
+import YouTubeOnboarding from "@/components/YouTubeOnboarding";
+import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
   addGameSourceFromYouTubeUpload,
+  updateGameSourceYouTubeMetadata,
   type Game,
 } from "@/lib/games";
+import { estimateClockSync } from "@/lib/game-timeline";
 import { createUploadJob, updateUploadJob } from "@/lib/upload-jobs";
 import type { Team } from "@/lib/teams";
+import {
+  captureSourceLabel,
+  readVideoCaptureTime,
+  type CaptureTimeResult,
+} from "@/lib/video-capture-time";
+import { setYouTubeVideoEmbeddable } from "@/lib/youtube-embeddable";
 import {
   buildYouTubeUploadDescription,
   buildYouTubeUploadTitle,
   uploadVideoToYouTube,
 } from "@/lib/youtube-upload";
 import {
+  fetchYouTubeVideoMeta,
   fetchYouTubeVideoMetaWithRetry,
   isYouTubeVideoProcessing,
   metaToSourcePatch,
@@ -69,17 +79,51 @@ export default function GameCapUpload({
   const [resultVideoId, setResultVideoId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [youtubeStillProcessing, setYoutubeStillProcessing] = useState(false);
+  const [resultSourceId, setResultSourceId] = useState<string | null>(null);
+  const [resultPrivacy, setResultPrivacy] = useState<
+    "private" | "unlisted" | "public"
+  >("unlisted");
+  // null = embeddability not yet confirmed (e.g. still processing).
+  const [embeddable, setEmbeddable] = useState<boolean | null>(null);
+  const [repairPhase, setRepairPhase] = useState<
+    "idle" | "fixing" | "fixed" | "failed"
+  >("idle");
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const [captureTime, setCaptureTime] = useState<CaptureTimeResult | null>(null);
+  const [autoAligned, setAutoAligned] = useState(false);
+
+  const clockSyncPreview = useMemo(
+    () =>
+      captureTime && game.scheduledStartAt
+        ? estimateClockSync(
+            { scheduledStartAt: game.scheduledStartAt },
+            { recordedStartTime: captureTime.recordedStartTime },
+          )
+        : null,
+    [captureTime, game.scheduledStartAt],
+  );
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const picked = e.target.files?.[0] ?? null;
       setFile(picked);
       setError(null);
+      setCaptureTime(null);
+      setAutoAligned(false);
       if (phase === "complete" || phase === "failed") {
         setPhase("idle");
         setResultVideoId(null);
         setProgressPct(0);
         setYoutubeStillProcessing(false);
+        setResultSourceId(null);
+        setEmbeddable(null);
+        setRepairPhase("idle");
+        setRepairError(null);
+      }
+      if (picked) {
+        void readVideoCaptureTime(picked)
+          .then((result) => setCaptureTime(result))
+          .catch(() => setCaptureTime(null));
       }
     },
     [phase],
@@ -93,12 +137,17 @@ export default function GameCapUpload({
     const trimmedLabel = label.trim() || "Parent cam";
     setError(null);
     setYoutubeStillProcessing(false);
+    setEmbeddable(null);
+    setRepairPhase("idle");
+    setRepairError(null);
+    setResultSourceId(null);
+    setAutoAligned(false);
     setPhase("authorizing");
     setProgressPct(0);
 
     let activeJobId: string | null = null;
     try {
-      const { accessToken } = await getYouTubeUploadAccessToken();
+      const { accessToken } = await getYouTubeOAuthAccessToken();
 
       activeJobId = await createUploadJob(currentUid, {
         gameId: game.id,
@@ -151,16 +200,40 @@ export default function GameCapUpload({
       const meta = await fetchYouTubeVideoMetaWithRetry(uploadResult.videoId);
       const metaPatch = meta ? metaToSourcePatch(meta) : {};
       const stillProcessing = isYouTubeVideoProcessing(meta);
+      const privacy = metaPatch.youtubePrivacyStatus ?? "unlisted";
 
-      await addGameSourceFromYouTubeUpload(game.id, currentUid, {
-        videoId: uploadResult.videoId,
-        label: trimmedLabel,
-        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
-        ...metaPatch,
-        ...(metaPatch.youtubePrivacyStatus
-          ? {}
-          : { youtubePrivacyStatus: "unlisted" }),
-      });
+      const clockSync =
+        captureTime && game.scheduledStartAt
+          ? estimateClockSync(
+              { scheduledStartAt: game.scheduledStartAt },
+              { recordedStartTime: captureTime.recordedStartTime },
+            )
+          : null;
+
+      const sourceId = await addGameSourceFromYouTubeUpload(
+        game.id,
+        currentUid,
+        {
+          videoId: uploadResult.videoId,
+          label: trimmedLabel,
+          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+          ...metaPatch,
+          ...(metaPatch.youtubePrivacyStatus
+            ? {}
+            : { youtubePrivacyStatus: "unlisted" }),
+          ...(captureTime
+            ? { recordedStartTime: captureTime.recordedStartTime }
+            : {}),
+          ...(clockSync
+            ? {
+                offsetFromGameTime: clockSync.offsetFromGameTime,
+                syncStatus: clockSync.syncStatus,
+                syncConfidence: clockSync.syncConfidence,
+              }
+            : {}),
+        },
+      );
+      setAutoAligned(Boolean(clockSync));
 
       await updateUploadJob(currentUid, activeJobId, {
         status: "complete",
@@ -169,6 +242,13 @@ export default function GameCapUpload({
       });
 
       setResultVideoId(uploadResult.videoId);
+      setResultSourceId(sourceId);
+      setResultPrivacy(privacy);
+      setEmbeddable(
+        typeof metaPatch.youtubeEmbeddable === "boolean"
+          ? metaPatch.youtubeEmbeddable
+          : null,
+      );
       setYoutubeStillProcessing(stillProcessing);
       setPhase("complete");
       setFile(null);
@@ -195,16 +275,85 @@ export default function GameCapUpload({
     currentDisplayName,
     game,
     team,
+    captureTime,
     onComplete,
   ]);
+
+  const handleAutoFixEmbedding = useCallback(async () => {
+    if (!resultVideoId) return;
+    setRepairPhase("fixing");
+    setRepairError(null);
+    try {
+      const { accessToken } = await getYouTubeOAuthAccessToken();
+      const updated = await setYouTubeVideoEmbeddable({
+        accessToken,
+        videoId: resultVideoId,
+        privacyStatus: resultPrivacy,
+      });
+
+      // Confirm with a fresh read; the update response may lag.
+      let confirmed = updated.embeddable;
+      if (confirmed !== true) {
+        const meta = await fetchYouTubeVideoMeta(resultVideoId);
+        if (typeof meta?.embeddable === "boolean") confirmed = meta.embeddable;
+      }
+      const nowEmbeddable = confirmed === true;
+      setEmbeddable(nowEmbeddable);
+
+      if (resultSourceId) {
+        void updateGameSourceYouTubeMetadata(game.id, resultSourceId, {
+          youtubeEmbeddable: nowEmbeddable,
+        });
+      }
+
+      if (nowEmbeddable) {
+        setRepairPhase("fixed");
+      } else {
+        setRepairPhase("failed");
+        setRepairError(
+          "Still blocked — this usually means your whole channel is set to " +
+            "'Made for Kids'. Change the channel audience in YouTube Studio, " +
+            "then tap Re-check.",
+        );
+      }
+    } catch (e) {
+      setRepairPhase("failed");
+      setRepairError(
+        e instanceof Error ? e.message : "Couldn't update the embed setting.",
+      );
+    }
+  }, [resultVideoId, resultSourceId, resultPrivacy, game.id]);
+
+  const handleRecheckEmbedding = useCallback(async () => {
+    if (!resultVideoId) return;
+    setRepairPhase("fixing");
+    setRepairError(null);
+    try {
+      const meta = await fetchYouTubeVideoMeta(resultVideoId);
+      const value =
+        typeof meta?.embeddable === "boolean" ? meta.embeddable : null;
+      setEmbeddable(value);
+      if (resultSourceId && typeof value === "boolean") {
+        void updateGameSourceYouTubeMetadata(game.id, resultSourceId, {
+          youtubeEmbeddable: value,
+        });
+      }
+      setRepairPhase(value === true ? "fixed" : "idle");
+    } catch {
+      setRepairPhase("idle");
+    }
+  }, [resultVideoId, resultSourceId, game.id]);
 
   const busy =
     phase === "authorizing" ||
     phase === "uploading" ||
     phase === "processing";
+  const repairing = repairPhase === "fixing";
 
   return (
     <div className="rounded-md border border-white/[0.07] bg-white/[0.02] p-2.5">
+      <YouTubeOnboarding currentUid={currentUid} />
+
       <p className="mb-1.5 text-[10px] font-medium text-zinc-400">
         Upload to your YouTube channel
       </p>
@@ -214,6 +363,11 @@ export default function GameCapUpload({
       <p className="mb-2 text-[10px] leading-snug text-zinc-500">
         YouTube upload quota is limited during beta. If upload fails, paste a
         YouTube link instead.
+      </p>
+      <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+        We upload it unlisted and embeddable so it plays inside Film Room. If
+        your channel is set to &ldquo;Made for Kids&rdquo;, YouTube blocks
+        embedding — we&rsquo;ll flag it and offer a one-tap fix after upload.
       </p>
 
       <input
@@ -234,6 +388,22 @@ export default function GameCapUpload({
             <p className="mb-2 rounded-md border border-amber-500/30 bg-amber-950/25 px-2 py-1.5 text-[10px] leading-snug text-amber-200">
               Large uploads may take a long time. Keep this tab open and use
               Wi-Fi when possible.
+            </p>
+          ) : null}
+          {captureTime ? (
+            <p className="mb-2 rounded-md border border-sky-500/25 bg-sky-950/20 px-2 py-1.5 text-[10px] leading-snug text-sky-200/90">
+              Recording start detected{" "}
+              {`(${captureSourceLabel(captureTime.source)})`}:{" "}
+              {new Date(captureTime.recordedStartTime).toLocaleString()}
+              {clockSyncPreview ? (
+                <span className="mt-0.5 block text-sky-200/70">
+                  Will auto-align to this game&rsquo;s timeline on upload.
+                </span>
+              ) : game.scheduledStartAt ? null : (
+                <span className="mt-0.5 block text-zinc-400">
+                  Set the game&rsquo;s scheduled start to auto-align clips.
+                </span>
+              )}
             </p>
           ) : null}
         </>
@@ -285,20 +455,108 @@ export default function GameCapUpload({
       ) : null}
 
       {phase === "complete" && resultVideoId ? (
-        <div className="mb-2 rounded-md border border-emerald-500/35 bg-emerald-950/30 px-2.5 py-2">
-          <p className="text-[11px] font-medium text-emerald-100">
+        <div
+          className={`mb-2 rounded-md border px-2.5 py-2 ${
+            embeddable === false
+              ? "border-amber-500/40 bg-amber-950/25"
+              : "border-emerald-500/35 bg-emerald-950/30"
+          }`}
+        >
+          <p
+            className={`text-[11px] font-medium ${
+              embeddable === false ? "text-amber-100" : "text-emerald-100"
+            }`}
+          >
             {youtubeStillProcessing
               ? "Uploaded. YouTube is still processing."
-              : "Upload complete — source attached"}
+              : embeddable === false
+                ? "Uploaded — but it won't play inside Film Room yet"
+                : embeddable === true
+                  ? "Upload complete — plays inside Film Room ✓"
+                  : "Upload complete — source attached"}
           </p>
-          <p className="mt-0.5 font-mono text-[10px] text-emerald-200/80">
+          <p className="mt-0.5 font-mono text-[10px] text-zinc-300/80">
             {resultVideoId}
           </p>
-          <p className="mt-1 text-[10px] text-emerald-200/70">
-            {youtubeStillProcessing
-              ? "Source attached — refresh metadata in Sources below once playback is ready."
-              : "Unlisted on your YouTube channel. Open in Film Room below."}
-          </p>
+
+          {embeddable === false ? (
+            <div className="mt-1.5 space-y-1.5">
+              <p className="text-[10px] leading-snug text-amber-200/90">
+                YouTube is blocking embedding for this video. The usual cause is
+                the &ldquo;Made for Kids&rdquo; audience setting, which disables
+                embeds.
+              </p>
+              {repairPhase === "fixed" ? (
+                <p className="text-[10px] font-medium text-emerald-200">
+                  Fixed — it now plays inside Film Room.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleAutoFixEmbedding()}
+                      disabled={repairing}
+                      className="rounded-md border border-amber-400/50 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-100 transition hover:bg-amber-500/25 disabled:opacity-50"
+                    >
+                      {repairing ? "Fixing…" : "Try auto-fix"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRecheckEmbedding()}
+                      disabled={repairing}
+                      className="rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 text-[10px] font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
+                    >
+                      Re-check
+                    </button>
+                  </div>
+                  {repairError ? (
+                    <p className="text-[10px] leading-snug text-amber-200/90">
+                      {repairError}
+                    </p>
+                  ) : null}
+                  <p className="text-[10px] leading-snug text-zinc-400">
+                    Manual fix: YouTube Studio → Content → this video → Audience
+                    → &ldquo;No, it&rsquo;s not made for kids&rdquo;.
+                  </p>
+                </>
+              )}
+              <a
+                href={`https://www.youtube.com/watch?v=${resultVideoId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-[10px] font-semibold text-blue-300 underline-offset-2 hover:underline"
+              >
+                Open on YouTube
+              </a>
+            </div>
+          ) : (
+            <>
+              <p className="mt-1 text-[10px] text-emerald-200/70">
+                {youtubeStillProcessing
+                  ? "Source attached — we'll confirm embedding once YouTube finishes processing."
+                  : embeddable === true
+                    ? "Unlisted on your channel and confirmed embeddable. Open in Film Room below."
+                    : "Unlisted on your YouTube channel. Open in Film Room below."}
+              </p>
+              <p className="mt-1 text-[10px] text-sky-200/80">
+                {autoAligned
+                  ? "Auto-aligned to the game timeline from the clip's recording time. Fine-tune in Sources if needed."
+                  : "Add a sync point in Sources to line this clip up with the others."}
+              </p>
+            </>
+          )}
+
+          {embeddable === null && !youtubeStillProcessing ? (
+            <button
+              type="button"
+              onClick={() => void handleRecheckEmbedding()}
+              disabled={repairing}
+              className="mt-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 text-[10px] font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              {repairing ? "Checking…" : "Check embedding"}
+            </button>
+          ) : null}
         </div>
       ) : null}
 

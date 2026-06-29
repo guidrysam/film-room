@@ -15,6 +15,12 @@ service cloud.firestore {
              resource.data.shareId.size() > 0;
     }
 
+    // User profile doc (YouTube onboarding, etc.) — owner-only. Subcollections
+    // below keep their own rules (this match is non-recursive).
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /users/{userId}/savedSessions/{sessionId} {
       allow read: if (request.auth != null && request.auth.uid == userId) ||
                      isPublicSharedSession();

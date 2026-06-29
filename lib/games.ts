@@ -1141,6 +1141,12 @@ export type AddGameSourceFromYouTubeUploadInput = {
   youtubeChannelTitle?: string;
   youtubePrivacyStatus?: "private" | "unlisted" | "public";
   youtubeEmbeddable?: boolean;
+  /** Seconds added to game time to reach this clip's playback position. */
+  offsetFromGameTime?: number;
+  /** ISO recording start time read from the clip (drives clock sync). */
+  recordedStartTime?: string;
+  syncStatus?: GameVideoSource["syncStatus"];
+  syncConfidence?: GameVideoSource["syncConfidence"];
 };
 
 /**
@@ -1156,18 +1162,25 @@ export async function addGameSourceFromYouTubeUpload(
     throw new Error("Invalid YouTube video id.");
   }
   const label = input.label.trim() || "Camera";
+  const hasOffset =
+    typeof input.offsetFromGameTime === "number" &&
+    Number.isFinite(input.offsetFromGameTime);
   return addGameSource(
     gameId,
     {
       kind: "youtube",
       label,
       videoId,
-      offsetFromGameTime: 0,
+      offsetFromGameTime: hasOffset ? input.offsetFromGameTime! : 0,
       uploadOwner: "parent",
       uploadedBy: uid,
       createdBy: uid,
       youtubePrivacyStatus: input.youtubePrivacyStatus ?? "unlisted",
-      syncStatus: "unsynced",
+      syncStatus: input.syncStatus ?? "unsynced",
+      ...(input.syncConfidence ? { syncConfidence: input.syncConfidence } : {}),
+      ...(trimOrUndef(input.recordedStartTime)
+        ? { recordedStartTime: input.recordedStartTime!.trim() }
+        : {}),
       ...(trimOrUndef(input.createdByName)
         ? { createdByName: input.createdByName!.trim() }
         : {}),

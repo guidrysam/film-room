@@ -70,6 +70,13 @@ function shortUid(uid?: string): string {
   return uid.length > 10 ? `${uid.slice(0, 6)}…${uid.slice(-2)}` : uid;
 }
 
+/** Prefer a human name for crediting a contributor; fall back to short uid. */
+function contributorLabel(source: GameVideoSource): string {
+  const name = source.createdByName?.trim();
+  if (name) return name;
+  return shortUid(source.createdBy);
+}
+
 function formatDuration(sec?: number): string | null {
   if (typeof sec !== "number" || !Number.isFinite(sec) || sec <= 0) return null;
   const m = Math.floor(sec / 60);
@@ -135,6 +142,16 @@ export default function GameSources({
     () => gameSourcesToAngles(sources).length,
     [sources],
   );
+
+  const contributorCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of sources) {
+      ids.add(s.createdByName?.trim() || s.createdBy || s.id);
+    }
+    return ids.size;
+  }, [sources]);
+
+  const isTeamPool = Boolean(game.teamId);
 
   const handleAdd = useCallback(async () => {
     if (!urlOrId.trim()) {
@@ -337,6 +354,15 @@ export default function GameSources({
         </div>
       )}
 
+      {isTeamPool && sources.length > 0 ? (
+        <p className="mb-2 rounded-md border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5 text-[10px] leading-snug text-zinc-400">
+          Shared team pool — {sources.length}{" "}
+          {sources.length === 1 ? "clip" : "clips"}
+          {contributorCount > 1 ? ` from ${contributorCount} contributors` : ""}.
+          Anyone on the team can use these together in a composite.
+        </p>
+      ) : null}
+
       {pasteFormPlacement === "top" ? pasteForm : null}
 
       {loading ? (
@@ -386,7 +412,7 @@ export default function GameSources({
                   ) : null}
                   {duration ? <span>{duration}</span> : null}
                   <span>offset {s.offsetFromGameTime ?? 0}s</span>
-                  <span>by {shortUid(s.createdBy)}</span>
+                  <span>by {contributorLabel(s)}</span>
                   {canEdit && isYouTubeKind(s.kind) && s.videoId ? (
                     <span
                       role="presentation"
