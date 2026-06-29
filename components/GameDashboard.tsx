@@ -341,9 +341,14 @@ export default function GameDashboard({
               ? "Add video above, then review synced angles."
               : `${metrics.syncedSourceCount} of ${metrics.sourceCount} source${metrics.sourceCount === 1 ? "" : "s"} synced for multi-angle review.`}
           </p>
-          <Link href={`/game/${game.id}/review`} className={primaryBtn}>
-            Review synced game
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/game/${game.id}/review`} className={primaryBtn}>
+              Review synced game
+            </Link>
+            <Link href={`/game/${game.id}/reel`} className={ghostBtn}>
+              Build highlight reel
+            </Link>
+          </div>
         </section>
 
         {/* Stats */}

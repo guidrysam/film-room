@@ -4,6 +4,7 @@ import {
   getDirectorTrack,
   listDirectorTracks,
   updateDirectorTrack,
+  type CutVisibility,
   type DirectorTrack,
   type DirectorTrackEvent,
 } from "@/lib/games";
@@ -25,7 +26,28 @@ export type HighlightMoment = {
   timelineEventId?: string;
   /** Players tagged on this moment (optional). */
   playerIds?: string[];
+  /** Playback rate for this segment (0.25–2). Default 1. */
+  speed?: number;
+  /** How many times to play this segment (1–10). Default 1. */
+  repeat?: number;
 };
+
+/** Allowed playback speeds offered in the reel UI. */
+export const HIGHLIGHT_SPEEDS = [0.25, 0.5, 1, 1.5, 2] as const;
+
+/** Clamp an arbitrary value to a usable segment speed (default 1). */
+export function normalizeHighlightSpeed(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(2, Math.max(0.25, n));
+}
+
+/** Clamp an arbitrary value to an integer repeat count 1–10 (default 1). */
+export function normalizeHighlightRepeat(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(10, Math.max(1, Math.round(n)));
+}
 
 export type HighlightDraftMeta = {
   schema: typeof HIGHLIGHT_DRAFT_SCHEMA;
@@ -52,10 +74,31 @@ export type AddHighlightMomentInput = {
   label?: string;
   timelineEventId?: string;
   playerIds?: string[];
+  speed?: number;
+  repeat?: number;
 };
 
 function randomMomentId(): string {
   return `hm_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Build a normalized HighlightMoment from add-input (assigns a fresh id). */
+function momentFromInput(input: AddHighlightMomentInput): HighlightMoment {
+  const playerIds = parsePlayerIds(input.playerIds);
+  const speed = normalizeHighlightSpeed(input.speed);
+  const repeat = normalizeHighlightRepeat(input.repeat);
+  return {
+    id: randomMomentId(),
+    gameTime: Math.max(0, input.gameTime),
+    startOffsetSec: input.startOffsetSec ?? -5,
+    endOffsetSec: input.endOffsetSec ?? 10,
+    activeSourceId: input.activeSourceId,
+    ...(input.label?.trim() ? { label: input.label.trim() } : {}),
+    ...(input.timelineEventId ? { timelineEventId: input.timelineEventId } : {}),
+    ...(playerIds.length > 0 ? { playerIds } : {}),
+    ...(speed !== 1 ? { speed } : {}),
+    ...(repeat !== 1 ? { repeat } : {}),
+  };
 }
 
 export function isHighlightDraft(track: DirectorTrack): boolean {
@@ -118,6 +161,12 @@ export function parseHighlightDraftMeta(
           : {}),
         ...(parsePlayerIds(m.playerIds).length > 0
           ? { playerIds: parsePlayerIds(m.playerIds) }
+          : {}),
+        ...(m.speed !== undefined && normalizeHighlightSpeed(m.speed) !== 1
+          ? { speed: normalizeHighlightSpeed(m.speed) }
+          : {}),
+        ...(m.repeat !== undefined && normalizeHighlightRepeat(m.repeat) !== 1
+          ? { repeat: normalizeHighlightRepeat(m.repeat) }
           : {}),
       });
     }
@@ -249,18 +298,7 @@ export async function createHighlightDraft(
   },
 ): Promise<string> {
   const momentPlayerIds = parsePlayerIds(input.moment.playerIds);
-  const moment: HighlightMoment = {
-    id: randomMomentId(),
-    gameTime: Math.max(0, input.moment.gameTime),
-    startOffsetSec: input.moment.startOffsetSec ?? -5,
-    endOffsetSec: input.moment.endOffsetSec ?? 10,
-    activeSourceId: input.moment.activeSourceId,
-    ...(input.moment.label?.trim() ? { label: input.moment.label.trim() } : {}),
-    ...(input.moment.timelineEventId
-      ? { timelineEventId: input.moment.timelineEventId }
-      : {}),
-    ...(momentPlayerIds.length > 0 ? { playerIds: momentPlayerIds } : {}),
-  };
+  const moment = momentFromInput(input.moment);
   const draftPlayerIds = uniquePlayerIds(input.playerIds, momentPlayerIds);
   return createDirectorTrack(gameId, {
     kind: "highlight",
@@ -289,18 +327,7 @@ export async function appendHighlightMoment(
   const meta = parseHighlightDraftMeta(track);
   const moments = meta?.moments ?? [];
   const momentPlayerIds = parsePlayerIds(momentInput.playerIds);
-  const moment: HighlightMoment = {
-    id: randomMomentId(),
-    gameTime: Math.max(0, momentInput.gameTime),
-    startOffsetSec: momentInput.startOffsetSec ?? -5,
-    endOffsetSec: momentInput.endOffsetSec ?? 10,
-    activeSourceId: momentInput.activeSourceId,
-    ...(momentInput.label?.trim() ? { label: momentInput.label.trim() } : {}),
-    ...(momentInput.timelineEventId
-      ? { timelineEventId: momentInput.timelineEventId }
-      : {}),
-    ...(momentPlayerIds.length > 0 ? { playerIds: momentPlayerIds } : {}),
-  };
+  const moment = momentFromInput(momentInput);
   const next = [...moments, moment];
   const draftPlayerIds = uniquePlayerIds(meta?.playerIds, momentPlayerIds);
   await updateDirectorTrack(gameId, draftId, {
@@ -338,6 +365,220 @@ export async function removeHighlightMoment(
       meta?.playerIds,
     ),
   });
+}
+
+export type UpdateHighlightMomentPatch = {
+  gameTime?: number;
+  startOffsetSec?: number;
+  endOffsetSec?: number;
+  activeSourceId?: string;
+  /** Pass an empty string to clear the label. */
+  label?: string;
+  speed?: number;
+  repeat?: number;
+  playerIds?: string[];
+};
+
+/** Persist a moment list, deleting the draft when it becomes empty. */
+async function persistMoments(
+  gameId: string,
+  draftId: string,
+  moments: HighlightMoment[],
+  playerIds?: string[],
+): Promise<void> {
+  if (moments.length === 0) {
+    await deleteDirectorTrack(gameId, draftId);
+    return;
+  }
+  await updateDirectorTrack(gameId, draftId, {
+    track: highlightMomentsToTrackEvents(moments),
+    description: serializeHighlightDraftMeta(
+      moments,
+      playerIds && playerIds.length > 0 ? playerIds : undefined,
+    ),
+  });
+}
+
+/** Edit a single moment in place (angle, in/out, speed, repeat, label, players). */
+export async function updateHighlightMoment(
+  gameId: string,
+  draftId: string,
+  momentId: string,
+  patch: UpdateHighlightMomentPatch,
+): Promise<void> {
+  const track = await getDirectorTrack(gameId, draftId);
+  if (!track || !isHighlightDraft(track)) {
+    throw new Error("Highlight draft not found.");
+  }
+  const meta = parseHighlightDraftMeta(track);
+  const moments = meta?.moments ?? [];
+  let found = false;
+  const next = moments.map((m) => {
+    if (m.id !== momentId) return m;
+    found = true;
+    const updated: HighlightMoment = { ...m };
+    if (typeof patch.gameTime === "number") {
+      updated.gameTime = Math.max(0, patch.gameTime);
+    }
+    if (typeof patch.startOffsetSec === "number") {
+      updated.startOffsetSec = patch.startOffsetSec;
+    }
+    if (typeof patch.endOffsetSec === "number") {
+      updated.endOffsetSec = patch.endOffsetSec;
+    }
+    if (patch.activeSourceId?.trim()) {
+      updated.activeSourceId = patch.activeSourceId.trim();
+    }
+    if (patch.label !== undefined) {
+      const l = patch.label.trim();
+      if (l) updated.label = l;
+      else delete updated.label;
+    }
+    if (patch.speed !== undefined) {
+      const s = normalizeHighlightSpeed(patch.speed);
+      if (s !== 1) updated.speed = s;
+      else delete updated.speed;
+    }
+    if (patch.repeat !== undefined) {
+      const r = normalizeHighlightRepeat(patch.repeat);
+      if (r !== 1) updated.repeat = r;
+      else delete updated.repeat;
+    }
+    if (patch.playerIds !== undefined) {
+      const pids = parsePlayerIds(patch.playerIds);
+      if (pids.length > 0) updated.playerIds = pids;
+      else delete updated.playerIds;
+    }
+    return updated;
+  });
+  if (!found) throw new Error("Moment not found.");
+  await persistMoments(gameId, draftId, next, meta?.playerIds);
+}
+
+/** Reorder moments to match `orderedIds` (unknown ids ignored, missing appended). */
+export async function reorderHighlightMoments(
+  gameId: string,
+  draftId: string,
+  orderedIds: string[],
+): Promise<void> {
+  const track = await getDirectorTrack(gameId, draftId);
+  if (!track || !isHighlightDraft(track)) {
+    throw new Error("Highlight draft not found.");
+  }
+  const meta = parseHighlightDraftMeta(track);
+  const moments = meta?.moments ?? [];
+  const byId = new Map(moments.map((m) => [m.id, m]));
+  const next: HighlightMoment[] = [];
+  for (const id of orderedIds) {
+    const m = byId.get(id);
+    if (m) {
+      next.push(m);
+      byId.delete(id);
+    }
+  }
+  for (const m of moments) if (byId.has(m.id)) next.push(m);
+  await persistMoments(gameId, draftId, next, meta?.playerIds);
+}
+
+/** Replace a draft's full moment list in one write (used by preset regeneration). */
+export async function setHighlightMoments(
+  gameId: string,
+  draftId: string,
+  moments: HighlightMoment[],
+  playerIds?: string[],
+): Promise<void> {
+  const track = await getDirectorTrack(gameId, draftId);
+  if (!track || !isHighlightDraft(track)) {
+    throw new Error("Highlight draft not found.");
+  }
+  await persistMoments(gameId, draftId, moments, playerIds);
+}
+
+/** Create a reel from many segments at once (e.g. a preset-generated cut). */
+export async function createHighlightReel(
+  gameId: string,
+  uid: string,
+  input: {
+    name: string;
+    moments: AddHighlightMomentInput[];
+    createdByName?: string;
+    visibility?: CutVisibility;
+    playerIds?: string[];
+  },
+): Promise<string> {
+  if (input.moments.length === 0) {
+    throw new Error("A reel needs at least one segment.");
+  }
+  const moments = input.moments.map(momentFromInput);
+  const draftPlayerIds = uniquePlayerIds(
+    input.playerIds,
+    ...moments.map((m) => m.playerIds),
+  );
+  return createDirectorTrack(gameId, {
+    kind: "highlight",
+    name: input.name.trim() || "Highlight reel",
+    visibility: input.visibility ?? "private",
+    gameId,
+    createdBy: uid,
+    track: highlightMomentsToTrackEvents(moments),
+    description: serializeHighlightDraftMeta(
+      moments,
+      draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
+    ),
+    ...(input.createdByName ? { createdByName: input.createdByName } : {}),
+  });
+}
+
+/** A resolved, playable reel segment in source-video time (not game time). */
+export type ReelStep = {
+  momentId: string;
+  sourceId: string;
+  /** Playback position (seconds) in the source video where the clip starts. */
+  sourceStartTime: number;
+  /** Playback position (seconds) in the source video where the clip ends. */
+  sourceEndTime: number;
+  speed: number;
+  repeat: number;
+  label?: string;
+};
+
+/**
+ * Resolve moments into ordered, playable reel steps. `sourceOffsets` maps a
+ * source id to its `offsetFromGameTime` so game time converts to source
+ * playback time (sourceTime = gameTime + offset). Reel order = moment order.
+ */
+export function buildReelSteps(
+  moments: HighlightMoment[],
+  sourceOffsets: Record<string, number>,
+): ReelStep[] {
+  const steps: ReelStep[] = [];
+  for (const m of moments) {
+    const offset = sourceOffsets[m.activeSourceId] ?? 0;
+    const startGame = Math.max(0, m.gameTime + m.startOffsetSec);
+    const endGame = Math.max(startGame, m.gameTime + m.endOffsetSec);
+    const sourceStartTime = Math.max(0, startGame + offset);
+    const sourceEndTime = Math.max(sourceStartTime, endGame + offset);
+    steps.push({
+      momentId: m.id,
+      sourceId: m.activeSourceId,
+      sourceStartTime,
+      sourceEndTime,
+      speed: normalizeHighlightSpeed(m.speed),
+      repeat: normalizeHighlightRepeat(m.repeat),
+      ...(m.label ? { label: m.label } : {}),
+    });
+  }
+  return steps;
+}
+
+/** Estimated wall-clock seconds the reel takes, accounting for speed + repeat. */
+export function reelDurationSec(steps: ReelStep[]): number {
+  let total = 0;
+  for (const s of steps) {
+    const seg = Math.max(0, s.sourceEndTime - s.sourceStartTime);
+    total += (seg / (s.speed || 1)) * (s.repeat || 1);
+  }
+  return total;
 }
 
 /** Playback point for a single saved moment (clip start). */

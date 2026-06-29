@@ -55,9 +55,16 @@ import {
   parseCoachAlertLatest,
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
-import { addGameEvent } from "@/lib/games";
+import { addGameEvent, getDirectorTrack } from "@/lib/games";
 import { roomGameMarkToTimelineEvent } from "@/lib/game-events";
+import {
+  buildReelSteps,
+  parseHighlightDraftMeta,
+  type HighlightMoment,
+  type ReelStep,
+} from "@/lib/highlight-draft";
 import CutStudio from "@/components/CutStudio";
+import RoomReelBar from "@/components/RoomReelBar";
 import { VideoZoomStage } from "@/components/VideoZoomStage";
 
 const HOST_SPEEDS = [0.25, 0.5, 1] as const;
@@ -1736,6 +1743,8 @@ function RoomContent() {
   }, [videoFromUrl]);
   const loadSavedId = searchParams.get("loadSaved");
   const viewParam = searchParams.get("view");
+  /** When present with `?gameId`, loads a saved highlight reel for shared room playback. */
+  const reelIdFromUrl = searchParams.get("reel");
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
@@ -5553,6 +5562,104 @@ function RoomContent() {
     return s.sourceType === "live" ? rawT : Math.max(rawT, fallbackClock);
   }, []);
 
+  // ---- Shared highlight-reel playback (host-driven) ----------------------
+  const [reelMoments, setReelMoments] = useState<HighlightMoment[]>([]);
+  const [reelName, setReelName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const gid = gameIdFromUrl?.trim();
+    const rid = reelIdFromUrl?.trim();
+    if (!gid || !rid) {
+      setReelMoments([]);
+      setReelName(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const track = await getDirectorTrack(gid, rid);
+        if (cancelled || !track) return;
+        const meta = parseHighlightDraftMeta(track);
+        setReelMoments(meta?.moments ?? []);
+        setReelName(track.name ?? null);
+      } catch {
+        /* reel not found / permission — leave empty */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [gameIdFromUrl, reelIdFromUrl]);
+
+  const reelSteps = useMemo<ReelStep[]>(() => {
+    if (reelMoments.length === 0) return [];
+    const offsets: Record<string, number> = {};
+    for (const a of roomState?.angles ?? []) {
+      offsets[a.id] = a.offsetFromGameTime ?? 0;
+    }
+    return buildReelSteps(reelMoments, offsets);
+  }, [reelMoments, roomState?.angles]);
+
+  const reelLabelForSource = useCallback(
+    (sourceId: string) =>
+      roomStateRef.current?.angles.find((a) => a.id === sourceId)?.name,
+    [],
+  );
+
+  /** Switch shown angle + seek + set rate + play for one reel step (host). */
+  const applyReelStep = useCallback(
+    (step: ReelStep) => {
+      if (!isHostRef.current || isManualSyncModeRef.current) return;
+      const cur = roomStateRef.current;
+      if (!cur) return;
+      const target = Math.max(0, step.sourceStartTime);
+      const angleExists = cur.angles.some((a) => a.id === step.sourceId);
+      const angleChanged = angleExists && cur.currentAngleId !== step.sourceId;
+
+      const seekNow = () => {
+        clearFfIfActive();
+        writeImmediatePlaybackCommand("seek", {
+          currentTime: target,
+          isPlaying: true,
+          playbackRate: step.speed,
+        });
+        applyHostMultiViewSecondaryDirect({
+          primaryAnchorTime: target,
+          isPlaying: true,
+          playbackRate: step.speed,
+          reason: "reel-step",
+          alignSeq: hostActionSeqRef.current,
+        });
+      };
+
+      if (angleChanged) {
+        handleSelectAngle(step.sourceId);
+        // Let the angle write propagate before seeking the (new) active angle.
+        window.setTimeout(seekNow, 140);
+      } else {
+        seekNow();
+      }
+    },
+    [
+      writeImmediatePlaybackCommand,
+      applyHostMultiViewSecondaryDirect,
+      handleSelectAngle,
+      clearFfIfActive,
+    ],
+  );
+
+  const stopReelPlayback = useCallback(() => {
+    if (!isHostRef.current) return;
+    void (async () => {
+      const t = await getCutGameTime();
+      writeImmediatePlaybackCommand("pause", {
+        currentTime: Math.max(0, t),
+        isPlaying: false,
+        playbackRate: 1,
+      });
+    })();
+  }, [writeImmediatePlaybackCommand, getCutGameTime]);
+
   // Snapshot of the current viewing state for the cut recorder.
   const getCutSnapshot = useCallback(async () => {
     const s = roomStateRef.current;
@@ -8856,6 +8963,19 @@ function RoomContent() {
                 </ul>
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {!cleanMode && isHost && roomState && reelSteps.length > 0 ? (
+          <div className="mb-3">
+            <RoomReelBar
+              steps={reelSteps}
+              reelName={reelName ?? undefined}
+              labelForSource={reelLabelForSource}
+              getActiveTime={getCutGameTime}
+              applyStep={applyReelStep}
+              onStop={stopReelPlayback}
+            />
           </div>
         ) : null}
 
