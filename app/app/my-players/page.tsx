@@ -1,12 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import PersonDuplicateMerge from "@/components/PersonDuplicateMerge";
 import { signInWithGoogle } from "@/lib/auth-google";
-import { listPersons, findPossiblePersonDuplicates, type Person } from "@/lib/persons";
-import { personProfileUrl } from "@/lib/team-routes";
+import { listMyLinkedPlayerGroups, type LinkedPlayerGroup } from "@/lib/linked-players";
+import { linkedPlayerProfileUrl } from "@/lib/team-routes";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -14,18 +13,18 @@ const panelClass =
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08]";
 
-export default function PlayersListPage() {
+export default function MyPlayersPage() {
   const { user, loading } = useAuth();
-  const [persons, setPersons] = useState<Person[]>([]);
+  const [groups, setGroups] = useState<LinkedPlayerGroup[]>([]);
   const [listLoading, setListLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!user) return;
     setListLoading(true);
     try {
-      setPersons(await listPersons(user.uid));
+      setGroups(await listMyLinkedPlayerGroups(user.uid));
     } catch {
-      setPersons([]);
+      setGroups([]);
     } finally {
       setListLoading(false);
     }
@@ -34,11 +33,6 @@ export default function PlayersListPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const possibleDuplicates = useMemo(
-    () => findPossiblePersonDuplicates(persons),
-    [persons],
-  );
 
   if (loading) {
     return (
@@ -73,9 +67,10 @@ export default function PlayersListPage() {
             <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
               Film Room
             </p>
-            <h1 className="text-xl font-semibold text-white">Your players</h1>
+            <h1 className="text-xl font-semibold text-white">My kids</h1>
             <p className="mt-1 text-sm text-zinc-400">
-              Cross-event stats and film moments for everyone on your rosters.
+              Players you are linked to as a parent — stats and film across all
+              their teams.
             </p>
           </div>
           <Link href="/app" className={ghostBtn}>
@@ -83,45 +78,30 @@ export default function PlayersListPage() {
           </Link>
         </div>
 
-        {possibleDuplicates.length > 0 ? (
-          <section className={`${panelClass} mb-5 border-amber-500/20 bg-amber-950/10`}>
-            <p className="text-xs font-semibold text-amber-100">
-              Possible duplicate names
-            </p>
-            <p className="mt-1 text-[11px] text-amber-200/80">
-              Same kid listed twice? Merge to combine stats and film moments.
-            </p>
-            <ul className="mt-3 space-y-1.5">
-              {possibleDuplicates.slice(0, 8).map((pair) => (
-                <PersonDuplicateMerge
-                  key={`${pair.a.id}-${pair.b.id}`}
-                  uid={user.uid}
-                  pair={pair}
-                  onMerged={() => void refresh()}
-                />
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
         <section className={panelClass}>
           {listLoading ? (
-            <p className="text-sm text-zinc-400">Loading players…</p>
-          ) : persons.length === 0 ? (
+            <p className="text-sm text-zinc-400">Loading…</p>
+          ) : groups.length === 0 ? (
             <p className="text-sm text-zinc-400">
-              No players linked yet. Import a TeamLinkt roster to create player
-              records that persist across events.
+              No linked players yet. Join a team with a parent invite, then link
+              yourself to your child on the roster.
             </p>
           ) : (
             <ul className="space-y-1.5">
-              {persons.map((person) => (
-                <li key={person.id}>
+              {groups.map((group) => (
+                <li key={group.key}>
                   <Link
-                    href={personProfileUrl(person.id)}
+                    href={linkedPlayerProfileUrl(group.key)}
                     className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2.5 transition hover:bg-white/[0.04]"
                   >
-                    <span className="truncate text-sm font-medium text-white">
-                      {person.name}
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-white">
+                        {group.displayName}
+                      </span>
+                      <span className="block text-xs text-zinc-500">
+                        {group.entries.length} team
+                        {group.entries.length === 1 ? "" : "s"}
+                      </span>
                     </span>
                     <span className="shrink-0 text-zinc-500" aria-hidden>
                       →

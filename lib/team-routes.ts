@@ -35,6 +35,14 @@ export function personProfileUrl(personId: string): string {
   return `/app/players/${personId}`;
 }
 
+export function myPlayersUrl(): string {
+  return "/app/my-players";
+}
+
+export function linkedPlayerProfileUrl(groupKey: string): string {
+  return `/app/my-players/${encodeURIComponent(groupKey)}`;
+}
+
 export function teamPlayerProfileUrl(teamId: string, playerId: string): string {
   return `/team/${teamId}/player/${playerId}`;
 }

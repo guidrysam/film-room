@@ -6,16 +6,35 @@ export type TeamBatchGroup = {
   label: string;
   importBatchId: string | null;
   teams: Team[];
+  archived?: boolean;
+};
+
+export type GroupTeamsOptions = {
+  /** Batch ids marked archived — excluded unless showArchived is true. */
+  archivedBatchIds?: Set<string>;
+  showArchived?: boolean;
 };
 
 /**
  * Group teams for dashboard display — newest batches first, unbatched last.
  */
-export function groupTeamsByImportBatch(teams: Team[]): TeamBatchGroup[] {
+export function groupTeamsByImportBatch(
+  teams: Team[],
+  opts?: GroupTeamsOptions,
+): TeamBatchGroup[] {
+  const archivedBatchIds = opts?.archivedBatchIds ?? new Set<string>();
+  const showArchived = opts?.showArchived === true;
+
+  const filtered = teams.filter((team) => {
+    if (!team.importBatchId) return true;
+    const isArchived = archivedBatchIds.has(team.importBatchId);
+    return showArchived ? isArchived : !isArchived;
+  });
+
   const byBatch = new Map<string, Team[]>();
   const unbatched: Team[] = [];
 
-  for (const team of teams) {
+  for (const team of filtered) {
     if (team.importBatchId) {
       const list = byBatch.get(team.importBatchId) ?? [];
       list.push(team);
@@ -46,6 +65,7 @@ export function groupTeamsByImportBatch(teams: Team[]): TeamBatchGroup[] {
       label: entry.label,
       importBatchId: entry.batchId,
       teams: entry.batchTeams,
+      archived: archivedBatchIds.has(entry.batchId),
     });
   }
 

@@ -8,8 +8,9 @@ import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import { listMyGames, type Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
+import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
-import { teamRosterUrl, playersListUrl } from "@/lib/team-routes";
+import { myPlayersUrl, playersListUrl, teamRosterUrl } from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 import { NON_YOUTUBE_LINK_MESSAGE } from "@/lib/public-copy";
 
@@ -38,6 +39,8 @@ export default function DashboardPage() {
   const [gamesLoading, setGamesLoading] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
+  const [batches, setBatches] = useState<ImportBatch[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   const refreshGames = useCallback(async () => {
     if (!user) return;
@@ -55,7 +58,12 @@ export default function DashboardPage() {
     if (!user) return;
     setTeamsLoading(true);
     try {
-      setTeams(await listMyTeams(user.uid));
+      const [teamRows, batchRows] = await Promise.all([
+        listMyTeams(user.uid),
+        listMyImportBatches(user.uid),
+      ]);
+      setTeams(teamRows);
+      setBatches(batchRows);
     } catch (error) {
       console.error("[dashboard:teams:error]", error);
     } finally {
@@ -71,7 +79,33 @@ export default function DashboardPage() {
     void refreshTeams();
   }, [refreshTeams]);
 
-  const teamGroups = useMemo(() => groupTeamsByImportBatch(teams), [teams]);
+  const archivedBatchIds = useMemo(
+    () => new Set(batches.filter((b) => b.archived).map((b) => b.id)),
+    [batches],
+  );
+
+  const teamGroups = useMemo(
+    () =>
+      groupTeamsByImportBatch(teams, {
+        archivedBatchIds,
+        showArchived,
+      }),
+    [teams, archivedBatchIds, showArchived],
+  );
+
+  const hasArchivedBatches = archivedBatchIds.size > 0;
+
+  const handleArchiveBatch = useCallback(
+    async (batchId: string, archived: boolean) => {
+      try {
+        await setImportBatchArchived(batchId, archived);
+        await refreshTeams();
+      } catch (error) {
+        console.error("[dashboard:archive-batch:error]", error);
+      }
+    },
+    [refreshTeams],
+  );
 
   const startQuickReview = () => {
     const videoId = extractYouTubeVideoId(url);
@@ -135,6 +169,9 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2 text-xs">
+            <Link href={myPlayersUrl()} className={ghostBtn}>
+              My kids
+            </Link>
             <Link href={playersListUrl()} className={ghostBtn}>
               Your players
             </Link>
@@ -158,6 +195,15 @@ export default function DashboardPage() {
               Your teams
             </p>
             <div className="flex items-center gap-2">
+              {hasArchivedBatches ? (
+                <button
+                  type="button"
+                  onClick={() => setShowArchived((v) => !v)}
+                  className="text-xs font-medium text-zinc-400 transition hover:text-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 rounded-sm"
+                >
+                  {showArchived ? "Hide archived" : "Show archived"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void refreshTeams()}
@@ -172,21 +218,50 @@ export default function DashboardPage() {
           </div>
           {teamsLoading ? (
             <p className="text-sm text-zinc-400">Loading teams…</p>
-          ) : teams.length === 0 ? (
+          ) : teamGroups.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              No teams yet.{" "}
-              <Link href="/team/new" className="text-blue-300 hover:underline">
-                Create a team
-              </Link>{" "}
-              to organize games, roster, and season.
+              {showArchived
+                ? "No archived events."
+                : teams.length === 0
+                  ? (
+                    <>
+                      No teams yet.{" "}
+                      <Link href="/team/new" className="text-blue-300 hover:underline">
+                        Create a team
+                      </Link>{" "}
+                      to organize games, roster, and season.
+                    </>
+                  )
+                  : "All events are archived. Use Show archived to view them."}
             </p>
           ) : (
             <div className="space-y-4">
               {teamGroups.map((group) => (
                 <div key={group.key}>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                    {group.label}
-                  </p>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                      {group.label}
+                      {group.archived ? (
+                        <span className="ml-2 normal-case text-zinc-600">
+                          (archived)
+                        </span>
+                      ) : null}
+                    </p>
+                    {group.importBatchId && user?.uid ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handleArchiveBatch(
+                            group.importBatchId!,
+                            !group.archived,
+                          )
+                        }
+                        className="text-[10px] font-medium text-zinc-500 transition hover:text-zinc-300"
+                      >
+                        {group.archived ? "Restore event" : "Archive event"}
+                      </button>
+                    ) : null}
+                  </div>
                   <ul className="space-y-2">
                     {group.teams.map((t) => {
                       const role = user ? teamRoleFor(t, user.uid) : null;

@@ -6,6 +6,7 @@ import {
   serverTimestamp,
   setDoc,
   Timestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { auth, firestore } from "@/lib/firebase";
@@ -24,6 +25,8 @@ export type ImportBatch = {
   sport?: string;
   createdBy: string;
   createdAt: Timestamp | null;
+  /** Hidden from the default dashboard when true. */
+  archived?: boolean;
 };
 
 function batchesCol() {
@@ -43,6 +46,7 @@ function parseBatch(id: string, raw: Record<string, unknown>): ImportBatch {
     ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
     createdBy: typeof raw.createdBy === "string" ? raw.createdBy : "",
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
+    ...(raw.archived === true ? { archived: true } : {}),
   };
 }
 
@@ -103,4 +107,22 @@ export async function listMyImportBatches(uid: string): Promise<ImportBatch[]> {
       (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
   );
   return out;
+}
+
+export async function setImportBatchArchived(
+  batchId: string,
+  archived: boolean,
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in required.");
+  try {
+    await updateDoc(doc(batchesCol(), batchId), { archived });
+  } catch (error) {
+    throw formatFirestoreWriteError(
+      error,
+      archived
+        ? "Could not archive this event."
+        : "Could not restore this event.",
+    );
+  }
 }

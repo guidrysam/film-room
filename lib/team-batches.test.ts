@@ -42,4 +42,16 @@ describe("groupTeamsByImportBatch", () => {
     assert.equal(groups[1]!.label, "Other teams");
     assert.equal(groups[1]!.teams.length, 1);
   });
+
+  it("hides archived batches by default", () => {
+    const groups = groupTeamsByImportBatch(
+      [
+        stubTeam("t1", "Fall", { importBatchId: "b1" }),
+        stubTeam("t2", "Summer", { importBatchId: "b2" }),
+      ],
+      { archivedBatchIds: new Set(["b2"]) },
+    );
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0]!.importBatchId, "b1");
+  });
 });

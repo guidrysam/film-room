@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -183,4 +184,19 @@ export async function resolvePersonId(
   const person = await createPerson(ownerUid, name);
   const next = [...cache, person].sort((a, b) => a.name.localeCompare(b.name));
   return { personId: person.id, created: true, cache: next };
+}
+
+export async function deletePerson(
+  ownerUid: string,
+  personId: string,
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user || user.uid !== ownerUid) {
+    throw new Error("Sign in required.");
+  }
+  try {
+    await deleteDoc(doc(personsCol(ownerUid), personId));
+  } catch (error) {
+    throw formatFirestoreWriteError(error, "Could not delete person record.");
+  }
 }
