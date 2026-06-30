@@ -65,7 +65,7 @@ function GameReviewPageInner() {
 
   return (
     <div className="min-h-screen px-4 py-6 text-zinc-50">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-7xl">
         <nav
           aria-label="Breadcrumb"
           className="mb-4 flex items-center gap-2 text-xs text-zinc-500"

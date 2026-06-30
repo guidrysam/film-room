@@ -6698,6 +6698,28 @@ function RoomContent() {
     const s = roomStateRef.current;
     if (!s) return;
     const p = getPlayer();
+    if (p && isHostRef.current && s.sourceType !== "live") {
+      try {
+        const st = p.getPlayerState?.();
+        const YT_UNSTARTED = -1;
+        if (st === YT_UNSTARTED) {
+          const cue = (
+            p as YouTubePlayer & {
+              cueVideoById?: (args: {
+                videoId: string;
+                startSeconds?: number;
+              }) => void;
+            }
+          ).cueVideoById;
+          cue?.({
+            videoId: s.videoId,
+            startSeconds: Math.max(0, s.currentTime ?? 0),
+          });
+        }
+      } catch {
+        /* YouTube API */
+      }
+    }
     if (p && s.sourceType === "live") {
       void forceLiveBootstrapPlay(p, "onReady:primary");
       const activeAngle =

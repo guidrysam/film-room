@@ -3,14 +3,10 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 import { markRoomHost } from "@/lib/room-host";
-import {
-  NON_EMBEDDABLE_YOUTUBE_MESSAGE,
-  NON_YOUTUBE_LINK_MESSAGE,
-} from "@/lib/public-copy";
-import { fetchYouTubeVideoMeta } from "@/lib/youtube-video-meta-client";
-import { extractYouTubeVideoId } from "@/lib/youtube-id";
-import { watchUrlForVideoId } from "@/lib/youtube-embed-diagnostics";
+import { resolveYouTubeVideoIdFromPaste } from "@/lib/resolve-youtube-paste";
+import { createQuickReviewGame } from "@/lib/quick-review";
 
 const inputClass =
   "w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3.5 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-white/55 transition focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/35";
@@ -27,10 +23,9 @@ const helpLink =
 export default function Home() {
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
-  const [embedWarning, setEmbedWarning] = useState<string | null>(null);
-  const [embedWatchUrl, setEmbedWatchUrl] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const router = useRouter();
+  const { user } = useAuth();
 
   const goToRoom = (videoId: string) => {
     const roomId = Math.random().toString(36).substring(2, 8);
@@ -43,33 +38,29 @@ export default function Home() {
     if (!trimmed) return;
 
     setUrlError(null);
-    setEmbedWarning(null);
-    setEmbedWatchUrl(null);
-
-    const videoId = extractYouTubeVideoId(trimmed);
-    if (!videoId) {
-      setUrlError(NON_YOUTUBE_LINK_MESSAGE);
-      return;
-    }
 
     setStarting(true);
     try {
-      const meta = await fetchYouTubeVideoMeta(videoId);
-      if (meta?.embeddable === false) {
-        setEmbedWarning(NON_EMBEDDABLE_YOUTUBE_MESSAGE);
-        setEmbedWatchUrl(watchUrlForVideoId(videoId));
+      const result = await resolveYouTubeVideoIdFromPaste(trimmed);
+      if (!result.ok) {
+        setUrlError(result.error);
         return;
       }
-      goToRoom(videoId);
+
+      if (user) {
+        const { gameId } = await createQuickReviewGame(user.uid, result.videoId);
+        router.push(`/game/${gameId}/review`);
+        return;
+      }
+
+      goToRoom(result.videoId);
+    } catch (err) {
+      setUrlError(
+        err instanceof Error ? err.message : "Could not start review.",
+      );
     } finally {
       setStarting(false);
     }
-  };
-
-  const startDespiteEmbedWarning = () => {
-    const videoId = extractYouTubeVideoId(url);
-    if (!videoId) return;
-    goToRoom(videoId);
   };
 
   return (
@@ -92,8 +83,6 @@ export default function Home() {
             onChange={(e) => {
               setUrl(e.target.value);
               setUrlError(null);
-              setEmbedWarning(null);
-              setEmbedWatchUrl(null);
             }}
             className={inputClass}
           />
@@ -102,51 +91,14 @@ export default function Home() {
               {urlError}
             </p>
           ) : null}
-          {embedWarning ? (
-            <div className="w-full space-y-2 text-left text-xs leading-relaxed text-amber-100">
-              <p>{embedWarning}</p>
-              {embedWatchUrl ? (
-                <a
-                  href={embedWatchUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex font-medium text-blue-200 underline-offset-2 hover:text-blue-100 hover:underline"
-                >
-                  Open on YouTube
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-          {embedWarning ? (
-            <div className="flex w-full max-w-xs flex-col gap-2">
-              <button
-                type="button"
-                onClick={startDespiteEmbedWarning}
-                className={primaryBtn}
-              >
-                Start Room anyway
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmbedWarning(null);
-                  setEmbedWatchUrl(null);
-                }}
-                className="text-xs text-white/70 transition hover:text-white"
-              >
-                Choose a different link
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void createRoom()}
-              disabled={starting || !url.trim()}
-              className={primaryBtn}
-            >
-              {starting ? "Checking…" : "Start Room"}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void createRoom()}
+            disabled={starting || !url.trim()}
+            className={primaryBtn}
+          >
+            {starting ? "Starting…" : user ? "Start review" : "Start Room"}
+          </button>
           <Link href="/app" className={secondaryBtn}>
             Log In
           </Link>

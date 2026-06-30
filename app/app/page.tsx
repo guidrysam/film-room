@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
-import { markRoomHost } from "@/lib/room-host";
 import { listMyGames, type Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
 import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
 import { myPlayersUrl, playersListUrl, teamRosterUrl } from "@/lib/team-routes";
 import { resolveYouTubeVideoIdFromPaste } from "@/lib/resolve-youtube-paste";
+import { createQuickReviewGame } from "@/lib/quick-review";
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-50 placeholder:text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -109,6 +109,10 @@ export default function DashboardPage() {
   );
 
   const startQuickReview = async () => {
+    if (!user) {
+      setQuickReviewError("Sign in to start a quick review.");
+      return;
+    }
     setQuickReviewError(null);
     setQuickReviewStarting(true);
     try {
@@ -117,9 +121,12 @@ export default function DashboardPage() {
         setQuickReviewError(result.error);
         return;
       }
-      const roomId = Math.random().toString(36).substring(2, 8);
-      markRoomHost(roomId);
-      router.push(`/room/${roomId}?video=${encodeURIComponent(result.videoId)}`);
+      const { gameId } = await createQuickReviewGame(user.uid, result.videoId);
+      router.push(`/game/${gameId}/review`);
+    } catch (err) {
+      setQuickReviewError(
+        err instanceof Error ? err.message : "Could not start review.",
+      );
     } finally {
       setQuickReviewStarting(false);
     }

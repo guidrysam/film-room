@@ -198,6 +198,11 @@ export default function GameReview({
   const [editPlayerId, setEditPlayerId] = useState("");
   const [editTime, setEditTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
+  type ReviewTab = "tag" | "stat" | "highlight";
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("tag");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const fsPlayerRef = useRef<YouTubePlayer | null>(null);
+  const [fsPlayerReady, setFsPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -876,6 +881,65 @@ export default function GameReview({
     playerRef.current = null;
   }, [selectedSourceId]);
 
+  useEffect(() => {
+    if (canEditSources) setReviewTab("tag");
+    else if (canManageStats) setReviewTab("stat");
+    else setReviewTab("highlight");
+  }, [canEditSources, canManageStats]);
+
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      setFsPlayerReady(false);
+      fsPlayerRef.current = null;
+    }
+  }, [isFullscreen]);
+
+  const enterFullscreen = useCallback(async () => {
+    if (playerRef.current && playerReady) {
+      try {
+        const t = await playerRef.current.getCurrentTime?.();
+        if (typeof t === "number" && Number.isFinite(t)) {
+          pendingSeekRef.current = t;
+        }
+      } catch {
+        /* player may not be ready */
+      }
+    }
+    setIsFullscreen(true);
+  }, [playerReady]);
+
+  const exitFullscreen = useCallback(async () => {
+    if (fsPlayerRef.current && fsPlayerReady && selectedSource) {
+      try {
+        const t = await fsPlayerRef.current.getCurrentTime?.();
+        if (typeof t === "number" && Number.isFinite(t)) {
+          pendingSeekRef.current = t;
+          setSelectedGameTime(sourceTimeToGameTime(t, selectedSource));
+          if (playerRef.current) {
+            await seekPlayer(playerRef.current, t);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    setIsFullscreen(false);
+  }, [fsPlayerReady, selectedSource]);
+
   if (loading) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-sm text-zinc-400">
@@ -897,7 +961,7 @@ export default function GameReview({
 
   return (
     <div className="min-h-screen px-4 py-8 text-zinc-50">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-7xl">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.06] pb-4">
           <div>
             <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
@@ -934,38 +998,49 @@ export default function GameReview({
             </div>
           </div>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
             <div className="space-y-4">
               <section className={panelClass}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Preview
                   </p>
-                  <div className="flex flex-wrap gap-3 text-[11px] text-zinc-400">
-                    <span>
-                      Game time:{" "}
-                      <span className="font-mono text-zinc-200">
-                        {formatTimelineSeconds(selectedGameTime)}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap gap-3 text-[11px] text-zinc-400">
+                      <span>
+                        Game time:{" "}
+                        <span className="font-mono text-zinc-200">
+                          {formatTimelineSeconds(selectedGameTime)}
+                        </span>
                       </span>
-                    </span>
-                    <span>
-                      Source time:{" "}
-                      <span className="font-mono text-zinc-200">
-                        {formatTimelineSeconds(selectedSourceTime)}
+                      <span>
+                        Source time:{" "}
+                        <span className="font-mono text-zinc-200">
+                          {formatTimelineSeconds(selectedSourceTime)}
+                        </span>
                       </span>
-                    </span>
+                    </div>
+                    {selectedSource?.videoId ? (
+                      <button
+                        type="button"
+                        onClick={() => void enterFullscreen()}
+                        className={`${ghostBtn} text-[10px]`}
+                      >
+                        Fullscreen
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
                 {selectedSource?.videoId ? (
-                  <div className="aspect-video overflow-hidden rounded-lg border border-white/[0.08] bg-black">
+                  <div className="aspect-video w-full min-h-[240px] overflow-hidden rounded-lg border border-white/[0.08] bg-black lg:min-h-[420px]">
                     <YouTube
                       key={selectedSource.id}
                       videoId={selectedSource.videoId}
-                      className="h-full w-full"
+                      className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
                       opts={{
                         width: "100%",
-                        height: "360",
+                        height: "100%",
                         playerVars: {
                           autoplay: 0,
                           modestbranding: 1,
@@ -1085,7 +1160,7 @@ export default function GameReview({
                     add marks — they appear here for lined-up review.
                   </p>
                 ) : (
-                  <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1">
+                  <ul className="max-h-[28vh] space-y-1 overflow-y-auto pr-1 xl:max-h-[36vh]">
                     {events.map((ev) => {
                       const active = Math.abs(ev.t - selectedGameTime) < 0.25;
                       const isEditing = editingEventId === ev.id;
@@ -1225,8 +1300,49 @@ export default function GameReview({
                 )}
               </section>
 
-              {canEditSources ? (
-                <section className={panelClass}>
+              <section className={panelClass}>
+                <div className="mb-3 flex flex-wrap gap-1 border-b border-white/[0.06] pb-2">
+                  {canEditSources ? (
+                    <button
+                      type="button"
+                      onClick={() => setReviewTab("tag")}
+                      className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                        reviewTab === "tag"
+                          ? "bg-blue-600/35 text-white"
+                          : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
+                      }`}
+                    >
+                      Tag
+                    </button>
+                  ) : null}
+                  {canManageStats ? (
+                    <button
+                      type="button"
+                      onClick={() => setReviewTab("stat")}
+                      className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                        reviewTab === "stat"
+                          ? "bg-blue-600/35 text-white"
+                          : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
+                      }`}
+                    >
+                      Stat
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setReviewTab("highlight")}
+                    className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                      reviewTab === "highlight"
+                        ? "bg-blue-600/35 text-white"
+                        : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
+                    }`}
+                  >
+                    Highlight
+                  </button>
+                </div>
+
+              {canEditSources && reviewTab === "tag" ? (
+                <div>
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Tag a play
                   </p>
@@ -1403,11 +1519,11 @@ export default function GameReview({
                   {tagMessage ? (
                     <p className="mt-2 text-[11px] text-zinc-400">{tagMessage}</p>
                   ) : null}
-                </section>
+                </div>
               ) : null}
 
-              {canManageStats ? (
-                <section id="stats" className={`${panelClass} scroll-mt-6`}>
+              {canManageStats && reviewTab === "stat" ? (
+                <div id="stats" className="scroll-mt-6">
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                     Add stat
                   </p>
@@ -1556,10 +1672,11 @@ export default function GameReview({
                       </ul>
                     </div>
                   ) : null}
-                </section>
+                </div>
               ) : null}
 
-              <section className={panelClass}>
+              {reviewTab === "highlight" ? (
+                <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
                   Highlight Reel
                 </p>
@@ -1881,11 +1998,104 @@ export default function GameReview({
                     </ul>
                   )}
                 </div>
+                </div>
+              ) : null}
               </section>
             </div>
           </div>
         )}
       </div>
+
+      {isFullscreen && selectedSource?.videoId ? (
+        <div className="fixed inset-0 z-[200] flex flex-col bg-black">
+          <div className="relative min-h-0 flex-1">
+            <YouTube
+              key={`fs-${selectedSource.id}`}
+              videoId={selectedSource.videoId}
+              className="absolute inset-0 h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+              opts={{
+                width: "100%",
+                height: "100%",
+                playerVars: {
+                  autoplay: 0,
+                  modestbranding: 1,
+                  rel: 0,
+                },
+              }}
+              onReady={(e) => {
+                fsPlayerRef.current = e.target;
+                setFsPlayerReady(true);
+                const st = pendingSeekRef.current;
+                if (st != null && st >= 0) {
+                  void seekPlayer(e.target, st);
+                } else {
+                  const computed = gameTimeToSourceTime(
+                    selectedGameTime,
+                    selectedSource,
+                  );
+                  if (computed >= 0) {
+                    void seekPlayer(e.target, computed);
+                  }
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void exitFullscreen()}
+              className="absolute right-3 top-3 z-10 rounded-lg border border-white/20 bg-black/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-white/10"
+            >
+              Exit fullscreen
+            </button>
+          </div>
+          <div className="shrink-0 border-t border-white/10 bg-zinc-950/95 px-3 py-2">
+            <VideoTransport
+              playerRef={fsPlayerRef}
+              ready={fsPlayerReady}
+              onSourceTime={(sourceTime) => {
+                if (selectedSource) {
+                  setSelectedGameTime(
+                    sourceTimeToGameTime(sourceTime, selectedSource),
+                  );
+                }
+              }}
+            />
+          </div>
+          <div className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-white/10 bg-zinc-950/90 px-3 py-2">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              Game marks
+            </p>
+            {events.length === 0 ? (
+              <p className="text-[11px] text-zinc-500">No marks yet.</p>
+            ) : (
+              <ul className="flex flex-wrap gap-1.5">
+                {events.map((ev) => {
+                  const active = Math.abs(ev.t - selectedGameTime) < 0.25;
+                  return (
+                    <li key={ev.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectEvent(ev)}
+                        className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition ${
+                          active
+                            ? "border-emerald-500/45 bg-emerald-950/35 text-emerald-100"
+                            : "border-white/[0.08] bg-black/40 text-zinc-200 hover:border-white/15"
+                        }`}
+                      >
+                        <span className="font-mono tabular-nums">
+                          {formatTimelineSeconds(ev.t)}
+                        </span>
+                        {ev.label ? (
+                          <span className="ml-2 text-zinc-300">{ev.label}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
