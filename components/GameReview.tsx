@@ -48,6 +48,7 @@ import { gameSourceToVideoAngle } from "@/lib/video-angle";
 import { gameCapUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
 import VideoTransport from "@/components/VideoTransport";
+import ImportTagPlays from "@/components/ImportTagPlays";
 
 export type GameReviewProps = {
   gameId: string;
@@ -793,6 +794,16 @@ export default function GameReview({
                   sources={playableSources}
                   canEdit={canEditSources}
                   onSaved={() => void refresh()}
+                />
+              ) : null}
+
+              {game ? (
+                <ImportTagPlays
+                  game={game}
+                  currentUid={currentUid}
+                  currentDisplayName={currentDisplayName}
+                  canEdit={canEditSources}
+                  onImported={() => void refreshEvents()}
                 />
               ) : null}
             </div>
