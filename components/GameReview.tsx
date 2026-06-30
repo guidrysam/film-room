@@ -10,6 +10,7 @@ import {
   syncStatusLabel,
 } from "@/lib/game-timeline";
 import {
+  canContributeGameSources,
   canViewGame,
   getGame,
   listGameEvents,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/highlight-draft";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 import { gameCapUrl } from "@/lib/team-routes";
+import AngleMatchSync from "@/components/AngleMatchSync";
 
 export type GameReviewProps = {
   gameId: string;
@@ -180,6 +182,12 @@ export default function GameReview({
     () => (game ? canManageGameStats(game, currentUid, team) : false),
     [game, currentUid, team],
   );
+
+  const canEditSources = useMemo(() => {
+    if (!game) return false;
+    const teamRole = team ? teamRoleFor(team, currentUid) : null;
+    return canContributeGameSources(game, currentUid, teamRole);
+  }, [game, team, currentUid]);
 
   const gameStats = useMemo(() => listGameStatsFromEvents(events), [events]);
 
@@ -757,6 +765,15 @@ export default function GameReview({
                   })}
                 </ul>
               </section>
+
+              {game ? (
+                <AngleMatchSync
+                  game={game}
+                  sources={playableSources}
+                  canEdit={canEditSources}
+                  onSaved={() => void refresh()}
+                />
+              ) : null}
             </div>
 
             <div className="space-y-4">

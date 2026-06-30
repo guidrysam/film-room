@@ -8,6 +8,7 @@ import {
   canContributeGameSources,
   fetchGameSources,
   listGameSourcesByIds,
+  updateGameSourceSync,
   updateGameSourceYouTubeMetadata,
   type Game,
   type GameTeamRole,
@@ -17,9 +18,14 @@ import {
   syncStatusBadgeClass,
   syncStatusLabel,
 } from "@/lib/game-timeline";
+import {
+  canAutoApplyClockSync,
+  youtubeClockSyncPatch,
+} from "@/lib/youtube-clock-sync";
 import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
 import {
   fetchYouTubeVideoMeta,
+  fetchYouTubeVideoMetaWithRetry,
   metaToSourcePatch,
 } from "@/lib/youtube-video-meta-client";
 
@@ -153,6 +159,34 @@ export default function GameSources({
 
   const isTeamPool = Boolean(game.teamId);
 
+  /**
+   * Best-effort: line up a linked YouTube source from its metadata (live
+   * broadcast start / recording date) against the game's kickoff. No-op when the
+   * game has no scheduled kickoff, the video has no usable recording time, or the
+   * source was already manually aligned.
+   */
+  const autoAlignYouTube = useCallback(
+    async (src: GameVideoSource): Promise<boolean> => {
+      if (!src.videoId || !game.scheduledStartAt) return false;
+      if (!canAutoApplyClockSync(src)) return false;
+      try {
+        const meta = await fetchYouTubeVideoMetaWithRetry(src.videoId);
+        if (!meta) return false;
+        const patch = youtubeClockSyncPatch(
+          { scheduledStartAt: game.scheduledStartAt },
+          meta,
+        );
+        if (!patch) return false;
+        await updateGameSourceSync(game.id, src.id, patch);
+        return true;
+      } catch (e) {
+        console.warn("[GameSources] auto-align failed", { id: src.id, err: e });
+        return false;
+      }
+    },
+    [game.id, game.scheduledStartAt],
+  );
+
   const handleAdd = useCallback(async () => {
     if (!urlOrId.trim()) {
       setError("Paste a YouTube URL or video ID.");
@@ -193,6 +227,15 @@ export default function GameSources({
         await refresh();
       }
       onChanged?.();
+      // Try to auto-line-up the new source from YouTube metadata (best-effort).
+      if (added[0]) {
+        void autoAlignYouTube(added[0]).then((aligned) => {
+          if (aligned) {
+            void refresh();
+            onChanged?.();
+          }
+        });
+      }
     } catch (e) {
       console.error("[GameSources] add source failed", {
         gameId: game.id,
@@ -203,7 +246,17 @@ export default function GameSources({
     } finally {
       setAdding(false);
     }
-  }, [urlOrId, label, offset, game, currentUid, teamRole, refresh, onChanged]);
+  }, [
+    urlOrId,
+    label,
+    offset,
+    game,
+    currentUid,
+    teamRole,
+    refresh,
+    onChanged,
+    autoAlignYouTube,
+  ]);
 
   const handleOpen = useCallback(async () => {
     setOpening(true);
@@ -230,12 +283,27 @@ export default function GameSources({
           setError("Could not fetch YouTube metadata. Try again in a moment.");
           return;
         }
+        let changed = false;
         const patch = metaToSourcePatch(meta);
-        if (Object.keys(patch).length === 0) {
+        if (Object.keys(patch).length > 0) {
+          await updateGameSourceYouTubeMetadata(game.id, source.id, patch);
+          changed = true;
+        }
+        // Auto-line-up from the broadcast/recording time when possible.
+        if (game.scheduledStartAt && canAutoApplyClockSync(source)) {
+          const syncPatch = youtubeClockSyncPatch(
+            { scheduledStartAt: game.scheduledStartAt },
+            meta,
+          );
+          if (syncPatch) {
+            await updateGameSourceSync(game.id, source.id, syncPatch);
+            changed = true;
+          }
+        }
+        if (!changed) {
           setError("No new metadata available yet.");
           return;
         }
-        await updateGameSourceYouTubeMetadata(game.id, source.id, patch);
         await refresh();
         onChanged?.();
       } catch (e) {
@@ -246,7 +314,7 @@ export default function GameSources({
         setRefreshingId(null);
       }
     },
-    [game.id, refresh, onChanged],
+    [game.id, game.scheduledStartAt, refresh, onChanged],
   );
 
   const pasteForm =
@@ -423,9 +491,12 @@ export default function GameSources({
                         type="button"
                         onClick={() => void handleRefreshMetadata(s)}
                         disabled={refreshingId === s.id}
+                        title="Refresh YouTube info and auto-line-up from the broadcast/recording time (needs a game kickoff time)"
                         className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-300 transition hover:bg-white/[0.08] disabled:opacity-40"
                       >
-                        {refreshingId === s.id ? "Refreshing…" : "Refresh metadata"}
+                        {refreshingId === s.id
+                          ? "Syncing…"
+                          : "Sync from YouTube"}
                       </button>
                     </span>
                   ) : null}

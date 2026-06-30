@@ -35,6 +35,8 @@ type YouTubeMeta = {
   license?: string;
   /** From `snippet` */
   publishedAt?: string;
+  /** From `recordingDetails.recordingDate` (often date-only). */
+  recordingDate?: string;
   /** Broadcaster channel (for persistent /live URL hints). */
   channelId?: string;
   /** From `snippet.channelTitle`. */
@@ -68,7 +70,7 @@ export async function GET(request: Request) {
 
   const url =
     "https://www.googleapis.com/youtube/v3/videos" +
-    `?part=snippet,contentDetails,status,liveStreamingDetails&id=${encodeURIComponent(videoId)}` +
+    `?part=snippet,contentDetails,status,liveStreamingDetails,recordingDetails&id=${encodeURIComponent(videoId)}` +
     `&key=${encodeURIComponent(key)}`;
   const redactKey = (u: string) => u.replace(key, "<redacted>");
 
@@ -132,6 +134,9 @@ export async function GET(request: Request) {
         uploadStatus?: string;
         privacyStatus?: string;
         license?: string;
+      };
+      recordingDetails?: {
+        recordingDate?: string;
       };
     }>;
   };
@@ -304,6 +309,10 @@ export async function GET(request: Request) {
     ...(typeof item.snippet?.publishedAt === "string" &&
     item.snippet.publishedAt.trim() !== ""
       ? { publishedAt: item.snippet.publishedAt.trim() }
+      : {}),
+    ...(typeof item.recordingDetails?.recordingDate === "string" &&
+    item.recordingDetails.recordingDate.trim() !== ""
+      ? { recordingDate: item.recordingDetails.recordingDate.trim() }
       : {}),
     ...(snippetChannelId ? { channelId: snippetChannelId } : {}),
     ...(channelTitle ? { channelTitle } : {}),

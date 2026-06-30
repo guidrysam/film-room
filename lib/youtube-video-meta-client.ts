@@ -13,6 +13,14 @@ export type YouTubeVideoMeta = {
   uploadStatus?: string;
   isLive?: boolean;
   streamPhase?: string;
+  /** Exact start of a live broadcast (`liveStreamingDetails.actualStartTime`). */
+  actualStartTime?: string;
+  /** Scheduled start of a (live) broadcast. */
+  scheduledStartTime?: string;
+  /** Upload publish time — not a recording time; do not use for alignment. */
+  publishedAt?: string;
+  /** Uploader-declared recording date (often date-only). */
+  recordingDate?: string;
 };
 
 type MetaResponse = {
