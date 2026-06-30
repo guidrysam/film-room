@@ -15,6 +15,13 @@ export type CoachTimelineEvent = {
   label: string;
   /** Seconds since the timeline clock started. */
   offsetSec: number;
+  /**
+   * Canonical wall-clock timestamp (epoch ms) of the moment this mark was
+   * tapped. This is the shared reference that lets any video with a known
+   * recording start time auto-place the mark — no manual line-up needed.
+   * Optional for legacy timelines (derive via `markEpochMs`).
+   */
+  atMs?: number;
 };
 
 export type CoachTimeline = {
@@ -76,12 +83,31 @@ function safeParse<T>(raw: string | null): T | null {
 function isEvent(v: unknown): v is CoachTimelineEvent {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
+  if (o.atMs !== undefined) {
+    if (typeof o.atMs !== "number" || !Number.isFinite(o.atMs)) return false;
+  }
   return (
     typeof o.id === "string" &&
     typeof o.label === "string" &&
     typeof o.offsetSec === "number" &&
     Number.isFinite(o.offsetSec)
   );
+}
+
+/**
+ * Canonical wall-clock time (epoch ms) of a mark. Uses the explicit per-mark
+ * timestamp when present, otherwise reconstructs it from the timeline anchor
+ * (`createdAt` / `startedAt`) plus the relative offset — so every timeline,
+ * old or new, resolves to a real-world instant.
+ */
+export function markEpochMs(
+  anchorMs: number,
+  event: Pick<CoachTimelineEvent, "offsetSec" | "atMs">,
+): number {
+  if (typeof event.atMs === "number" && Number.isFinite(event.atMs)) {
+    return event.atMs;
+  }
+  return anchorMs + event.offsetSec * 1000;
 }
 
 function isTimeline(v: unknown): v is CoachTimeline {

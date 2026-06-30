@@ -15,7 +15,13 @@ import {
   type CoachTimelineEvent,
   formatClock,
   listTimelines,
+  markEpochMs,
 } from "@/lib/timelines";
+import { fetchYouTubeVideoMeta } from "@/lib/youtube-video-meta-client";
+import {
+  recordedStartFromMeta,
+  type RecordedStartSource,
+} from "@/lib/youtube-clock-sync";
 
 const cardClass =
   "w-full rounded-2xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-6";
@@ -68,6 +74,11 @@ function TimelineSyncInner() {
   const [anchorVideoSec, setAnchorVideoSec] = useState<number>(0);
   const [playerTime, setPlayerTime] = useState<number>(0);
   const [opening, setOpening] = useState(false);
+  /** Video's real-world start (epoch ms), from YouTube metadata, if known. */
+  const [videoStartMs, setVideoStartMs] = useState<number | null>(null);
+  const [autoSource, setAutoSource] = useState<RecordedStartSource | null>(null);
+  const [manualAnchor, setManualAnchor] = useState(false);
+  const autoAppliedRef = useRef(false);
   const playerRef = useRef<YouTubePlayer | null>(null);
 
   const timeline = useMemo(
@@ -116,6 +127,59 @@ function TimelineSyncInner() {
     setVideoId(vid);
   }, [urlInput]);
 
+  // Look up the video's real-world start time (live actualStartTime / recording
+  // time) so the canon mark timestamps can auto-place onto it.
+  useEffect(() => {
+    if (!videoId) {
+      setVideoStartMs(null);
+      setAutoSource(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const meta = await fetchYouTubeVideoMeta(videoId);
+      if (cancelled) return;
+      const rs = meta ? recordedStartFromMeta(meta) : null;
+      const ms = rs ? Date.parse(rs.recordedStartTime) : NaN;
+      if (rs && Number.isFinite(ms)) {
+        setVideoStartMs(ms);
+        setAutoSource(rs.source);
+      } else {
+        setVideoStartMs(null);
+        setAutoSource(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId]);
+
+  // Reset manual / auto state when the timeline or video changes.
+  useEffect(() => {
+    setManualAnchor(false);
+    autoAppliedRef.current = false;
+  }, [selectedId, videoId]);
+
+  const applyAutoLineup = useCallback(() => {
+    if (videoStartMs == null || !timeline) return;
+    const first = [...timeline.events].sort(
+      (a, b) => a.offsetSec - b.offsetSec,
+    )[0];
+    if (!first) return;
+    const sec = (markEpochMs(timeline.createdAt, first) - videoStartMs) / 1000;
+    setAnchorEventId(first.id);
+    setAnchorVideoSec(sec);
+  }, [videoStartMs, timeline]);
+
+  // Auto-line-up once when a clock is available and the coach hasn't set a
+  // manual sync point.
+  useEffect(() => {
+    if (manualAnchor || autoAppliedRef.current) return;
+    if (videoStartMs == null || !timeline) return;
+    applyAutoLineup();
+    autoAppliedRef.current = true;
+  }, [manualAnchor, videoStartMs, timeline, applyAutoLineup]);
+
   const anchorEvent: CoachTimelineEvent | null = useMemo(() => {
     if (!timeline) return null;
     return timeline.events.find((e) => e.id === effectiveAnchorId) ?? null;
@@ -141,6 +205,7 @@ function TimelineSyncInner() {
   const handleSetSyncPoint = useCallback(async () => {
     const t = await readPlayerTime(playerRef.current);
     setAnchorVideoSec(t);
+    setManualAnchor(true);
   }, []);
 
   const handleOpenSession = useCallback(async () => {
@@ -291,10 +356,38 @@ function TimelineSyncInner() {
             <span className={stepBadge}>3</span>
             <h2 className="text-sm font-semibold">Line them up</h2>
           </div>
-          <p className="text-sm leading-relaxed text-white/65">
-            Scrub the video to the moment of one known event, choose that event
-            below, then set the sync point.
-          </p>
+          {videoStartMs != null && !manualAnchor ? (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/20 px-4 py-3">
+              <p className="text-sm font-medium text-emerald-100">
+                Lined up automatically.
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-emerald-200/80">
+                Matched your marks to the video&apos;s{" "}
+                {autoSource === "live_actual_start"
+                  ? "live‑stream start time"
+                  : "recording time"}{" "}
+                using the real clock — no scrubbing needed. Spot-check the
+                preview below; adjust manually only if something looks off.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm leading-relaxed text-white/65">
+              Scrub the video to the moment of one known event, choose that
+              event below, then set the sync point.
+              {videoStartMs != null ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={applyAutoLineup}
+                    className="font-medium text-emerald-300 underline-offset-2 hover:underline"
+                  >
+                    Or auto line up by the real clock.
+                  </button>
+                </>
+              ) : null}
+            </p>
+          )}
 
           <label className="mt-4 block">
             <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-white/55">

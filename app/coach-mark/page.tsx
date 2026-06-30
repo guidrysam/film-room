@@ -129,8 +129,12 @@ export default function CoachMarkPage() {
         setStartedAt(ts);
         setNow(ts);
       }
-      const offsetSec = Math.max(0, (Date.now() - ts) / 1000);
-      setEvents((prev) => [...prev, { id: newId("ev"), label, offsetSec }]);
+      const at = Date.now();
+      const offsetSec = Math.max(0, (at - ts) / 1000);
+      setEvents((prev) => [
+        ...prev,
+        { id: newId("ev"), label, offsetSec, atMs: at },
+      ]);
     },
     [startedAt],
   );
