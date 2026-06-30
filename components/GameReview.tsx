@@ -11,6 +11,7 @@ import {
   syncStatusLabel,
 } from "@/lib/game-timeline";
 import {
+  addGameEvent,
   canContributeGameSources,
   canViewGame,
   getGame,
@@ -22,7 +23,7 @@ import {
   type GameVideoSource,
 } from "@/lib/games";
 import { getTeam, listTeamPlayers, teamRoleFor, type Player, type Team } from "@/lib/teams";
-import { getEventPlayerIds } from "@/lib/timeline-players";
+import { getEventPlayerIds, withEventPlayerIds } from "@/lib/timeline-players";
 import {
   addGameStat,
   canManageGameStats,
@@ -76,6 +77,16 @@ const dangerBtn =
 function formatOffsetSec(sec: number): string {
   return sec >= 0 ? `+${sec}s` : `${sec}s`;
 }
+
+const QUICK_TAGS = [
+  "Goal",
+  "Shot",
+  "Save",
+  "Assist",
+  "Foul",
+  "Turnover",
+  "Great play",
+] as const;
 
 function eventTypeLabel(type: GameTimelineEventType): string {
   switch (type) {
@@ -156,6 +167,10 @@ export default function GameReview({
   const [statPlayerIds, setStatPlayerIds] = useState<string[]>([]);
   const [statSaving, setStatSaving] = useState(false);
   const [statMessage, setStatMessage] = useState<string | null>(null);
+  const [tagLabel, setTagLabel] = useState("");
+  const [tagPlayerIds, setTagPlayerIds] = useState<string[]>([]);
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagMessage, setTagMessage] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -374,6 +389,59 @@ export default function GameReview({
       /* non-fatal */
     }
   }, [gameId]);
+
+  const toggleTagPlayer = useCallback((playerId: string) => {
+    setTagPlayerIds((prev) =>
+      prev.includes(playerId)
+        ? prev.filter((id) => id !== playerId)
+        : [...prev, playerId],
+    );
+  }, []);
+
+  const saveTag = useCallback(
+    async (label: string) => {
+      const text = label.trim();
+      if (!game) return;
+      if (!text) {
+        setTagMessage("Name the play first (e.g. Goal, Save, Great pass).");
+        return;
+      }
+      setTagSaving(true);
+      setTagMessage(null);
+      try {
+        await addGameEvent(
+          gameId,
+          {
+            type: "coach_mark",
+            t: selectedGameTime,
+            label: text,
+            ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+            payload: withEventPlayerIds(undefined, tagPlayerIds),
+            createdBy: currentUid,
+            ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+          },
+          { actorUid: currentUid },
+        );
+        setTagMessage(`Tagged “${text}” at ${formatTimelineSeconds(selectedGameTime)}.`);
+        setTagLabel("");
+        await refreshEvents();
+      } catch (e) {
+        setTagMessage(e instanceof Error ? e.message : "Could not save the tag.");
+      } finally {
+        setTagSaving(false);
+      }
+    },
+    [
+      game,
+      gameId,
+      selectedGameTime,
+      selectedSource,
+      tagPlayerIds,
+      currentUid,
+      currentDisplayName,
+      refreshEvents,
+    ],
+  );
 
   const handleAddStat = useCallback(async () => {
     if (!game || statPlayerIds.length === 0) {
@@ -869,6 +937,92 @@ export default function GameReview({
                   </ul>
                 )}
               </section>
+
+              {canEditSources ? (
+                <section className={panelClass}>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                    Tag a play
+                  </p>
+                  <p className="mb-3 text-[11px] leading-snug text-zinc-500">
+                    Scrub the video to the moment, then tap a quick tag or type
+                    your own. The mark lands at the time below.
+                  </p>
+
+                  <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                      Mark time
+                    </p>
+                    <p className="mt-0.5 font-mono text-xs text-zinc-200">
+                      {formatTimelineSeconds(selectedGameTime)}
+                    </p>
+                  </div>
+
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {QUICK_TAGS.map((label) => (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={() => void saveTag(label)}
+                        className={`${ghostBtn} disabled:opacity-50`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mb-3 flex gap-2">
+                    <input
+                      type="text"
+                      value={tagLabel}
+                      onChange={(e) => setTagLabel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveTag(tagLabel);
+                      }}
+                      placeholder="Custom play…"
+                      className={inputClass}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveTag(tagLabel)}
+                      disabled={tagSaving || !tagLabel.trim()}
+                      className={primaryBtn}
+                    >
+                      {tagSaving ? "…" : "Tag"}
+                    </button>
+                  </div>
+
+                  {teamPlayers.length > 0 ? (
+                    <div className="mb-1">
+                      <p className="mb-1.5 text-[10px] text-zinc-500">
+                        Players on this play (optional)
+                      </p>
+                      <ul className="max-h-24 space-y-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-black/20 p-2">
+                        {teamPlayers.map((p) => (
+                          <li key={p.id}>
+                            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
+                              <input
+                                type="checkbox"
+                                checked={tagPlayerIds.includes(p.id)}
+                                onChange={() => toggleTagPlayer(p.id)}
+                                className="rounded border-white/20"
+                              />
+                              <span>
+                                {p.name}
+                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                              </span>
+                            </label>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {tagMessage ? (
+                    <p className="mt-2 text-[11px] text-zinc-400">{tagMessage}</p>
+                  ) : null}
+                </section>
+              ) : null}
 
               {canManageStats ? (
                 <section id="stats" className={`${panelClass} scroll-mt-6`}>
