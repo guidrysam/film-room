@@ -2007,93 +2007,99 @@ export default function GameReview({
       </div>
 
       {isFullscreen && selectedSource?.videoId ? (
-        <div className="fixed inset-0 z-[200] flex flex-col bg-black">
-          <div className="relative min-h-0 flex-1">
-            <YouTube
-              key={`fs-${selectedSource.id}`}
-              videoId={selectedSource.videoId}
-              className="absolute inset-0 h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
-              opts={{
-                width: "100%",
-                height: "100%",
-                playerVars: {
-                  autoplay: 0,
-                  modestbranding: 1,
-                  rel: 0,
-                },
-              }}
-              onReady={(e) => {
-                fsPlayerRef.current = e.target;
-                setFsPlayerReady(true);
-                const st = pendingSeekRef.current;
-                if (st != null && st >= 0) {
-                  void seekPlayer(e.target, st);
-                } else {
-                  const computed = gameTimeToSourceTime(
-                    selectedGameTime,
-                    selectedSource,
-                  );
-                  if (computed >= 0) {
-                    void seekPlayer(e.target, computed);
+        <div className="fixed inset-0 z-[200] flex bg-black">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="relative min-h-0 flex-1">
+              <YouTube
+                key={`fs-${selectedSource.id}`}
+                videoId={selectedSource.videoId}
+                className="absolute inset-0 h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                opts={{
+                  width: "100%",
+                  height: "100%",
+                  playerVars: {
+                    autoplay: 0,
+                    modestbranding: 1,
+                    rel: 0,
+                  },
+                }}
+                onReady={(e) => {
+                  fsPlayerRef.current = e.target;
+                  setFsPlayerReady(true);
+                  const st = pendingSeekRef.current;
+                  if (st != null && st >= 0) {
+                    void seekPlayer(e.target, st);
+                  } else {
+                    const computed = gameTimeToSourceTime(
+                      selectedGameTime,
+                      selectedSource,
+                    );
+                    if (computed >= 0) {
+                      void seekPlayer(e.target, computed);
+                    }
                   }
-                }
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => void exitFullscreen()}
-              className="absolute right-3 top-3 z-10 rounded-lg border border-white/20 bg-black/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-white/10"
-            >
-              Exit fullscreen
-            </button>
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void exitFullscreen()}
+                className="absolute right-3 top-3 z-10 rounded-lg border border-white/20 bg-black/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-white/10"
+              >
+                Exit fullscreen
+              </button>
+            </div>
+            <div className="shrink-0 border-t border-white/10 bg-zinc-950/95 px-3 py-2">
+              <VideoTransport
+                playerRef={fsPlayerRef}
+                ready={fsPlayerReady}
+                onSourceTime={(sourceTime) => {
+                  if (selectedSource) {
+                    setSelectedGameTime(
+                      sourceTimeToGameTime(sourceTime, selectedSource),
+                    );
+                  }
+                }}
+              />
+            </div>
           </div>
-          <div className="shrink-0 border-t border-white/10 bg-zinc-950/95 px-3 py-2">
-            <VideoTransport
-              playerRef={fsPlayerRef}
-              ready={fsPlayerReady}
-              onSourceTime={(sourceTime) => {
-                if (selectedSource) {
-                  setSelectedGameTime(
-                    sourceTimeToGameTime(sourceTime, selectedSource),
-                  );
-                }
-              }}
-            />
-          </div>
-          <div className="max-h-[30vh] shrink-0 overflow-y-auto border-t border-white/10 bg-zinc-950/90 px-3 py-2">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          <aside className="flex w-72 shrink-0 flex-col border-l border-white/10 bg-zinc-950/95 sm:w-80">
+            <p className="shrink-0 border-b border-white/10 px-3 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
               Game marks
             </p>
-            {events.length === 0 ? (
-              <p className="text-[11px] text-zinc-500">No marks yet.</p>
-            ) : (
-              <ul className="flex flex-wrap gap-1.5">
-                {events.map((ev) => {
-                  const active = Math.abs(ev.t - selectedGameTime) < 0.25;
-                  return (
-                    <li key={ev.id}>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectEvent(ev)}
-                        className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition ${
-                          active
-                            ? "border-emerald-500/45 bg-emerald-950/35 text-emerald-100"
-                            : "border-white/[0.08] bg-black/40 text-zinc-200 hover:border-white/15"
-                        }`}
-                      >
-                        <span className="font-mono tabular-nums">
-                          {formatTimelineSeconds(ev.t)}
-                        </span>
-                        {ev.label ? (
-                          <span className="ml-2 text-zinc-300">{ev.label}</span>
-                        ) : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              {events.length === 0 ? (
+                <p className="px-1 text-[11px] text-zinc-500">No marks yet.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {events.map((ev) => {
+                    const active = Math.abs(ev.t - selectedGameTime) < 0.25;
+                    return (
+                      <li key={ev.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectEvent(ev)}
+                          className={`w-full rounded-lg border px-2.5 py-2 text-left text-[11px] transition ${
+                            active
+                              ? "border-emerald-500/45 bg-emerald-950/35 text-emerald-100"
+                              : "border-white/[0.08] bg-black/40 text-zinc-200 hover:border-white/15"
+                          }`}
+                        >
+                          <span className="font-mono tabular-nums">
+                            {formatTimelineSeconds(ev.t)}
+                          </span>
+                          {ev.label ? (
+                            <span className="mt-0.5 block text-zinc-300">
+                              {ev.label}
+                            </span>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </aside>
         </div>
       ) : null}
     </div>
