@@ -190,6 +190,8 @@ export default function GameReview({
     statType: GameStatType;
     t: number;
   } | null>(null);
+  const [pendingScorerId, setPendingScorerId] = useState("");
+  const [pendingAssistId, setPendingAssistId] = useState("");
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
   const [editPlayerId, setEditPlayerId] = useState("");
@@ -480,10 +482,64 @@ export default function GameReview({
         return;
       }
       setTagMessage(null);
+      setPendingScorerId("");
+      setPendingAssistId("");
       setPendingStat({ label, statType, t: selectedGameTime });
     },
     [pauseVideo, teamPlayers.length, selectedGameTime],
   );
+
+  // Goals can carry an optional assist — logged as a separate assist stat at
+  // the same moment, so it counts for the assisting player too.
+  const completeGoal = useCallback(async () => {
+    if (!pendingStat || !pendingScorerId) return;
+    setTagSaving(true);
+    setTagMessage(null);
+    try {
+      await addGameStat(gameId, {
+        t: pendingStat.t,
+        statType: "goal",
+        playerIds: [pendingScorerId],
+        ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+        createdBy: currentUid,
+        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+      });
+      if (pendingAssistId && pendingAssistId !== pendingScorerId) {
+        await addGameStat(gameId, {
+          t: pendingStat.t,
+          statType: "assist",
+          playerIds: [pendingAssistId],
+          ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+          createdBy: currentUid,
+          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+        });
+      }
+      const scorer =
+        teamPlayers.find((p) => p.id === pendingScorerId)?.name ?? "player";
+      const assist = pendingAssistId
+        ? teamPlayers.find((p) => p.id === pendingAssistId)?.name
+        : null;
+      setTagMessage(
+        `Goal · ${scorer}${assist ? ` (assist: ${assist})` : ""} at ${formatTimelineSeconds(pendingStat.t)}.`,
+      );
+      setPendingStat(null);
+      await refreshEvents();
+    } catch (e) {
+      setTagMessage(e instanceof Error ? e.message : "Could not save the goal.");
+    } finally {
+      setTagSaving(false);
+    }
+  }, [
+    pendingStat,
+    pendingScorerId,
+    pendingAssistId,
+    gameId,
+    selectedSource,
+    currentUid,
+    currentDisplayName,
+    teamPlayers,
+    refreshEvents,
+  ]);
 
   const completePendingStat = useCallback(
     async (playerId: string) => {
@@ -1212,34 +1268,98 @@ export default function GameReview({
                       <p className="mt-0.5 text-[10px] text-blue-200/70">
                         Video paused. Pick the player to log it.
                       </p>
-                      <div className="mt-2 flex gap-2">
-                        <select
-                          autoFocus
-                          value=""
-                          disabled={tagSaving}
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              void completePendingStat(e.target.value);
-                            }
-                          }}
-                          className={inputClass}
-                        >
-                          <option value="">Select player…</option>
-                          {teamPlayers.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => setPendingStat(null)}
-                          className={ghostBtn}
-                        >
-                          Cancel
-                        </button>
-                      </div>
+
+                      {pendingStat.statType === "goal" ? (
+                        <div className="mt-2 space-y-2">
+                          <label className="block">
+                            <span className="mb-1 block text-[10px] text-blue-200/70">
+                              Scorer
+                            </span>
+                            <select
+                              autoFocus
+                              value={pendingScorerId}
+                              disabled={tagSaving}
+                              onChange={(e) => setPendingScorerId(e.target.value)}
+                              className={inputClass}
+                            >
+                              <option value="">Select scorer…</option>
+                              {teamPlayers.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name}
+                                  {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-[10px] text-blue-200/70">
+                              Assist (optional)
+                            </span>
+                            <select
+                              value={pendingAssistId}
+                              disabled={tagSaving}
+                              onChange={(e) => setPendingAssistId(e.target.value)}
+                              className={inputClass}
+                            >
+                              <option value="">No assist</option>
+                              {teamPlayers
+                                .filter((p) => p.id !== pendingScorerId)
+                                .map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name}
+                                    {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void completeGoal()}
+                              disabled={tagSaving || !pendingScorerId}
+                              className={primaryBtn}
+                            >
+                              {tagSaving ? "…" : "Save goal"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingStat(null)}
+                              className={ghostBtn}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex gap-2">
+                          <select
+                            autoFocus
+                            value=""
+                            disabled={tagSaving}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                void completePendingStat(e.target.value);
+                              }
+                            }}
+                            className={inputClass}
+                          >
+                            <option value="">Select player…</option>
+                            {teamPlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => setPendingStat(null)}
+                            className={ghostBtn}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : null}
 
