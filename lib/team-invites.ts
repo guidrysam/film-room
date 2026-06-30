@@ -14,6 +14,7 @@ import {
   where,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
+import { isPermissionDeniedError } from "@/lib/firestore-errors";
 import { linkParentOnTeamJoin } from "@/lib/parent-invite-targets";
 import type { Team, TeamMemberRole } from "@/lib/teams";
 
@@ -177,27 +178,18 @@ export async function redeemTeamInvite(
   if (isInviteExpired(invite)) throw new Error("This invite link has expired.");
 
   const teamRef = doc(firestore, "teams", invite.teamId);
-  const teamSnap = await getDoc(teamRef);
-  if (!teamSnap.exists()) throw new Error("Team not found.");
+  const joined = await tryJoinTeamViaInviteCode(
+    teamRef,
+    uid,
+    invite.role,
+    code,
+  );
 
-  const members =
-    teamSnap.data().members && typeof teamSnap.data().members === "object"
-      ? (teamSnap.data().members as Record<string, unknown>)
-      : {};
-  const alreadyMember = uid in members;
-
-  if (!alreadyMember) {
-    await updateDoc(teamRef, {
-      [`members.${uid}`]: invite.role,
-      memberUids: arrayUnion(uid),
-      updatedAt: serverTimestamp(),
-      joinCode: code,
-    });
-  } else {
-    await updateDoc(teamRef, { joinCode: deleteField() });
+  if (!joined) {
+    /* Already a member — still OK. */
   }
 
-  if (invite.role === "parent") {
+  if (invite.role === "parent" && joined) {
     try {
       await linkParentOnTeamJoin(invite.teamId, uid, {
         email: opts?.email,
@@ -207,10 +199,35 @@ export async function redeemTeamInvite(
       /* Onboarding link is best-effort; join still succeeds. */
     }
   }
+}
 
+/** Join via team invite without reading the team doc (non-members cannot read). */
+async function tryJoinTeamViaInviteCode(
+  teamRef: ReturnType<typeof doc>,
+  uid: string,
+  role: TeamInviteRole,
+  code: string,
+): Promise<boolean> {
   try {
-    await updateDoc(teamRef, { joinCode: deleteField() });
-  } catch {
-    /* Best-effort cleanup of transient joinCode. */
+    await updateDoc(teamRef, {
+      [`members.${uid}`]: role,
+      memberUids: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      joinCode: code,
+    });
+    try {
+      await updateDoc(teamRef, { joinCode: deleteField() });
+    } catch {
+      /* Best-effort cleanup. */
+    }
+    return true;
+  } catch (err) {
+    if (!isPermissionDeniedError(err)) throw err;
+    try {
+      await updateDoc(teamRef, { joinCode: deleteField() });
+    } catch {
+      /* Already a member or invite invalid. */
+    }
+    return false;
   }
 }

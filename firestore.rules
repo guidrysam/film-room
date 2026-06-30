@@ -94,6 +94,16 @@ service cloud.firestore {
     function teamJoinInviteData() {
       return get(/databases/$(database)/documents/teamInvites/$(request.resource.data.joinCode)).data;
     }
+    function staffJoinInviteData() {
+      return get(/databases/$(database)/documents/staffInvites/$(request.resource.data.joinCode)).data;
+    }
+    function staffJoinInviteValidForTeam(teamId) {
+      return staffJoinInviteData().active == true
+        && staffJoinInviteData().teamIds.hasAny([teamId])
+        && isTeamAdmin(teamId, staffJoinInviteData().createdBy)
+        && (!('expiresAt' in staffJoinInviteData()) ||
+            staffJoinInviteData().expiresAt > request.time);
+    }
 
     match /teams/{teamId} {
       allow read: if canReadTeamResource();
@@ -124,11 +134,16 @@ service cloud.firestore {
             request.resource.data.members[request.auth.uid] == 'player' ||
             request.resource.data.members[request.auth.uid] == 'viewer')
         && 'joinCode' in request.resource.data
-        && teamJoinInviteData().teamId == teamId
-        && teamJoinInviteData().active == true
-        && teamJoinInviteData().role == request.resource.data.members[request.auth.uid]
-        && (!('expiresAt' in teamJoinInviteData()) ||
-            teamJoinInviteData().expiresAt > request.time);
+        && (
+          (teamJoinInviteData().teamId == teamId
+            && teamJoinInviteData().active == true
+            && teamJoinInviteData().role == request.resource.data.members[request.auth.uid]
+            && (!('expiresAt' in teamJoinInviteData()) ||
+                teamJoinInviteData().expiresAt > request.time))
+          ||
+          (staffJoinInviteValidForTeam(teamId)
+            && staffJoinInviteData().role == request.resource.data.members[request.auth.uid])
+        );
 
       allow update: if request.auth != null
         && (request.auth.uid in resource.data.members)
@@ -199,6 +214,26 @@ service cloud.firestore {
 
       allow update, delete: if request.auth != null
         && isTeamAdminOf(resource.data.teamId);
+    }
+
+    // ---- Staff invites (multi-team join links) ------------------------
+    match /staffInvites/{code} {
+      allow read: if true;
+
+      allow create: if request.auth != null
+        && request.resource.data.code == code
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.teamIds is list
+        && request.resource.data.teamIds.size() > 0
+        && request.resource.data.eventLabel is string
+        && (request.resource.data.role == 'coach' ||
+            request.resource.data.role == 'parent' ||
+            request.resource.data.role == 'player' ||
+            request.resource.data.role == 'viewer')
+        && request.resource.data.active is bool;
+
+      allow update, delete: if request.auth != null
+        && resource.data.createdBy == request.auth.uid;
     }
 
     // ---- Games --------------------------------------------------------

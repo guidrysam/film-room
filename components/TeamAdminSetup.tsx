@@ -12,7 +12,7 @@ import {
   readTeamCreateImportSummary,
   type TeamCreateImportSummary,
 } from "@/lib/roster-import";
-import { canCoachTeam, type Team } from "@/lib/teams";
+import { canCoachTeam, canManageTeam, type Team } from "@/lib/teams";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -23,7 +23,8 @@ export type TeamAdminSetupProps = {
 };
 
 /**
- * Coach/admin team administration: roster import, parent targets, invite links.
+ * Team administration for operators (admins). Coaches use Games and Review;
+ * roster import and invites stay with the person who maintains Film Room.
  */
 export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps) {
   const [createSummary] = useState<TeamCreateImportSummary | null>(() => {
@@ -32,11 +33,26 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
     return summary;
   });
 
+  const isOperator = canManageTeam(team, currentUid);
+
   if (!canCoachTeam(team, currentUid)) {
     return (
       <div className={panelClass}>
         <p className="text-sm text-zinc-400">
           Team setup is available to coaches and admins only.
+        </p>
+      </div>
+    );
+  }
+
+  if (!isOperator) {
+    return (
+      <div className={panelClass}>
+        <p className="text-sm font-medium text-white">Film Room is ready</p>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+          Your club admin maintains rosters and invites. Open{" "}
+          <strong className="font-medium text-zinc-200">Games</strong> to attach
+          film, then use Game Review to tag plays and add coach marks.
         </p>
       </div>
     );

@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   canReadParentInviteTarget,
   combineParentInviteMessages,
+  eventInviteEmailMessage,
   findParentTargetsToLink,
+  normalizePhoneForSms,
   parentInviteMailtoUrl,
   parentInviteMessage,
+  parentInviteSmsUrl,
   parentInviteStatusLabel,
   parentTargetsEligibleForInvite,
   summarizeParentVideoTeam,
@@ -114,6 +117,32 @@ describe("parent-onboarding", () => {
     );
     assert.match(url, /^mailto:jane%40example.com\?subject=/);
     assert.match(url, /body=/);
+  });
+
+  it("parentInviteSmsUrl builds sms link when phone is valid", () => {
+    const url = parentInviteSmsUrl(
+      "(555) 123-4567",
+      "Jane Smith",
+      "U14 Wolves",
+      "https://app/join/team/code",
+    );
+    assert.ok(url);
+    assert.match(url!, /^sms:/);
+    assert.match(url!, /body=/);
+  });
+
+  it("normalizePhoneForSms rejects too-short numbers", () => {
+    assert.equal(normalizePhoneForSms("123"), null);
+  });
+
+  it("eventInviteEmailMessage includes join url", () => {
+    const msg = eventInviteEmailMessage(
+      "Labor Day Cup",
+      "https://app/join/staff/x",
+      "parent",
+    );
+    assert.match(msg, /Labor Day Cup/);
+    assert.match(msg, /https:\/\/app\/join\/staff\/x/);
   });
 
   it("summarizeParentVideoTeam counts roster and statuses", () => {

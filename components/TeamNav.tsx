@@ -7,7 +7,7 @@ import {
   teamSetupUrl,
   teamStatsUrl,
 } from "@/lib/team-routes";
-import { canCoachTeam, type Team } from "@/lib/teams";
+import { canManageTeam, type Team } from "@/lib/teams";
 
 export type TeamNavTab = "roster" | "setup" | "games" | "stats";
 
@@ -36,7 +36,7 @@ export type TeamNavProps = {
  * Roster, Games, Season, plus a Settings gear for coaches.
  */
 export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
-  const showSettings = canCoachTeam(team, currentUid);
+  const showSettings = canManageTeam(team, currentUid);
   const base = teamRosterUrl(team.id);
 
   return (

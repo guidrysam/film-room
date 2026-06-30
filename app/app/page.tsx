@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
-import { listMyGames, type Game } from "@/lib/games";
+import BatchEventInvite from "@/components/BatchEventInvite";
+import { listAccessibleGames } from "@/lib/accessible-games";
+import type { Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
 import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
@@ -47,13 +49,13 @@ export default function DashboardPage() {
     if (!user) return;
     setGamesLoading(true);
     try {
-      setGames(await listMyGames(user.uid));
+      setGames(await listAccessibleGames(user.uid, teams));
     } catch (error) {
       console.error("[dashboard:games:error]", error);
     } finally {
       setGamesLoading(false);
     }
-  }, [user]);
+  }, [user, teams]);
 
   const refreshTeams = useCallback(async () => {
     if (!user) return;
@@ -261,20 +263,40 @@ export default function DashboardPage() {
                         </span>
                       ) : null}
                     </p>
-                    {group.importBatchId && user?.uid ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void handleArchiveBatch(
-                            group.importBatchId!,
-                            !group.archived,
-                          )
-                        }
-                        className="text-[10px] font-medium text-zinc-500 transition hover:text-zinc-300"
-                      >
-                        {group.archived ? "Restore event" : "Archive event"}
-                      </button>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                      {user?.uid && group.teams.length > 0 ? (
+                        <>
+                          <BatchEventInvite
+                            teams={group.teams}
+                            eventLabel={group.label}
+                            currentUid={user.uid}
+                            role="coach"
+                          />
+                          <BatchEventInvite
+                            teams={group.teams}
+                            eventLabel={group.label}
+                            currentUid={user.uid}
+                            role="parent"
+                          />
+                        </>
+                      ) : null}
+                      {group.importBatchId &&
+                      user?.uid &&
+                      batches.some((b) => b.id === group.importBatchId) ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void handleArchiveBatch(
+                              group.importBatchId!,
+                              !group.archived,
+                            )
+                          }
+                          className="text-[10px] font-medium text-zinc-500 transition hover:text-zinc-300"
+                        >
+                          {group.archived ? "Restore event" : "Archive event"}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <ul className="space-y-2">
                     {group.teams.map((t) => {

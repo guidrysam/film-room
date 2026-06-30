@@ -19,6 +19,7 @@ import {
   updateDoc,
   where,
   arrayUnion,
+  deleteField,
 } from "firebase/firestore";
 
 const RULES = readFileSync(join(process.cwd(), "firestore.rules"), "utf8");
@@ -154,6 +155,46 @@ describeRules("firestore rules (emulator)", () => {
           ),
         ),
       );
+    });
+  });
+
+  describe("staff invite self-join", () => {
+    it("coach can join via staff invite without reading team first", async () => {
+      const adminUid = "admin-uid";
+      const coachUid = "new-coach-uid";
+      const teamId = "team-event-1";
+      await seedTeam(teamId, adminUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "staffInvites", "staff-code-1"), {
+          code: "staff-code-1",
+          teamIds: [teamId],
+          eventLabel: "Labor Day Cup",
+          role: "coach",
+          createdBy: adminUid,
+          active: true,
+          createdAt: Timestamp.now(),
+        });
+      });
+
+      const coachDb = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertFails(getDoc(doc(coachDb, "teams", teamId)));
+
+      await assertSucceeds(
+        updateDoc(doc(coachDb, "teams", teamId), {
+          [`members.${coachUid}`]: "coach",
+          memberUids: arrayUnion(coachUid),
+          updatedAt: Timestamp.now(),
+          joinCode: "staff-code-1",
+        }),
+      );
+
+      await assertSucceeds(
+        updateDoc(doc(coachDb, "teams", teamId), {
+          joinCode: deleteField(),
+        }),
+      );
+
+      await assertSucceeds(getDoc(doc(coachDb, "teams", teamId)));
     });
   });
 

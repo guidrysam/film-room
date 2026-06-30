@@ -6,6 +6,7 @@ import {
   combineParentInviteMessages,
   parentInviteMailtoUrl,
   parentInviteMessage,
+  parentInviteSmsUrl,
   parentInviteStatusLabel,
   parentTargetsEligibleForInvite,
   summarizeParentVideoTeam,
@@ -227,6 +228,37 @@ export default function ParentInviteTargets({
     [buildInviteUrl, team.name, refresh],
   );
 
+  const handleOpenText = useCallback(
+    async (target: ParentInviteTarget) => {
+      if (!target.phone?.trim()) {
+        setError("No phone number on file for this contact.");
+        return;
+      }
+      setBusyId(target.id);
+      setError(null);
+      try {
+        const url = await buildInviteUrl(target);
+        const sms = parentInviteSmsUrl(
+          target.phone,
+          target.parentName,
+          team.name,
+          url,
+        );
+        if (!sms) {
+          setError("Phone number is not valid for texting.");
+          return;
+        }
+        window.location.href = sms;
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not open Messages.");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [buildInviteUrl, team.name, refresh],
+  );
+
   const handleIgnore = useCallback(
     async (targetId: string) => {
       setBusyId(targetId);
@@ -296,8 +328,9 @@ export default function ParentInviteTargets({
                   : "Copy all invite messages"}
             </button>
             <p className="mt-2 text-[10px] leading-snug text-zinc-500">
-              Direct email/SMS sending is coming later. For now, copy messages
-              into email, text, or TeamLinkt.
+              Open email or text opens your mail/Messages app with the invite
+              pre-filled — tap Send there. Automated blast sending is coming
+              next.
             </p>
           </div>
 
@@ -364,6 +397,16 @@ export default function ParentInviteTargets({
                       >
                         Open email
                       </button>
+                      {target.phone?.trim() ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleOpenText(target)}
+                          disabled={busyId === target.id}
+                          className={ghostBtn}
+                        >
+                          Open text
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() =>
