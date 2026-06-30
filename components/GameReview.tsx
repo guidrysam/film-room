@@ -14,6 +14,7 @@ import {
   addGameEvent,
   canContributeGameSources,
   canViewGame,
+  deleteGameEvent,
   getGame,
   listGameEvents,
   listGameSources,
@@ -78,15 +79,28 @@ function formatOffsetSec(sec: number): string {
   return sec >= 0 ? `+${sec}s` : `${sec}s`;
 }
 
-const QUICK_TAGS = [
-  "Goal",
-  "Shot",
-  "Save",
-  "Assist",
-  "Foul",
-  "Turnover",
-  "Great play",
-] as const;
+type QuickTag =
+  | { label: string; kind: "stat"; statType: GameStatType }
+  | { label: string; kind: "mark"; opponent?: boolean };
+
+/** Player-required stats (prompt for a player), then no-player marks. */
+const QUICK_TAGS: QuickTag[] = [
+  { label: "Goal", kind: "stat", statType: "goal" },
+  { label: "Shot", kind: "stat", statType: "shot" },
+  { label: "Save", kind: "stat", statType: "save" },
+  { label: "Assist", kind: "stat", statType: "assist" },
+  { label: "Foul", kind: "stat", statType: "foul" },
+];
+
+const MARK_TAGS: QuickTag[] = [
+  { label: "Corner", kind: "mark" },
+  { label: "Great play", kind: "mark" },
+];
+
+const OPPONENT_TAGS: QuickTag[] = [
+  { label: "Other team goal", kind: "mark", opponent: true },
+  { label: "Other team corner", kind: "mark", opponent: true },
+];
 
 function eventTypeLabel(type: GameTimelineEventType): string {
   switch (type) {
@@ -168,9 +182,18 @@ export default function GameReview({
   const [statSaving, setStatSaving] = useState(false);
   const [statMessage, setStatMessage] = useState<string | null>(null);
   const [tagLabel, setTagLabel] = useState("");
-  const [tagPlayerIds, setTagPlayerIds] = useState<string[]>([]);
   const [tagSaving, setTagSaving] = useState(false);
   const [tagMessage, setTagMessage] = useState<string | null>(null);
+  /** A player-required stat awaiting a player pick (video is paused meanwhile). */
+  const [pendingStat, setPendingStat] = useState<{
+    label: string;
+    statType: GameStatType;
+    t: number;
+  } | null>(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editPlayerId, setEditPlayerId] = useState("");
+  const [editTime, setEditTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -390,22 +413,25 @@ export default function GameReview({
     }
   }, [gameId]);
 
-  const toggleTagPlayer = useCallback((playerId: string) => {
-    setTagPlayerIds((prev) =>
-      prev.includes(playerId)
-        ? prev.filter((id) => id !== playerId)
-        : [...prev, playerId],
-    );
+  const pauseVideo = useCallback(() => {
+    try {
+      void playerRef.current?.pauseVideo();
+    } catch {
+      /* player not ready */
+    }
   }, []);
 
-  const saveTag = useCallback(
-    async (label: string) => {
+  // Save a no-player mark (our team play or an opponent event).
+  const saveMark = useCallback(
+    async (label: string, opts?: { opponent?: boolean }) => {
       const text = label.trim();
       if (!game) return;
       if (!text) {
-        setTagMessage("Name the play first (e.g. Goal, Save, Great pass).");
+        setTagMessage("Name the play first (e.g. Great play).");
         return;
       }
+      pauseVideo();
+      const t = selectedGameTime;
       setTagSaving(true);
       setTagMessage(null);
       try {
@@ -413,16 +439,16 @@ export default function GameReview({
           gameId,
           {
             type: "coach_mark",
-            t: selectedGameTime,
+            t,
             label: text,
             ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
-            payload: withEventPlayerIds(undefined, tagPlayerIds),
+            ...(opts?.opponent ? { payload: { opponent: true } } : {}),
             createdBy: currentUid,
             ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
           },
           { actorUid: currentUid },
         );
-        setTagMessage(`Tagged “${text}” at ${formatTimelineSeconds(selectedGameTime)}.`);
+        setTagMessage(`Tagged “${text}” at ${formatTimelineSeconds(t)}.`);
         setTagLabel("");
         await refreshEvents();
       } catch (e) {
@@ -436,12 +462,143 @@ export default function GameReview({
       gameId,
       selectedGameTime,
       selectedSource,
-      tagPlayerIds,
       currentUid,
       currentDisplayName,
       refreshEvents,
+      pauseVideo,
     ],
   );
+
+  // A player-required stat: pause the video and wait for a player pick.
+  const beginStatTag = useCallback(
+    (statType: GameStatType, label: string) => {
+      pauseVideo();
+      if (teamPlayers.length === 0) {
+        setTagMessage(
+          "Link this game to a team roster to log player stats.",
+        );
+        return;
+      }
+      setTagMessage(null);
+      setPendingStat({ label, statType, t: selectedGameTime });
+    },
+    [pauseVideo, teamPlayers.length, selectedGameTime],
+  );
+
+  const completePendingStat = useCallback(
+    async (playerId: string) => {
+      if (!pendingStat || !playerId) return;
+      setTagSaving(true);
+      setTagMessage(null);
+      try {
+        await addGameStat(gameId, {
+          t: pendingStat.t,
+          statType: pendingStat.statType,
+          playerIds: [playerId],
+          ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+          createdBy: currentUid,
+          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+        });
+        const who =
+          teamPlayers.find((p) => p.id === playerId)?.name ?? "player";
+        setTagMessage(
+          `${pendingStat.label} · ${who} at ${formatTimelineSeconds(pendingStat.t)}.`,
+        );
+        setPendingStat(null);
+        await refreshEvents();
+      } catch (e) {
+        setTagMessage(e instanceof Error ? e.message : "Could not save the stat.");
+      } finally {
+        setTagSaving(false);
+      }
+    },
+    [
+      pendingStat,
+      gameId,
+      selectedSource,
+      currentUid,
+      currentDisplayName,
+      teamPlayers,
+      refreshEvents,
+    ],
+  );
+
+  const handleDeleteEvent = useCallback(
+    async (eventId: string) => {
+      try {
+        await deleteGameEvent(gameId, eventId);
+        if (editingEventId === eventId) setEditingEventId(null);
+        if (selectedEventId === eventId) setSelectedEventId(null);
+        await refreshEvents();
+      } catch {
+        setTagMessage("Could not delete that tag.");
+      }
+    },
+    [gameId, editingEventId, selectedEventId, refreshEvents],
+  );
+
+  const beginEdit = useCallback((ev: GameTimelineEvent) => {
+    setEditingEventId(ev.id);
+    setEditLabel(ev.label ?? "");
+    setEditPlayerId(getEventPlayerIds(ev)[0] ?? "");
+    setEditTime(ev.t);
+  }, []);
+
+  const saveEdit = useCallback(async () => {
+    const ev = events.find((e) => e.id === editingEventId);
+    if (!ev || !game) return;
+    const base: Record<string, unknown> = {};
+    if (ev.type === "stat") {
+      const st = ev.payload?.statType;
+      if (typeof st === "string") base.statType = st;
+      const note = ev.payload?.note;
+      if (typeof note === "string") base.note = note;
+    }
+    if (ev.payload?.opponent) base.opponent = true;
+    const players = editPlayerId ? [editPlayerId] : [];
+    if (ev.type === "stat" && players.length === 0) {
+      setTagMessage("A stat needs a player.");
+      return;
+    }
+    setTagSaving(true);
+    try {
+      await addGameEvent(
+        gameId,
+        {
+          id: ev.id,
+          type: ev.type,
+          t: Math.max(0, Math.round(editTime)),
+          label: editLabel.trim() || ev.label || "",
+          ...(ev.sourceId ? { sourceId: ev.sourceId } : {}),
+          payload: withEventPlayerIds(base, players),
+          createdBy: ev.createdBy ?? currentUid,
+          ...(ev.createdByName
+            ? { createdByName: ev.createdByName }
+            : currentDisplayName
+              ? { createdByName: currentDisplayName }
+              : {}),
+        },
+        { actorUid: currentUid },
+      );
+      setEditingEventId(null);
+      await refreshEvents();
+    } catch (e) {
+      setTagMessage(e instanceof Error ? e.message : "Could not update the tag.");
+    } finally {
+      setTagSaving(false);
+    }
+  }, [
+    events,
+    editingEventId,
+    game,
+    gameId,
+    editPlayerId,
+    editTime,
+    editLabel,
+    currentUid,
+    currentDisplayName,
+    refreshEvents,
+  ]);
 
   const handleAddStat = useCallback(async () => {
     if (!game || statPlayerIds.length === 0) {
@@ -890,47 +1047,136 @@ export default function GameReview({
                   <ul className="max-h-[40vh] space-y-1 overflow-y-auto pr-1">
                     {events.map((ev) => {
                       const active = Math.abs(ev.t - selectedGameTime) < 0.25;
+                      const isEditing = editingEventId === ev.id;
                       return (
                         <li key={ev.id}>
-                          <button
-                            type="button"
-                            onClick={() => handleSelectEvent(ev)}
-                            className={`w-full rounded-lg border px-2.5 py-2 text-left transition ${
+                          <div
+                            className={`rounded-lg border px-2.5 py-2 transition ${
                               active
                                 ? "border-emerald-500/45 bg-emerald-950/25"
-                                : "border-white/[0.06] bg-black/25 hover:bg-white/[0.04]"
+                                : "border-white/[0.06] bg-black/25"
                             }`}
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-mono text-[11px] text-zinc-300">
-                                {formatTimelineSeconds(ev.t)}
-                              </span>
-                              <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">
-                                {ev.type === "stat"
-                                  ? statTypeLabel(
-                                      parseGameStat(ev)?.statType ?? "custom",
-                                    )
-                                  : eventTypeLabel(ev.type)}
-                              </span>
+                            <div className="flex items-start gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectEvent(ev)}
+                                className="min-w-0 flex-1 text-left"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-[11px] text-zinc-300">
+                                    {formatTimelineSeconds(ev.t)}
+                                  </span>
+                                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-medium text-zinc-400">
+                                    {ev.type === "stat"
+                                      ? statTypeLabel(
+                                          parseGameStat(ev)?.statType ?? "custom",
+                                        )
+                                      : eventTypeLabel(ev.type)}
+                                  </span>
+                                </div>
+                                {ev.label ? (
+                                  <p className="mt-0.5 text-[11px] font-medium text-zinc-200">
+                                    {ev.label}
+                                  </p>
+                                ) : null}
+                                {ev.createdByName ? (
+                                  <p className="mt-0.5 text-[10px] text-zinc-500">
+                                    {ev.createdByName}
+                                  </p>
+                                ) : null}
+                                {getEventPlayerIds(ev).length > 0 ? (
+                                  <p className="mt-0.5 text-[10px] text-violet-300">
+                                    {getEventPlayerIds(ev)
+                                      .map((id) => playerNameById.get(id) ?? id)
+                                      .join(", ")}
+                                  </p>
+                                ) : null}
+                              </button>
+                              {canEditSources ? (
+                                <div className="flex shrink-0 items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      isEditing ? setEditingEventId(null) : beginEdit(ev)
+                                    }
+                                    aria-label="Edit tag"
+                                    className="rounded-md border border-white/10 px-1.5 py-1 text-[10px] text-zinc-300 transition hover:border-white/25 hover:bg-white/[0.06]"
+                                  >
+                                    ✎
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteEvent(ev.id)}
+                                    aria-label="Delete tag"
+                                    className="rounded-md border border-rose-500/25 px-1.5 py-1 text-[10px] text-rose-200 transition hover:border-rose-500/40 hover:bg-rose-950/30"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
-                            {ev.label ? (
-                              <p className="mt-0.5 text-[11px] font-medium text-zinc-200">
-                                {ev.label}
-                              </p>
+
+                            {isEditing ? (
+                              <div className="mt-2 space-y-2 border-t border-white/[0.08] pt-2">
+                                <input
+                                  type="text"
+                                  value={editLabel}
+                                  onChange={(e) => setEditLabel(e.target.value)}
+                                  placeholder="Label"
+                                  className={inputClass}
+                                />
+                                {teamPlayers.length > 0 ? (
+                                  <select
+                                    value={editPlayerId}
+                                    onChange={(e) => setEditPlayerId(e.target.value)}
+                                    className={inputClass}
+                                  >
+                                    <option value="">
+                                      {ev.type === "stat"
+                                        ? "Select player…"
+                                        : "No player"}
+                                    </option>
+                                    {teamPlayers.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name}
+                                        {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : null}
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[10px] text-zinc-400">
+                                    {formatTimelineSeconds(editTime)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditTime(selectedGameTime)}
+                                    className={`${ghostBtn} text-[10px]`}
+                                  >
+                                    Set to current time
+                                  </button>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void saveEdit()}
+                                    disabled={tagSaving}
+                                    className={primaryBtn}
+                                  >
+                                    {tagSaving ? "…" : "Update"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingEventId(null)}
+                                    className={ghostBtn}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
                             ) : null}
-                          {ev.createdByName ? (
-                            <p className="mt-0.5 text-[10px] text-zinc-500">
-                              {ev.createdByName}
-                            </p>
-                          ) : null}
-                          {getEventPlayerIds(ev).length > 0 ? (
-                            <p className="mt-0.5 text-[10px] text-violet-300">
-                              {getEventPlayerIds(ev)
-                                .map((id) => playerNameById.get(id) ?? id)
-                                .join(", ")}
-                            </p>
-                          ) : null}
-                          </button>
+                          </div>
                         </li>
                       );
                     })}
@@ -957,66 +1203,114 @@ export default function GameReview({
                     </p>
                   </div>
 
+                  {pendingStat ? (
+                    <div className="mb-3 rounded-lg border border-blue-500/40 bg-blue-950/25 p-3">
+                      <p className="text-[11px] font-medium text-blue-100">
+                        {pendingStat.label} at{" "}
+                        {formatTimelineSeconds(pendingStat.t)} — who?
+                      </p>
+                      <p className="mt-0.5 text-[10px] text-blue-200/70">
+                        Video paused. Pick the player to log it.
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <select
+                          autoFocus
+                          value=""
+                          disabled={tagSaving}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              void completePendingStat(e.target.value);
+                            }
+                          }}
+                          className={inputClass}
+                        >
+                          <option value="">Select player…</option>
+                          {teamPlayers.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setPendingStat(null)}
+                          className={ghostBtn}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <p className="mb-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                    Our team (pick a player)
+                  </p>
                   <div className="mb-3 flex flex-wrap gap-1.5">
-                    {QUICK_TAGS.map((label) => (
+                    {QUICK_TAGS.map((tag) => (
                       <button
-                        key={label}
+                        key={tag.label}
                         type="button"
                         disabled={tagSaving}
-                        onClick={() => void saveTag(label)}
+                        onClick={() =>
+                          tag.kind === "stat" &&
+                          beginStatTag(tag.statType, tag.label)
+                        }
                         className={`${ghostBtn} disabled:opacity-50`}
                       >
-                        {label}
+                        {tag.label}
                       </button>
                     ))}
                   </div>
 
-                  <div className="mb-3 flex gap-2">
+                  <p className="mb-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                    No player needed
+                  </p>
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {MARK_TAGS.map((tag) => (
+                      <button
+                        key={tag.label}
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={() => void saveMark(tag.label)}
+                        className={`${ghostBtn} disabled:opacity-50`}
+                      >
+                        {tag.label}
+                      </button>
+                    ))}
+                    {OPPONENT_TAGS.map((tag) => (
+                      <button
+                        key={tag.label}
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={() => void saveMark(tag.label, { opponent: true })}
+                        className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:border-amber-500/40 hover:bg-amber-950/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {tag.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mb-1 flex gap-2">
                     <input
                       type="text"
                       value={tagLabel}
                       onChange={(e) => setTagLabel(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveTag(tagLabel);
+                        if (e.key === "Enter") void saveMark(tagLabel);
                       }}
                       placeholder="Custom play…"
                       className={inputClass}
                     />
                     <button
                       type="button"
-                      onClick={() => void saveTag(tagLabel)}
+                      onClick={() => void saveMark(tagLabel)}
                       disabled={tagSaving || !tagLabel.trim()}
                       className={primaryBtn}
                     >
                       {tagSaving ? "…" : "Tag"}
                     </button>
                   </div>
-
-                  {teamPlayers.length > 0 ? (
-                    <div className="mb-1">
-                      <p className="mb-1.5 text-[10px] text-zinc-500">
-                        Players on this play (optional)
-                      </p>
-                      <ul className="max-h-24 space-y-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-black/20 p-2">
-                        {teamPlayers.map((p) => (
-                          <li key={p.id}>
-                            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
-                              <input
-                                type="checkbox"
-                                checked={tagPlayerIds.includes(p.id)}
-                                onChange={() => toggleTagPlayer(p.id)}
-                                className="rounded border-white/20"
-                              />
-                              <span>
-                                {p.name}
-                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
-                              </span>
-                            </label>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
 
                   {tagMessage ? (
                     <p className="mt-2 text-[11px] text-zinc-400">{tagMessage}</p>
