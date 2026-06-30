@@ -1,10 +1,20 @@
 import type { GameTimelineEvent } from "@/lib/games";
 
 const PLAYER_IDS_KEY = "playerIds";
+const PERSON_IDS_KEY = "personIds";
 
 /** Read optional player tags from a timeline event payload. */
 export function getEventPlayerIds(event: GameTimelineEvent): string[] {
   const raw = event.payload?.[PLAYER_IDS_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (id): id is string => typeof id === "string" && id.trim() !== "",
+  );
+}
+
+/** Read persistent person ids from a timeline event payload. */
+export function getEventPersonIds(event: GameTimelineEvent): string[] {
+  const raw = event.payload?.[PERSON_IDS_KEY];
   if (!Array.isArray(raw)) return [];
   return raw.filter(
     (id): id is string => typeof id === "string" && id.trim() !== "",
@@ -22,8 +32,12 @@ export function eventTagsPlayer(
 export function withEventPlayerIds(
   payload: Record<string, unknown> | undefined,
   playerIds: string[],
+  personIds?: string[],
 ): Record<string, unknown> {
   const ids = [...new Set(playerIds.filter(Boolean))];
-  if (ids.length === 0) return payload ?? {};
-  return { ...(payload ?? {}), [PLAYER_IDS_KEY]: ids };
+  const persons = [...new Set((personIds ?? []).filter(Boolean))];
+  const base = { ...(payload ?? {}) };
+  if (ids.length > 0) base[PLAYER_IDS_KEY] = ids;
+  if (persons.length > 0) base[PERSON_IDS_KEY] = persons;
+  return base;
 }

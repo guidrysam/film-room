@@ -14,9 +14,12 @@ import {
   type RosterImportResult,
 } from "@/lib/roster-import";
 import { type RosterParentContact } from "@/lib/roster-csv";
+import { formatEventTeamName } from "@/lib/import-batches";
+import { listPersons, resolvePersonId, type Person } from "@/lib/persons";
 import {
   createTeam,
   findTeamByName,
+  findTeamInBatch,
   indexPlayersByRosterKey,
   listTeamPlayers,
   playerImportFieldsEqual,
@@ -244,7 +247,19 @@ export async function loadTeamRosterData(
   return { players, parents };
 }
 
+export type ClubImportMode = "new_event" | "sync_existing";
+
+export type ClubImportOptions = {
+  /** Default `new_event` — always creates teams under an import batch. */
+  mode?: ClubImportMode;
+  importBatchId?: string;
+  importBatchLabel?: string;
+  /** Link roster rows to persistent person records (default true). */
+  linkPersons?: boolean;
+};
+
 export type ClubImportTeamInput = {
+  /** Program name from CSV (before event suffix). */
   teamName: string;
   rows: RosterImportPreviewRow[];
   sport?: string;
@@ -270,7 +285,12 @@ export type ClubImportResult = {
   skipped: number;
 };
 
-function stubTeam(teamId: string, name: string, uid: string): Team {
+function stubTeam(
+  teamId: string,
+  name: string,
+  uid: string,
+  extra?: Pick<Team, "importBatchId" | "importBatchLabel" | "programName">,
+): Team {
   return {
     id: teamId,
     name,
@@ -279,18 +299,39 @@ function stubTeam(teamId: string, name: string, uid: string): Team {
     memberUids: [uid],
     createdAt: null,
     updatedAt: null,
+    ...(extra?.importBatchId ? { importBatchId: extra.importBatchId } : {}),
+    ...(extra?.importBatchLabel
+      ? { importBatchLabel: extra.importBatchLabel }
+      : {}),
+    ...(extra?.programName ? { programName: extra.programName } : {}),
   };
 }
 
 /**
- * Import one or more teams from a single club-wide roster. Each input is matched
- * against the importer's existing teams by name: a match updates that team, and
- * a miss creates a new one. Roster rows are then imported into the matched team.
+ * Import one or more teams from a single club-wide roster.
+ *
+ * `new_event` (default): creates teams under an import batch — never merges
+ * into teams from other events/seasons. Re-importing into the same batch
+ * updates roster rows on the matching program within that batch only.
+ *
+ * `sync_existing`: legacy mode — match teams by name across all your teams.
  */
 export async function importClubRoster(
   uid: string,
   teams: ClubImportTeamInput[],
+  opts?: ClubImportOptions,
 ): Promise<ClubImportResult> {
+  const mode = opts?.mode ?? "new_event";
+  const linkPersons = opts?.linkPersons !== false;
+
+  if (mode === "new_event") {
+    if (!opts?.importBatchId?.trim() || !opts?.importBatchLabel?.trim()) {
+      throw new Error(
+        "An event or season name is required for a new import batch.",
+      );
+    }
+  }
+
   let existingTeams: Team[];
   try {
     existingTeams = await listMyTeams(uid);
@@ -299,6 +340,15 @@ export async function importClubRoster(
       error,
       "Could not load your existing teams to match the import.",
     );
+  }
+
+  let personCache: Person[] = [];
+  if (linkPersons) {
+    try {
+      personCache = await listPersons(uid);
+    } catch {
+      /* person linking is best-effort */
+    }
   }
 
   const result: ClubImportResult = {
@@ -314,46 +364,103 @@ export async function importClubRoster(
     skipped: 0,
   };
 
-  for (const team of teams) {
-    const teamName = team.teamName.trim();
-    if (!teamName) continue;
+  const batchId = opts?.importBatchId?.trim();
+  const batchLabel = opts?.importBatchLabel?.trim();
 
-    const existing = findTeamByName(existingTeams, teamName);
+  for (const team of teams) {
+    const programName = team.teamName.trim();
+    if (!programName) continue;
+
     let teamId: string;
     let teamCreated: boolean;
+    let displayName: string;
 
-    if (existing) {
-      teamId = existing.id;
-      teamCreated = false;
-    } else {
-      try {
-        teamId = await createTeam(uid, {
-          name: teamName,
-          ...(team.sport?.trim() ? { sport: team.sport.trim() } : {}),
-          ...(team.season?.trim() ? { season: team.season.trim() } : {}),
-        });
-      } catch (error) {
-        throw formatFirestoreWriteError(
-          error,
-          `Could not create team "${teamName}". Check Firestore rules deployment.`,
-        );
+    if (mode === "new_event" && batchId && batchLabel) {
+      displayName = formatEventTeamName(programName, batchLabel);
+      const existingInBatch = findTeamInBatch(
+        existingTeams,
+        batchId,
+        programName,
+      );
+      if (existingInBatch) {
+        teamId = existingInBatch.id;
+        teamCreated = false;
+      } else {
+        try {
+          teamId = await createTeam(uid, {
+            name: displayName,
+            programName,
+            importBatchId: batchId,
+            importBatchLabel: batchLabel,
+            season: batchLabel,
+            ...(team.sport?.trim() ? { sport: team.sport.trim() } : {}),
+          });
+        } catch (error) {
+          throw formatFirestoreWriteError(
+            error,
+            `Could not create team "${displayName}". Check Firestore rules deployment.`,
+          );
+        }
+        teamCreated = true;
+        existingTeams = [
+          ...existingTeams,
+          stubTeam(teamId, displayName, uid, {
+            importBatchId: batchId,
+            importBatchLabel: batchLabel,
+            programName,
+          }),
+        ];
       }
-      teamCreated = true;
-      // Record so later groups that normalize to the same name reuse this team.
-      existingTeams = [...existingTeams, stubTeam(teamId, teamName, uid)];
+    } else {
+      displayName = programName;
+      const existing = findTeamByName(existingTeams, programName);
+      if (existing) {
+        teamId = existing.id;
+        teamCreated = false;
+      } else {
+        try {
+          teamId = await createTeam(uid, {
+            name: programName,
+            ...(team.sport?.trim() ? { sport: team.sport.trim() } : {}),
+            ...(team.season?.trim() ? { season: team.season.trim() } : {}),
+          });
+        } catch (error) {
+          throw formatFirestoreWriteError(
+            error,
+            `Could not create team "${programName}". Check Firestore rules deployment.`,
+          );
+        }
+        teamCreated = true;
+        existingTeams = [...existingTeams, stubTeam(teamId, programName, uid)];
+      }
     }
+
+    const resolvePerson = linkPersons
+      ? async (playerName: string) => {
+          const resolved = await resolvePersonId(uid, playerName, personCache);
+          personCache = resolved.cache;
+          return resolved.personId;
+        }
+      : undefined;
 
     let importResult: RosterImportResult;
     try {
-      importResult = await importRosterPreview(teamId, team.rows);
+      importResult = await importRosterPreview(teamId, team.rows, {
+        resolvePersonId: resolvePerson,
+      });
     } catch (error) {
       throw formatFirestoreWriteError(
         error,
-        `Team "${teamName}" was ${teamCreated ? "created" : "matched"} but its roster import failed. Check Firestore rules for players and parent invite targets.`,
+        `Team "${displayName}" was ${teamCreated ? "created" : "matched"} but its roster import failed. Check Firestore rules for players and parent invite targets.`,
       );
     }
 
-    result.teams.push({ teamId, teamName, teamCreated, ...importResult });
+    result.teams.push({
+      teamId,
+      teamName: displayName,
+      teamCreated,
+      ...importResult,
+    });
     if (teamCreated) result.teamsCreated++;
     else result.teamsUpdated++;
     result.playersCreated += importResult.playersCreated;

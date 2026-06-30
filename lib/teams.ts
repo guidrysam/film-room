@@ -61,6 +61,12 @@ export type Team = {
   sport?: string;
   season?: string;
   clubId?: string;
+  /** Event/season import batch this team belongs to. */
+  importBatchId?: string;
+  /** Denormalized batch label for display. */
+  importBatchLabel?: string;
+  /** Program name from CSV before event suffix (e.g. "CMFC U12 Girls"). */
+  programName?: string;
   ownerId: string;
   /** uid -> role. Creator is always admin. */
   members: Record<string, TeamMemberRole>;
@@ -76,6 +82,8 @@ export type Player = {
   name: string;
   jerseyNumber?: string;
   position?: string;
+  /** Persistent club person id — stats roll up across event teams. */
+  personId?: string;
   linkedUid?: string;
   /** Parent member uids linked via roster onboarding. */
   parentUids?: string[];
@@ -87,6 +95,7 @@ export type PlayerInput = {
   name: string;
   jerseyNumber?: string;
   position?: string;
+  personId?: string;
   linkedUid?: string;
 };
 
@@ -95,6 +104,9 @@ export type CreateTeamInput = {
   sport?: string;
   season?: string;
   clubId?: string;
+  importBatchId?: string;
+  importBatchLabel?: string;
+  programName?: string;
 };
 
 export type CreateTeamGameInput = CreateGameInput & {
@@ -162,6 +174,15 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
     ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
     ...(trimOrUndef(raw.season) ? { season: (raw.season as string).trim() } : {}),
     ...(trimOrUndef(raw.clubId) ? { clubId: (raw.clubId as string).trim() } : {}),
+    ...(trimOrUndef(raw.importBatchId)
+      ? { importBatchId: (raw.importBatchId as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.importBatchLabel)
+      ? { importBatchLabel: (raw.importBatchLabel as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.programName)
+      ? { programName: (raw.programName as string).trim() }
+      : {}),
     ...(youtube && Object.keys(youtube).length > 0 ? { youtube } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
@@ -186,6 +207,21 @@ export function normalizeCreateTeamInput(input: {
 /** Stable key for matching teams by name (case/whitespace-insensitive). */
 export function teamNameKey(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Find a team in the same import batch by program name. */
+export function findTeamInBatch(
+  teams: Team[],
+  importBatchId: string,
+  programName: string,
+): Team | undefined {
+  const key = teamNameKey(programName);
+  if (!key) return undefined;
+  return teams.find(
+    (t) =>
+      t.importBatchId === importBatchId &&
+      teamNameKey(t.programName ?? t.name) === key,
+  );
 }
 
 /** Find a team with a matching name (used to avoid duplicate teams on import). */
@@ -280,6 +316,15 @@ export async function createTeam(
     ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
     ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
     ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
+    ...(trimOrUndef(data.importBatchId)
+      ? { importBatchId: data.importBatchId!.trim() }
+      : {}),
+    ...(trimOrUndef(data.importBatchLabel)
+      ? { importBatchLabel: data.importBatchLabel!.trim() }
+      : {}),
+    ...(trimOrUndef(data.programName)
+      ? { programName: data.programName!.trim() }
+      : {}),
   };
 
   try {
@@ -519,6 +564,9 @@ function parsePlayer(id: string, raw: Record<string, unknown>): Player {
     ...(trimOrUndef(raw.position)
       ? { position: (raw.position as string).trim() }
       : {}),
+    ...(trimOrUndef(raw.personId)
+      ? { personId: (raw.personId as string).trim() }
+      : {}),
     ...(trimOrUndef(raw.linkedUid)
       ? { linkedUid: (raw.linkedUid as string).trim() }
       : {}),
@@ -604,6 +652,7 @@ export async function upsertTeamPlayer(
   const jerseyNumber = trimOrUndef(input.jerseyNumber);
   const position = trimOrUndef(input.position);
   const linkedUid = trimOrUndef(input.linkedUid);
+  const personId = trimOrUndef(input.personId);
   const key = playerRosterKey(name, jerseyNumber);
   const existing = existingByKey?.get(key);
 
@@ -615,7 +664,9 @@ export async function upsertTeamPlayer(
     });
     const linkedSame =
       linkedUid === undefined || (existing.linkedUid ?? "") === linkedUid;
-    if (coreSame && linkedSame) {
+    const personSame =
+      personId === undefined || (existing.personId ?? "") === personId;
+    if (coreSame && linkedSame && personSame) {
       return { player: existing, status: "unchanged" };
     }
   }
@@ -628,6 +679,7 @@ export async function upsertTeamPlayer(
     name,
     ...(jerseyNumber ? { jerseyNumber } : {}),
     ...(position ? { position } : {}),
+    ...(personId ? { personId } : {}),
     ...(linkedUid ? { linkedUid } : {}),
     updatedAt: now,
     ...(!existing ? { createdAt: now } : {}),
@@ -639,6 +691,7 @@ export async function upsertTeamPlayer(
       name,
       ...(jerseyNumber ? { jerseyNumber } : {}),
       ...(position ? { position } : {}),
+      ...(personId ? { personId } : {}),
       ...(linkedUid ? { linkedUid } : {}),
       ...(existing?.parentUids ? { parentUids: existing.parentUids } : {}),
     },

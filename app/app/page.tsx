@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import { markRoomHost } from "@/lib/room-host";
 import { listMyGames, type Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
+import { groupTeamsByImportBatch } from "@/lib/team-batches";
 import { teamRosterUrl } from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 import { NON_YOUTUBE_LINK_MESSAGE } from "@/lib/public-copy";
@@ -69,6 +70,8 @@ export default function DashboardPage() {
   useEffect(() => {
     void refreshTeams();
   }, [refreshTeams]);
+
+  const teamGroups = useMemo(() => groupTeamsByImportBatch(teams), [teams]);
 
   const startQuickReview = () => {
     const videoId = extractYouTubeVideoId(url);
@@ -175,31 +178,40 @@ export default function DashboardPage() {
               to organize games, roster, and season.
             </p>
           ) : (
-            <ul className="space-y-2">
-              {teams.map((t) => {
-                const role = user ? teamRoleFor(t, user.uid) : null;
-                return (
-                  <li key={t.id}>
-                    <Link
-                      href={teamRosterUrl(t.id)}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2.5 transition hover:border-white/15 hover:bg-white/[0.04]"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-white">
-                          {t.name}
-                        </span>
-                        <span className="block text-xs text-zinc-500">
-                          {[t.sport, role].filter(Boolean).join(" · ")}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-zinc-500" aria-hidden>
-                        →
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="space-y-4">
+              {teamGroups.map((group) => (
+                <div key={group.key}>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                    {group.label}
+                  </p>
+                  <ul className="space-y-2">
+                    {group.teams.map((t) => {
+                      const role = user ? teamRoleFor(t, user.uid) : null;
+                      return (
+                        <li key={t.id}>
+                          <Link
+                            href={teamRosterUrl(t.id)}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2.5 transition hover:border-white/15 hover:bg-white/[0.04]"
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-white">
+                                {t.programName ?? t.name}
+                              </span>
+                              <span className="block text-xs text-zinc-500">
+                                {[t.sport, role].filter(Boolean).join(" · ")}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-zinc-500" aria-hidden>
+                              →
+                            </span>
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
         </section>
 

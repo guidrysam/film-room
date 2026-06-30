@@ -166,6 +166,7 @@ export type AddGameStatInput = {
   t: number;
   statType: GameStatType | string;
   playerIds: string[];
+  personIds?: string[];
   note?: string;
   sourceId?: string;
   label?: string;
@@ -200,6 +201,7 @@ export async function addGameStat(
         ...(note ? { note } : {}),
       },
       playerIds,
+      input.personIds,
     ),
     ...(input.createdBy ? { createdBy: input.createdBy } : {}),
     ...(input.createdByRole ? { createdByRole: input.createdByRole } : {}),

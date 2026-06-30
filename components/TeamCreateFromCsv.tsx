@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import RosterCsvImportPanel, {
   useRosterCsvImportPreview,
 } from "@/components/RosterCsvImportPanel";
@@ -10,23 +10,19 @@ import {
   classifyTeamSync,
   groupPreviewRowsByTeam,
   importClubRoster,
-  loadTeamRosterData,
   type ClubImportResult,
   type TeamSyncClassification,
 } from "@/lib/roster-club-import";
+import { createImportBatch, formatEventTeamName } from "@/lib/import-batches";
 import type {
   RosterImportPreviewRow,
   RosterImportPreviewSummary,
 } from "@/lib/roster-import";
-import type { ParentInviteTarget } from "@/lib/parent-invite-targets";
-import { findTeamByName, listMyTeams, type Player, type Team } from "@/lib/teams";
 import { teamSetupUrl } from "@/lib/team-routes";
 
 export type TeamCreateFromCsvProps = {
   uid: string;
 };
-
-type TeamRosterData = { players: Player[]; parents: ParentInviteTarget[] };
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -63,30 +59,13 @@ function SyncCounts({
 export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
   const { preview, bundle, onPreviewChange: syncPreview } =
     useRosterCsvImportPreview();
-  const [existingTeams, setExistingTeams] = useState<Team[]>([]);
-  const [teamData, setTeamData] = useState<Record<string, TeamRosterData>>({});
-  const requestedTeamIds = useRef<Set<string>>(new Set());
   const [nameOverrides, setNameOverrides] = useState<Record<number, string>>({});
   const [fallbackName, setFallbackName] = useState("");
+  const [eventLabel, setEventLabel] = useState("");
   const [sport, setSport] = useState("");
-  const [season, setSeason] = useState("");
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ClubImportResult | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    listMyTeams(uid)
-      .then((teams) => {
-        if (active) setExistingTeams(teams);
-      })
-      .catch(() => {
-        // Matching against existing teams is best-effort; the import re-checks.
-      });
-    return () => {
-      active = false;
-    };
-  }, [uid]);
 
   const onPreviewChange = useCallback(
     (
@@ -114,48 +93,37 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
 
   const groups = useMemo(
     () =>
-      baseGroups.map((group, index) => ({
-        ...group,
-        teamName: nameOverrides[index] ?? group.teamName,
-      })),
-    [baseGroups, nameOverrides],
+      baseGroups.map((group, index) => {
+        const programName = nameOverrides[index] ?? group.teamName;
+        const displayName = eventLabel.trim()
+          ? formatEventTeamName(programName, eventLabel.trim())
+          : programName;
+        return {
+          ...group,
+          programName,
+          teamName: displayName,
+        };
+      }),
+    [baseGroups, nameOverrides, eventLabel],
   );
 
   const plan = useMemo(
     () =>
       groups.map((group) => {
-        const existing = findTeamByName(existingTeams, group.teamName);
-        const data = existing ? teamData[existing.id] : undefined;
         const sync: TeamSyncClassification = classifyTeamSync(
           group.rows,
-          data?.players ?? [],
-          data?.parents ?? [],
+          [],
+          [],
         );
         return {
           ...group,
-          matchesExistingTeam: Boolean(existing),
-          existingTeamId: existing?.id,
-          loadingExisting: Boolean(existing) && !data,
+          matchesExistingTeam: false,
+          loadingExisting: false,
           sync,
         };
       }),
-    [groups, existingTeams, teamData],
+    [groups],
   );
-
-  // Lazily fetch existing rosters for any matched team so the preview can show
-  // accurate new/updated/unchanged counts.
-  useEffect(() => {
-    for (const item of plan) {
-      const teamId = item.existingTeamId;
-      if (!teamId || requestedTeamIds.current.has(teamId)) continue;
-      requestedTeamIds.current.add(teamId);
-      loadTeamRosterData(teamId)
-        .then((data) => setTeamData((prev) => ({ ...prev, [teamId]: data })))
-        .catch(() => {
-          requestedTeamIds.current.delete(teamId);
-        });
-    }
-  }, [plan]);
 
   const importableTeams = useMemo(
     () =>
@@ -183,27 +151,40 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
   );
 
   const everyTeamNamed = useMemo(
-    () => importableTeams.every((item) => item.teamName.trim().length > 0),
+    () => importableTeams.every((item) => item.programName.trim().length > 0),
     [importableTeams],
   );
 
   const handleImport = useCallback(async () => {
     if (importableTeams.length === 0) return;
+    if (!eventLabel.trim()) {
+      setError("Name this event or season (e.g. Fall 2026, Labor Day Cup).");
+      return;
+    }
     if (!everyTeamNamed) {
-      setError("Give every team a name before importing.");
+      setError("Give every team a program name before importing.");
       return;
     }
     setImporting(true);
     setError(null);
     try {
+      const batchId = await createImportBatch(uid, {
+        label: eventLabel.trim(),
+        ...(sport.trim() ? { sport: sport.trim() } : {}),
+      });
       const clubResult = await importClubRoster(
         uid,
         importableTeams.map((item) => ({
-          teamName: item.teamName.trim(),
+          teamName: item.programName.trim(),
           rows: item.rows,
           ...(sport.trim() ? { sport: sport.trim() } : {}),
-          ...(season.trim() ? { season: season.trim() } : {}),
         })),
+        {
+          mode: "new_event",
+          importBatchId: batchId,
+          importBatchLabel: eventLabel.trim(),
+          linkPersons: true,
+        },
       );
       setResult(clubResult);
     } catch (e) {
@@ -211,7 +192,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     } finally {
       setImporting(false);
     }
-  }, [uid, importableTeams, everyTeamNamed, sport, season]);
+  }, [uid, importableTeams, everyTeamNamed, eventLabel, sport]);
 
   if (result) {
     return (
@@ -221,21 +202,19 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             Roster import complete
           </p>
           <p className="mt-1 text-xs text-emerald-200/90">
-            {result.teamsCreated} team{result.teamsCreated === 1 ? "" : "s"} created
-            {" · "}
-            {result.teamsUpdated} updated · {result.playersCreated} player
-            {result.playersCreated === 1 ? "" : "s"} added ·{" "}
-            {result.playersUpdated} updated · {result.playersUnchanged} unchanged
+            {result.teamsCreated} new team{result.teamsCreated === 1 ? "" : "s"}{" "}
+            for this event · {result.playersCreated} player
+            {result.playersCreated === 1 ? "" : "s"} added
           </p>
           <p className="mt-1 text-xs text-emerald-200/90">
             {result.parentsCreated} parent contact
-            {result.parentsCreated === 1 ? "" : "s"} added ·{" "}
-            {result.parentsUpdated} updated · {result.parentsUnchanged} unchanged
+            {result.parentsCreated === 1 ? "" : "s"} added · players linked to
+            your club roster for cross-event stats
           </p>
           <p className="mt-2 text-[11px] text-zinc-400">
-            Imports are additive: existing players, parents, games, stats, and
-            highlights are preserved. Remove roster members manually from each
-            team when needed.
+            Each import creates a fresh set of event-specific teams. Re-upload
+            the same CSV into the same event to update roster rows — nothing is
+            removed automatically.
           </p>
         </div>
 
@@ -249,13 +228,9 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
                 <p className="truncate text-sm font-medium text-white">
                   {team.teamName}
                   <span
-                    className={`ml-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${
-                      team.teamCreated
-                        ? "border-emerald-500/40 bg-emerald-950/35 text-emerald-200"
-                        : "border-amber-500/40 bg-amber-950/35 text-amber-200"
-                    }`}
+                    className={`ml-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase border-emerald-500/40 bg-emerald-950/35 text-emerald-200`}
                   >
-                    {team.teamCreated ? "created" : "updated"}
+                    new for event
                   </span>
                 </p>
                 <p className="text-[11px] text-zinc-400">
@@ -277,10 +252,11 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
   return (
     <div>
       <p className="mb-4 text-sm text-zinc-400">
-        Upload a TeamLinkt roster export. Players are grouped by their{" "}
-        <span className="font-medium text-zinc-200">Team Name</span>. Re-uploading
-        an updated export is safe — it creates and updates records but never
-        removes players or parents.
+        Upload a TeamLinkt roster export for a{" "}
+        <span className="font-medium text-zinc-200">new event or season</span>.
+        Film Room creates a fresh team for each program in the CSV — past
+        tournaments and seasons stay separate. Players are linked by name so
+        stats can follow them across events.
       </p>
 
       <RosterCsvImportPanel
@@ -314,6 +290,22 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             </label>
           ) : null}
 
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium text-zinc-400">
+              Event or season name <span className="text-rose-300">*</span>
+            </span>
+            <input
+              type="text"
+              value={eventLabel}
+              onChange={(e) => setEventLabel(e.target.value)}
+              placeholder="e.g. Fall 2026, Labor Day Cup"
+              className={inputClass}
+            />
+            <span className="mt-1 block text-[10px] text-zinc-500">
+              Teams are named “Program · Event” (e.g. CMFC U12 Girls · Fall 2026).
+            </span>
+          </label>
+
           <ul className="space-y-2">
             {plan.map((item, index) => (
               <li
@@ -321,80 +313,68 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
                 className="space-y-2 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span
-                    className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${
-                      item.matchesExistingTeam
-                        ? "border-amber-500/40 bg-amber-950/35 text-amber-200"
-                        : "border-emerald-500/40 bg-emerald-950/35 text-emerald-200"
-                    }`}
-                  >
-                    {item.matchesExistingTeam ? "update existing" : "new team"}
+                  <span className="rounded-full border border-emerald-500/40 bg-emerald-950/35 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-emerald-200">
+                    new team
                   </span>
-                  {item.loadingExisting ? (
-                    <span className="text-[10px] text-zinc-500">
-                      Checking existing roster…
-                    </span>
-                  ) : null}
                 </div>
 
-                <input
-                  type="text"
-                  value={item.teamName}
-                  onChange={(e) =>
-                    setNameOverrides((prev) => ({
-                      ...prev,
-                      [index]: e.target.value,
-                    }))
-                  }
-                  placeholder="Team name"
-                  className={inputClass}
-                />
+                <label className="block text-[10px] text-zinc-500">
+                  Program name (from CSV)
+                  <input
+                    type="text"
+                    value={item.programName}
+                    onChange={(e) =>
+                      setNameOverrides((prev) => ({
+                        ...prev,
+                        [index]: e.target.value,
+                      }))
+                    }
+                    placeholder="Team name"
+                    className={`${inputClass} mt-1`}
+                  />
+                </label>
+
+                {eventLabel.trim() ? (
+                  <p className="text-[10px] text-zinc-500">
+                    Will import as:{" "}
+                    <span className="font-medium text-zinc-300">
+                      {item.teamName}
+                    </span>
+                  </p>
+                ) : null}
 
                 <div className="space-y-1.5">
                   <SyncCounts label="Players" counts={item.sync.players} />
                   <SyncCounts label="Parents" counts={item.sync.parents} />
                 </div>
-
-                {item.sync.missingPlayers.length > 0 ? (
-                  <p className="rounded-md border border-sky-500/25 bg-sky-950/20 px-2 py-1.5 text-[10px] leading-snug text-sky-200">
-                    {item.sync.missingPlayers.length} player
-                    {item.sync.missingPlayers.length === 1 ? "" : "s"} currently
-                    exist in Film Room but were not found in this import. No
-                    automatic action is taken — remove them manually if needed.
-                  </p>
-                ) : null}
               </li>
             ))}
           </ul>
 
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input
-              type="text"
-              value={sport}
-              onChange={(e) => setSport(e.target.value)}
-              placeholder="Sport (optional, new teams)"
-              className={inputClass}
-            />
-            <input
-              type="text"
-              value={season}
-              onChange={(e) => setSeason(e.target.value)}
-              placeholder="Season (optional, new teams)"
-              className={inputClass}
-            />
-          </div>
+          <input
+            type="text"
+            value={sport}
+            onChange={(e) => setSport(e.target.value)}
+            placeholder="Sport (optional)"
+            className={inputClass}
+          />
 
           <button
             type="button"
             onClick={() => void handleImport()}
-            disabled={importing || importableTeams.length === 0 || !everyTeamNamed}
+            disabled={
+              importing ||
+              importableTeams.length === 0 ||
+              !everyTeamNamed ||
+              !eventLabel.trim()
+            }
             className={`${primaryBtn} w-full`}
           >
             {importing
               ? "Importing roster…"
               : importableTeams.length === 1
-                ? "Create / update 1 team and import"
-                : `Create / update ${importableTeams.length} teams and import`}
+                ? "Create event & import 1 team"
+                : `Create event & import ${importableTeams.length} teams`}
           </button>
           {error ? <p className="text-xs text-rose-300">{error}</p> : null}
         </div>

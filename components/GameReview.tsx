@@ -444,7 +444,13 @@ export default function GameReview({
     [teamPlayers],
   );
 
-  // Commit the pending mark. With a player on a stat-type tag it counts as a
+  const personIdFor = useCallback(
+    (rosterPlayerId: string) =>
+      teamPlayers.find((p) => p.id === rosterPlayerId)?.personId,
+    [teamPlayers],
+  );
+
+  // Commit the pending mark.
   // stat (goals can carry an assist); otherwise it's a tagged play that may
   // still carry an attributed player. No player is always allowed.
   const commitPendingTag = useCallback(async () => {
@@ -454,10 +460,12 @@ export default function GameReview({
     setTagMessage(null);
     try {
       if (pendingTag.statType && pendingPlayerId) {
+        const scorerPersonId = personIdFor(pendingPlayerId);
         await addGameStat(gameId, {
           t,
           statType: pendingTag.statType,
           playerIds: [pendingPlayerId],
+          ...(scorerPersonId ? { personIds: [scorerPersonId] } : {}),
           ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
           createdBy: currentUid,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
@@ -467,10 +475,12 @@ export default function GameReview({
           pendingAssistId &&
           pendingAssistId !== pendingPlayerId
         ) {
+          const assistPersonId = personIdFor(pendingAssistId);
           await addGameStat(gameId, {
             t,
             statType: "assist",
             playerIds: [pendingAssistId],
+            ...(assistPersonId ? { personIds: [assistPersonId] } : {}),
             ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
             createdBy: currentUid,
             ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
@@ -485,6 +495,9 @@ export default function GameReview({
         );
       } else {
         const players = pendingPlayerId ? [pendingPlayerId] : [];
+        const persons = pendingPlayerId
+          ? [personIdFor(pendingPlayerId)].filter(Boolean)
+          : [];
         await addGameEvent(
           gameId,
           {
@@ -498,6 +511,7 @@ export default function GameReview({
                 ...(pendingTag.statType ? { statType: pendingTag.statType } : {}),
               },
               players,
+              persons as string[],
             ),
             createdBy: currentUid,
             ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
@@ -525,10 +539,9 @@ export default function GameReview({
     currentUid,
     currentDisplayName,
     playerName,
+    personIdFor,
     refreshEvents,
   ]);
-
-  const handleDeleteEvent = useCallback(
     async (eventId: string) => {
       try {
         await deleteGameEvent(gameId, eventId);

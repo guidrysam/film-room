@@ -197,6 +197,9 @@ export function buildRosterImportPreview(
 export async function importRosterPreview(
   teamId: string,
   preview: RosterImportPreviewRow[],
+  opts?: {
+    resolvePersonId?: (playerName: string) => Promise<string | undefined>;
+  },
 ): Promise<RosterImportResult> {
   const importable = preview.filter(
     (r) => r.status === "create" || r.status === "update",
@@ -218,12 +221,16 @@ export async function importRosterPreview(
   const skipped = preview.length - importable.length;
 
   for (const row of importable) {
+    const personId = opts?.resolvePersonId
+      ? await opts.resolvePersonId(row.playerName)
+      : undefined;
     const { player, status } = await upsertTeamPlayer(
       teamId,
       {
         name: row.playerName,
         ...(row.jerseyNumber ? { jerseyNumber: row.jerseyNumber } : {}),
         ...(row.position ? { position: row.position } : {}),
+        ...(personId ? { personId } : {}),
       },
       playersByKey,
     );
