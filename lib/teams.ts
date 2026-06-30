@@ -198,6 +198,58 @@ export function findTeamByName(
   return teams.find((team) => teamNameKey(team.name) === key);
 }
 
+/** Split a team name into normalized comparison tokens (alphanumeric runs). */
+function teamNameTokens(name: string): string[] {
+  return teamNameKey(name)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Fuzzy similarity (0–1) between two team names. Exact (normalized) match is 1.
+ * Otherwise combines token overlap (Jaccard) with a substring-containment bonus,
+ * so "CMFC SAND 12u Girls" and "CMFC 12U Girls — Sand" score highly even though
+ * they are not an exact match.
+ */
+export function teamNameSimilarity(a: string, b: string): number {
+  const ka = teamNameKey(a);
+  const kb = teamNameKey(b);
+  if (!ka || !kb) return 0;
+  if (ka === kb) return 1;
+
+  const ta = teamNameTokens(a);
+  const tb = teamNameTokens(b);
+  if (ta.length === 0 || tb.length === 0) return 0;
+
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  let inter = 0;
+  for (const t of sa) if (sb.has(t)) inter++;
+  const union = new Set([...sa, ...sb]).size;
+  const jaccard = union === 0 ? 0 : inter / union;
+
+  const contains = ka.includes(kb) || kb.includes(ka) ? 0.3 : 0;
+  return Math.min(1, jaccard + contains);
+}
+
+export type TeamNameMatch = { team: Team; score: number };
+
+/**
+ * Best fuzzy match for a name among the given teams. Returns the highest-scoring
+ * team with its score (0 when no team shares any token).
+ */
+export function findBestTeamMatch(
+  teams: Team[],
+  name: string,
+): TeamNameMatch | undefined {
+  let best: TeamNameMatch | undefined;
+  for (const team of teams) {
+    const score = teamNameSimilarity(team.name, name);
+    if (!best || score > best.score) best = { team, score };
+  }
+  return best && best.score > 0 ? best : undefined;
+}
+
 export async function createTeam(
   uid: string,
   data: CreateTeamInput,

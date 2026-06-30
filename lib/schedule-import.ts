@@ -199,6 +199,34 @@ export async function loadScheduleImportPlan(
   return plans;
 }
 
+/**
+ * Classify a set of schedule rows against ONE team's existing games. Used by the
+ * team-scoped importer, where the user has explicitly chosen the target team and
+ * we no longer rely on the CSV team name matching exactly.
+ */
+export async function classifyRowsForTeam(
+  uid: string,
+  teamId: string,
+  rows: ParsedScheduleRow[],
+): Promise<ScheduleImportRow[]> {
+  const existing = await listTeamGames(uid, teamId);
+  return classifyScheduleRows(rows, existing);
+}
+
+/** Build a single matched plan that forces these rows into the chosen team. */
+export function buildTeamScopedPlan(
+  team: Team,
+  rows: ScheduleImportRow[],
+): ScheduleTeamPlan {
+  return {
+    teamName: team.name,
+    matchedTeam: team,
+    unmatched: false,
+    rows,
+    counts: countStatuses(rows),
+  };
+}
+
 function gameInputFromRow(row: ParsedScheduleRow): CreateGameInput {
   return {
     title: row.title,

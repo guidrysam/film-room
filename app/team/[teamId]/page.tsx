@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import TeamPageShell from "@/components/TeamPageShell";
 import TeamGameOverview from "@/components/TeamGameOverview";
+import TeamScheduleImport from "@/components/TeamScheduleImport";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { canCoachTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 
@@ -38,6 +39,9 @@ function TeamRosterContent({ team, teamId, currentUid }: {
   return (
   <>
     <TeamGameOverview team={team} currentUid={currentUid} />
+    {canCoachTeam(team, currentUid) ? (
+      <TeamScheduleImport team={team} currentUid={currentUid} />
+    ) : null}
     <div className="mb-3 flex items-center justify-between gap-2">
       <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
         Roster
