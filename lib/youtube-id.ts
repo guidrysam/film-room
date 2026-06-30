@@ -49,10 +49,29 @@ export function extractYouTubeVideoId(raw: string): string | null {
     host === "m.youtube.com" ||
     host === "music.youtube.com";
 
-  if (!isYoutube) return null;
+  const isNocookie = host === "youtube-nocookie.com";
+
+  if (!isYoutube && !isNocookie) return null;
 
   const { pathname, searchParams } = url;
   const normPath = pathname.replace(/\/+$/, "") || "/";
+
+  // Mobile / app share wrapper: ?u=/watch?v=VIDEO_ID
+  if (isYoutube && normPath === "/attribution_link") {
+    const inner = searchParams.get("u");
+    if (inner) {
+      try {
+        const decoded = decodeURIComponent(inner);
+        const innerUrl = decoded.startsWith("/")
+          ? `https://www.youtube.com${decoded}`
+          : decoded;
+        const nested = extractYouTubeVideoId(innerUrl);
+        if (nested) return nested;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 
   // Persistent channel or @handle live URLs must never be parsed as /live/<videoId>.
   if (/^\/channel\/[^/]+\/live$/i.test(normPath)) {
@@ -83,6 +102,10 @@ export function extractYouTubeVideoId(raw: string): string | null {
     const id = rest.split("/")[0] ?? "";
     return normalizeVideoId(id);
   }
+
+  // Fallback: v= anywhere on a YouTube-family URL.
+  const fromV = normalizeVideoId(searchParams.get("v"));
+  if (fromV) return fromV;
 
   return null;
 }

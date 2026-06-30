@@ -11,8 +11,7 @@ import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
 import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
 import { myPlayersUrl, playersListUrl, teamRosterUrl } from "@/lib/team-routes";
-import { extractYouTubeVideoId } from "@/lib/youtube-id";
-import { NON_YOUTUBE_LINK_MESSAGE } from "@/lib/public-copy";
+import { resolveYouTubeVideoIdFromPaste } from "@/lib/resolve-youtube-paste";
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-50 placeholder:text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -35,6 +34,8 @@ export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [url, setUrl] = useState("");
+  const [quickReviewError, setQuickReviewError] = useState<string | null>(null);
+  const [quickReviewStarting, setQuickReviewStarting] = useState(false);
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -107,15 +108,21 @@ export default function DashboardPage() {
     [refreshTeams],
   );
 
-  const startQuickReview = () => {
-    const videoId = extractYouTubeVideoId(url);
-    if (!videoId) {
-      alert(NON_YOUTUBE_LINK_MESSAGE);
-      return;
+  const startQuickReview = async () => {
+    setQuickReviewError(null);
+    setQuickReviewStarting(true);
+    try {
+      const result = await resolveYouTubeVideoIdFromPaste(url);
+      if (!result.ok) {
+        setQuickReviewError(result.error);
+        return;
+      }
+      const roomId = Math.random().toString(36).substring(2, 8);
+      markRoomHost(roomId);
+      router.push(`/room/${roomId}?video=${encodeURIComponent(result.videoId)}`);
+    } finally {
+      setQuickReviewStarting(false);
     }
-    const roomId = Math.random().toString(36).substring(2, 8);
-    markRoomHost(roomId);
-    router.push(`/room/${roomId}?video=${encodeURIComponent(videoId)}`);
   };
 
   if (loading) {
@@ -352,11 +359,29 @@ export default function DashboardPage() {
             type="text"
             placeholder="Paste YouTube link"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            className={`${inputClass} mb-4`}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              if (quickReviewError) setQuickReviewError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !quickReviewStarting) {
+                void startQuickReview();
+              }
+            }}
+            className={`${inputClass} mb-2`}
           />
-          <button type="button" onClick={startQuickReview} className={primaryBtn}>
-            Start review
+          {quickReviewError ? (
+            <p className="mb-3 text-xs text-rose-400">{quickReviewError}</p>
+          ) : (
+            <div className="mb-3" />
+          )}
+          <button
+            type="button"
+            onClick={() => void startQuickReview()}
+            disabled={quickReviewStarting || !url.trim()}
+            className={`${primaryBtn} disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {quickReviewStarting ? "Starting…" : "Start review"}
           </button>
         </section>
 
