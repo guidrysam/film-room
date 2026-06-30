@@ -64,6 +64,31 @@ export function personNameSimilarity(a: string, b: string): number {
 export type PersonNameMatch = { person: Person; score: number };
 
 const PERSON_MATCH_THRESHOLD = 0.85;
+const PERSON_DUPLICATE_MIN = 0.65;
+
+export type PersonDuplicatePair = {
+  a: Person;
+  b: Person;
+  score: number;
+};
+
+/** Surface name pairs that might be the same kid (below auto-link threshold). */
+export function findPossiblePersonDuplicates(
+  persons: Person[],
+): PersonDuplicatePair[] {
+  const out: PersonDuplicatePair[] = [];
+  for (let i = 0; i < persons.length; i++) {
+    for (let j = i + 1; j < persons.length; j++) {
+      const a = persons[i]!;
+      const b = persons[j]!;
+      const score = personNameSimilarity(a.name, b.name);
+      if (score >= PERSON_DUPLICATE_MIN && score < PERSON_MATCH_THRESHOLD) {
+        out.push({ a, b, score });
+      }
+    }
+  }
+  return out.sort((x, y) => y.score - x.score);
+}
 
 export function findBestPersonMatch(
   persons: Person[],

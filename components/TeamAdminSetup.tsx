@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ParentInviteTargets from "@/components/ParentInviteTargets";
+import BackfillEventPersons from "@/components/BackfillEventPersons";
 import RosterImportResultSummary from "@/components/RosterImportResultSummary";
 import TeamDeleteZone from "@/components/TeamDeleteZone";
 import TeamInvites from "@/components/TeamInvites";
@@ -70,6 +71,9 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
           players and parent invite targets. No emails are sent automatically.
         </p>
         <TeamRosterImport team={team} currentUid={currentUid} />
+        <div className="mt-4">
+          <BackfillEventPersons team={team} currentUid={currentUid} />
+        </div>
       </section>
 
       <section className={panelClass}>

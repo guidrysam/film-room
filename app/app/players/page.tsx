@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle } from "@/lib/auth-google";
-import { listPersons, type Person } from "@/lib/persons";
+import { listPersons, findPossiblePersonDuplicates, type Person } from "@/lib/persons";
 import { personProfileUrl } from "@/lib/team-routes";
 
 const panelClass =
@@ -17,6 +17,11 @@ export default function PlayersListPage() {
   const { user, loading } = useAuth();
   const [persons, setPersons] = useState<Person[]>([]);
   const [listLoading, setListLoading] = useState(false);
+
+  const possibleDuplicates = useMemo(
+    () => findPossiblePersonDuplicates(persons),
+    [persons],
+  );
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -76,6 +81,31 @@ export default function PlayersListPage() {
             Dashboard
           </Link>
         </div>
+
+        {possibleDuplicates.length > 0 ? (
+          <section className={`${panelClass} mb-5 border-amber-500/20 bg-amber-950/10`}>
+            <p className="text-xs font-semibold text-amber-100">
+              Possible duplicate names
+            </p>
+            <p className="mt-1 text-[11px] text-amber-200/80">
+              These look similar but were not auto-linked. Confirm in your records
+              whether they are the same player.
+            </p>
+            <ul className="mt-3 space-y-1.5">
+              {possibleDuplicates.slice(0, 8).map(({ a, b, score }) => (
+                <li
+                  key={`${a.id}-${b.id}`}
+                  className="rounded-lg border border-amber-500/20 bg-black/20 px-3 py-2 text-xs text-amber-100/90"
+                >
+                  {a.name} · {b.name}
+                  <span className="ml-2 text-[10px] text-amber-200/60">
+                    {Math.round(score * 100)}% match
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         <section className={panelClass}>
           {listLoading ? (

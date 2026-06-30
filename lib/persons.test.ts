@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   findBestPersonMatch,
+  findPossiblePersonDuplicates,
   personNameSimilarity,
   type Person,
 } from "./persons";
@@ -38,5 +39,18 @@ describe("findBestPersonMatch", () => {
   it("returns undefined when no similar person", () => {
     const persons = [stubPerson("p1", "Falynn Kagey")];
     assert.equal(findBestPersonMatch(persons, "Totally Different"), undefined);
+  });
+});
+
+describe("findPossiblePersonDuplicates", () => {
+  it("finds pairs below auto-link threshold", () => {
+    const a = stubPerson("p1", "Alex Smith");
+    const b = stubPerson("p2", "Alex K Smith");
+    const score = personNameSimilarity(a.name, b.name);
+    assert.ok(score >= 0.65 && score < 0.85, `expected mid-range score, got ${score}`);
+    const pairs = findPossiblePersonDuplicates([a, b]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0]!.a.id, "p1");
+    assert.equal(pairs[0]!.b.id, "p2");
   });
 });

@@ -47,6 +47,22 @@ export function eventTagsPersonOrPlayers(
   return tagged.some((id) => rosterPlayerIds.includes(id));
 }
 
+type RosterPersonRef = { id: string; personId?: string };
+
+/** Resolve persistent person ids from roster player ids. */
+export function personIdsForRosterPlayers(
+  players: RosterPersonRef[],
+  playerIds: string[],
+): string[] {
+  const byId = new Map(players.map((p) => [p.id, p.personId]));
+  const out: string[] = [];
+  for (const id of playerIds) {
+    const personId = byId.get(id)?.trim();
+    if (personId) out.push(personId);
+  }
+  return [...new Set(out)];
+}
+
 /** Merge player ids into an event payload (for coach marks / tags). */
 export function withEventPlayerIds(
   payload: Record<string, unknown> | undefined,

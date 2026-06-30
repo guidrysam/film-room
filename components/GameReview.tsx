@@ -24,7 +24,7 @@ import {
   type GameVideoSource,
 } from "@/lib/games";
 import { getTeam, listTeamPlayers, teamRoleFor, type Player, type Team } from "@/lib/teams";
-import { getEventPlayerIds, withEventPlayerIds } from "@/lib/timeline-players";
+import { getEventPlayerIds, personIdsForRosterPlayers, withEventPlayerIds } from "@/lib/timeline-players";
 import {
   addGameStat,
   canManageGameStats,
@@ -450,6 +450,12 @@ export default function GameReview({
     [teamPlayers],
   );
 
+  const personIdsFor = useCallback(
+    (rosterPlayerIds: string[]) =>
+      personIdsForRosterPlayers(teamPlayers, rosterPlayerIds),
+    [teamPlayers],
+  );
+
   // Commit the pending mark.
   // stat (goals can carry an assist); otherwise it's a tagged play that may
   // still carry an attributed player. No player is always allowed.
@@ -576,6 +582,7 @@ export default function GameReview({
     }
     if (ev.payload?.opponent) base.opponent = true;
     const players = editPlayerId ? [editPlayerId] : [];
+    const persons = personIdsFor(players);
     if (ev.type === "stat" && players.length === 0) {
       setTagMessage("A stat needs a player.");
       return;
@@ -590,7 +597,7 @@ export default function GameReview({
           t: Math.max(0, Math.round(editTime)),
           label: editLabel.trim() || ev.label || "",
           ...(ev.sourceId ? { sourceId: ev.sourceId } : {}),
-          payload: withEventPlayerIds(base, players),
+          payload: withEventPlayerIds(base, players, persons),
           createdBy: ev.createdBy ?? currentUid,
           ...(ev.createdByName
             ? { createdByName: ev.createdByName }
@@ -617,6 +624,7 @@ export default function GameReview({
     editLabel,
     currentUid,
     currentDisplayName,
+    personIdsFor,
     refreshEvents,
   ]);
 
@@ -632,6 +640,9 @@ export default function GameReview({
         t: selectedGameTime,
         statType,
         playerIds: statPlayerIds,
+        ...(personIdsFor(statPlayerIds).length > 0
+          ? { personIds: personIdsFor(statPlayerIds) }
+          : {}),
         ...(statNote.trim() ? { note: statNote.trim() } : {}),
         ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
         createdBy: currentUid,
@@ -655,6 +666,7 @@ export default function GameReview({
     selectedSource,
     currentUid,
     currentDisplayName,
+    personIdsFor,
     refreshEvents,
   ]);
 
@@ -674,8 +686,16 @@ export default function GameReview({
     setStatSaving(true);
     setStatMessage(null);
     try {
+      const playerIds =
+        statPlayerIds.length > 0
+          ? statPlayerIds
+          : getEventPlayerIds(selectedEvent);
       await addGameStat(gameId, {
         ...draft,
+        playerIds,
+        ...(personIdsFor(playerIds).length > 0
+          ? { personIds: personIdsFor(playerIds) }
+          : {}),
         createdBy: currentUid,
         ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
       });
@@ -696,6 +716,7 @@ export default function GameReview({
     gameId,
     currentUid,
     currentDisplayName,
+    personIdsFor,
     refreshEvents,
   ]);
 

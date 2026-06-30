@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { listPersons, resolvePersonId, type Person } from "@/lib/persons";
 import { importRosterPreview, type RosterImportResult } from "@/lib/roster-import";
 import RosterCsvImportPanel, {
   useRosterCsvImportPreview,
@@ -38,14 +39,30 @@ export default function TeamRosterImport({
     setImporting(true);
     setError(null);
     try {
-      const summary = await importRosterPreview(team.id, preview);
+      let personCache: Person[] = [];
+      try {
+        personCache = await listPersons(team.ownerId);
+      } catch {
+        /* person linking is best-effort */
+      }
+      const summary = await importRosterPreview(team.id, preview, {
+        resolvePersonId: async (playerName) => {
+          const resolved = await resolvePersonId(
+            team.ownerId,
+            playerName,
+            personCache,
+          );
+          personCache = resolved.cache;
+          return resolved.personId;
+        },
+      });
       setResult(summary);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed.");
     } finally {
       setImporting(false);
     }
-  }, [preview, team.id]);
+  }, [preview, team.id, team.ownerId]);
 
   if (!canImport) {
     return (
@@ -61,9 +78,8 @@ export default function TeamRosterImport({
         TeamLinkt / roster CSV import
       </p>
       <p className="mb-3 text-xs leading-relaxed text-zinc-400">
-        Export your roster from TeamLinkt, then upload the CSV here. TeamLinkt
-        exports are detected automatically; other CSVs can use manual column
-        mapping below.
+        Export your roster from TeamLinkt, then upload the CSV here. Players are
+        linked by name to your cross-event player records.
       </p>
 
       {result ? <RosterImportResultSummary result={result} /> : null}
