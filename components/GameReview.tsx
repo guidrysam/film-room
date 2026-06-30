@@ -184,13 +184,14 @@ export default function GameReview({
   const [tagLabel, setTagLabel] = useState("");
   const [tagSaving, setTagSaving] = useState(false);
   const [tagMessage, setTagMessage] = useState<string | null>(null);
-  /** A player-required stat awaiting a player pick (video is paused meanwhile). */
-  const [pendingStat, setPendingStat] = useState<{
+  /** A mark awaiting attribution while the video is paused. Player is optional. */
+  const [pendingTag, setPendingTag] = useState<{
     label: string;
-    statType: GameStatType;
+    statType?: GameStatType;
+    opponent?: boolean;
     t: number;
   } | null>(null);
-  const [pendingScorerId, setPendingScorerId] = useState("");
+  const [pendingPlayerId, setPendingPlayerId] = useState("");
   const [pendingAssistId, setPendingAssistId] = useState("");
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -423,161 +424,109 @@ export default function GameReview({
     }
   }, []);
 
-  // Save a no-player mark (our team play or an opponent event).
-  const saveMark = useCallback(
-    async (label: string, opts?: { opponent?: boolean }) => {
-      const text = label.trim();
-      if (!game) return;
-      if (!text) {
-        setTagMessage("Name the play first (e.g. Great play).");
-        return;
-      }
+  // Tap any tag → pause the video and open the attribution step. Player is
+  // always optional; you can save the mark with or without one.
+  const beginTag = useCallback(
+    (tag: { label: string; statType?: GameStatType; opponent?: boolean }) => {
+      const text = tag.label.trim();
+      if (!game || !text) return;
       pauseVideo();
-      const t = selectedGameTime;
-      setTagSaving(true);
       setTagMessage(null);
-      try {
+      setPendingPlayerId("");
+      setPendingAssistId("");
+      setPendingTag({ ...tag, label: text, t: selectedGameTime });
+    },
+    [game, pauseVideo, selectedGameTime],
+  );
+
+  const playerName = useCallback(
+    (id: string) => teamPlayers.find((p) => p.id === id)?.name ?? "player",
+    [teamPlayers],
+  );
+
+  // Commit the pending mark. With a player on a stat-type tag it counts as a
+  // stat (goals can carry an assist); otherwise it's a tagged play that may
+  // still carry an attributed player. No player is always allowed.
+  const commitPendingTag = useCallback(async () => {
+    if (!pendingTag) return;
+    const t = pendingTag.t;
+    setTagSaving(true);
+    setTagMessage(null);
+    try {
+      if (pendingTag.statType && pendingPlayerId) {
+        await addGameStat(gameId, {
+          t,
+          statType: pendingTag.statType,
+          playerIds: [pendingPlayerId],
+          ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+          createdBy: currentUid,
+          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+        });
+        if (
+          pendingTag.statType === "goal" &&
+          pendingAssistId &&
+          pendingAssistId !== pendingPlayerId
+        ) {
+          await addGameStat(gameId, {
+            t,
+            statType: "assist",
+            playerIds: [pendingAssistId],
+            ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+            createdBy: currentUid,
+            ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
+          });
+        }
+        const assist =
+          pendingTag.statType === "goal" && pendingAssistId
+            ? ` (assist: ${playerName(pendingAssistId)})`
+            : "";
+        setTagMessage(
+          `${pendingTag.label} · ${playerName(pendingPlayerId)}${assist} at ${formatTimelineSeconds(t)}.`,
+        );
+      } else {
+        const players = pendingPlayerId ? [pendingPlayerId] : [];
         await addGameEvent(
           gameId,
           {
             type: "coach_mark",
             t,
-            label: text,
+            label: pendingTag.label,
             ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
-            ...(opts?.opponent ? { payload: { opponent: true } } : {}),
+            payload: withEventPlayerIds(
+              {
+                ...(pendingTag.opponent ? { opponent: true } : {}),
+                ...(pendingTag.statType ? { statType: pendingTag.statType } : {}),
+              },
+              players,
+            ),
             createdBy: currentUid,
             ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
           },
           { actorUid: currentUid },
         );
-        setTagMessage(`Tagged “${text}” at ${formatTimelineSeconds(t)}.`);
-        setTagLabel("");
-        await refreshEvents();
-      } catch (e) {
-        setTagMessage(e instanceof Error ? e.message : "Could not save the tag.");
-      } finally {
-        setTagSaving(false);
-      }
-    },
-    [
-      game,
-      gameId,
-      selectedGameTime,
-      selectedSource,
-      currentUid,
-      currentDisplayName,
-      refreshEvents,
-      pauseVideo,
-    ],
-  );
-
-  // A player-required stat: pause the video and wait for a player pick.
-  const beginStatTag = useCallback(
-    (statType: GameStatType, label: string) => {
-      pauseVideo();
-      if (teamPlayers.length === 0) {
         setTagMessage(
-          "Link this game to a team roster to log player stats.",
+          `${pendingTag.label}${pendingPlayerId ? ` · ${playerName(pendingPlayerId)}` : ""} at ${formatTimelineSeconds(t)}.`,
         );
-        return;
       }
-      setTagMessage(null);
-      setPendingScorerId("");
-      setPendingAssistId("");
-      setPendingStat({ label, statType, t: selectedGameTime });
-    },
-    [pauseVideo, teamPlayers.length, selectedGameTime],
-  );
-
-  // Goals can carry an optional assist — logged as a separate assist stat at
-  // the same moment, so it counts for the assisting player too.
-  const completeGoal = useCallback(async () => {
-    if (!pendingStat || !pendingScorerId) return;
-    setTagSaving(true);
-    setTagMessage(null);
-    try {
-      await addGameStat(gameId, {
-        t: pendingStat.t,
-        statType: "goal",
-        playerIds: [pendingScorerId],
-        ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
-        createdBy: currentUid,
-        ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
-      });
-      if (pendingAssistId && pendingAssistId !== pendingScorerId) {
-        await addGameStat(gameId, {
-          t: pendingStat.t,
-          statType: "assist",
-          playerIds: [pendingAssistId],
-          ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
-          createdBy: currentUid,
-          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
-        });
-      }
-      const scorer =
-        teamPlayers.find((p) => p.id === pendingScorerId)?.name ?? "player";
-      const assist = pendingAssistId
-        ? teamPlayers.find((p) => p.id === pendingAssistId)?.name
-        : null;
-      setTagMessage(
-        `Goal · ${scorer}${assist ? ` (assist: ${assist})` : ""} at ${formatTimelineSeconds(pendingStat.t)}.`,
-      );
-      setPendingStat(null);
+      setTagLabel("");
+      setPendingTag(null);
       await refreshEvents();
     } catch (e) {
-      setTagMessage(e instanceof Error ? e.message : "Could not save the goal.");
+      setTagMessage(e instanceof Error ? e.message : "Could not save the tag.");
     } finally {
       setTagSaving(false);
     }
   }, [
-    pendingStat,
-    pendingScorerId,
+    pendingTag,
+    pendingPlayerId,
     pendingAssistId,
     gameId,
     selectedSource,
     currentUid,
     currentDisplayName,
-    teamPlayers,
+    playerName,
     refreshEvents,
   ]);
-
-  const completePendingStat = useCallback(
-    async (playerId: string) => {
-      if (!pendingStat || !playerId) return;
-      setTagSaving(true);
-      setTagMessage(null);
-      try {
-        await addGameStat(gameId, {
-          t: pendingStat.t,
-          statType: pendingStat.statType,
-          playerIds: [playerId],
-          ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
-          createdBy: currentUid,
-          ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
-        });
-        const who =
-          teamPlayers.find((p) => p.id === playerId)?.name ?? "player";
-        setTagMessage(
-          `${pendingStat.label} · ${who} at ${formatTimelineSeconds(pendingStat.t)}.`,
-        );
-        setPendingStat(null);
-        await refreshEvents();
-      } catch (e) {
-        setTagMessage(e instanceof Error ? e.message : "Could not save the stat.");
-      } finally {
-        setTagSaving(false);
-      }
-    },
-    [
-      pendingStat,
-      gameId,
-      selectedSource,
-      currentUid,
-      currentDisplayName,
-      teamPlayers,
-      refreshEvents,
-    ],
-  );
 
   const handleDeleteEvent = useCallback(
     async (eventId: string) => {
@@ -1246,8 +1195,8 @@ export default function GameReview({
                     Tag a play
                   </p>
                   <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-                    Scrub the video to the moment, then tap a quick tag or type
-                    your own. The mark lands at the time below.
+                    Tap a tag — the video pauses so you can attribute a player
+                    (or none) before saving. The mark lands at the time below.
                   </p>
 
                   <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
@@ -1259,38 +1208,39 @@ export default function GameReview({
                     </p>
                   </div>
 
-                  {pendingStat ? (
+                  {pendingTag ? (
                     <div className="mb-3 rounded-lg border border-blue-500/40 bg-blue-950/25 p-3">
                       <p className="text-[11px] font-medium text-blue-100">
-                        {pendingStat.label} at{" "}
-                        {formatTimelineSeconds(pendingStat.t)} — who?
+                        {pendingTag.label} at {formatTimelineSeconds(pendingTag.t)}
                       </p>
                       <p className="mt-0.5 text-[10px] text-blue-200/70">
-                        Video paused. Pick the player to log it.
+                        Video paused. Attribute a player — or save with none.
                       </p>
 
-                      {pendingStat.statType === "goal" ? (
-                        <div className="mt-2 space-y-2">
-                          <label className="block">
-                            <span className="mb-1 block text-[10px] text-blue-200/70">
-                              Scorer
-                            </span>
-                            <select
-                              autoFocus
-                              value={pendingScorerId}
-                              disabled={tagSaving}
-                              onChange={(e) => setPendingScorerId(e.target.value)}
-                              className={inputClass}
-                            >
-                              <option value="">Select scorer…</option>
-                              {teamPlayers.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name}
-                                  {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                      <div className="mt-2 space-y-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] text-blue-200/70">
+                            {pendingTag.statType === "goal" ? "Scorer" : "Player"}{" "}
+                            (optional)
+                          </span>
+                          <select
+                            autoFocus
+                            value={pendingPlayerId}
+                            disabled={tagSaving}
+                            onChange={(e) => setPendingPlayerId(e.target.value)}
+                            className={inputClass}
+                          >
+                            <option value="">No player</option>
+                            {teamPlayers.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        {pendingTag.statType === "goal" ? (
                           <label className="block">
                             <span className="mb-1 block text-[10px] text-blue-200/70">
                               Assist (optional)
@@ -1303,7 +1253,7 @@ export default function GameReview({
                             >
                               <option value="">No assist</option>
                               {teamPlayers
-                                .filter((p) => p.id !== pendingScorerId)
+                                .filter((p) => p.id !== pendingPlayerId)
                                 .map((p) => (
                                   <option key={p.id} value={p.id}>
                                     {p.name}
@@ -1312,59 +1262,37 @@ export default function GameReview({
                                 ))}
                             </select>
                           </label>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void completeGoal()}
-                              disabled={tagSaving || !pendingScorerId}
-                              className={primaryBtn}
-                            >
-                              {tagSaving ? "…" : "Save goal"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingStat(null)}
-                              className={ghostBtn}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-2 flex gap-2">
-                          <select
-                            autoFocus
-                            value=""
-                            disabled={tagSaving}
-                            onChange={(e) => {
-                              if (e.target.value) {
-                                void completePendingStat(e.target.value);
-                              }
-                            }}
-                            className={inputClass}
-                          >
-                            <option value="">Select player…</option>
-                            {teamPlayers.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.jerseyNumber ? ` #${p.jerseyNumber}` : ""}
-                              </option>
-                            ))}
-                          </select>
+                        ) : null}
+
+                        {teamPlayers.length === 0 ? (
+                          <p className="text-[10px] text-blue-200/60">
+                            Link this game to a team roster to attribute players.
+                          </p>
+                        ) : null}
+
+                        <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => setPendingStat(null)}
+                            onClick={() => void commitPendingTag()}
+                            disabled={tagSaving}
+                            className={primaryBtn}
+                          >
+                            {tagSaving ? "…" : "Save mark"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingTag(null)}
                             className={ghostBtn}
                           >
                             Cancel
                           </button>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ) : null}
 
                   <p className="mb-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
-                    Our team (pick a player)
+                    Our team
                   </p>
                   <div className="mb-3 flex flex-wrap gap-1.5">
                     {QUICK_TAGS.map((tag) => (
@@ -1374,8 +1302,19 @@ export default function GameReview({
                         disabled={tagSaving}
                         onClick={() =>
                           tag.kind === "stat" &&
-                          beginStatTag(tag.statType, tag.label)
+                          beginTag({ label: tag.label, statType: tag.statType })
                         }
+                        className={`${ghostBtn} disabled:opacity-50`}
+                      >
+                        {tag.label}
+                      </button>
+                    ))}
+                    {MARK_TAGS.map((tag) => (
+                      <button
+                        key={tag.label}
+                        type="button"
+                        disabled={tagSaving}
+                        onClick={() => beginTag({ label: tag.label })}
                         className={`${ghostBtn} disabled:opacity-50`}
                       >
                         {tag.label}
@@ -1384,26 +1323,17 @@ export default function GameReview({
                   </div>
 
                   <p className="mb-1.5 text-[10px] uppercase tracking-wide text-zinc-500">
-                    No player needed
+                    Other team
                   </p>
                   <div className="mb-3 flex flex-wrap gap-1.5">
-                    {MARK_TAGS.map((tag) => (
-                      <button
-                        key={tag.label}
-                        type="button"
-                        disabled={tagSaving}
-                        onClick={() => void saveMark(tag.label)}
-                        className={`${ghostBtn} disabled:opacity-50`}
-                      >
-                        {tag.label}
-                      </button>
-                    ))}
                     {OPPONENT_TAGS.map((tag) => (
                       <button
                         key={tag.label}
                         type="button"
                         disabled={tagSaving}
-                        onClick={() => void saveMark(tag.label, { opponent: true })}
+                        onClick={() =>
+                          beginTag({ label: tag.label, opponent: true })
+                        }
                         className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-1.5 text-xs font-medium text-amber-100 transition hover:border-amber-500/40 hover:bg-amber-950/30 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {tag.label}
@@ -1417,14 +1347,16 @@ export default function GameReview({
                       value={tagLabel}
                       onChange={(e) => setTagLabel(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveMark(tagLabel);
+                        if (e.key === "Enter" && tagLabel.trim()) {
+                          beginTag({ label: tagLabel });
+                        }
                       }}
                       placeholder="Custom play…"
                       className={inputClass}
                     />
                     <button
                       type="button"
-                      onClick={() => void saveMark(tagLabel)}
+                      onClick={() => beginTag({ label: tagLabel })}
                       disabled={tagSaving || !tagLabel.trim()}
                       className={primaryBtn}
                     >
