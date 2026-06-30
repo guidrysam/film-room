@@ -6,6 +6,7 @@ import YouTube, { type YouTubePlayer } from "react-youtube";
 import {
   formatTimelineSeconds,
   gameTimeToSourceTime,
+  sourceTimeToGameTime,
   syncStatusBadgeClass,
   syncStatusLabel,
 } from "@/lib/game-timeline";
@@ -46,6 +47,7 @@ import {
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 import { gameCapUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
+import VideoTransport from "@/components/VideoTransport";
 
 export type GameReviewProps = {
   gameId: string;
@@ -327,6 +329,16 @@ export default function GameReview({
       void applySeekForGameTime(gameTime, source);
     },
     [playableSources, selectedSourceId, applySeekForGameTime],
+  );
+
+  const handleTransportTime = useCallback(
+    (sourceTime: number) => {
+      if (!selectedSource) return;
+      const gameTime = sourceTimeToGameTime(sourceTime, selectedSource);
+      const next = Math.max(0, Math.round(gameTime));
+      setSelectedGameTime((prev) => (prev === next ? prev : next));
+    },
+    [selectedSource],
   );
 
   const handleSelectEvent = useCallback(
@@ -713,13 +725,22 @@ export default function GameReview({
                   </div>
                 ) : null}
 
+                {selectedSource?.videoId ? (
+                  <VideoTransport
+                    playerRef={playerRef}
+                    ready={playerReady}
+                    onSourceTime={handleTransportTime}
+                  />
+                ) : null}
+
                 {seekWarning ? (
                   <p className="mt-2 text-xs text-amber-200">{seekWarning}</p>
                 ) : null}
 
                 <p className="mt-2 text-[10px] text-zinc-500">
                   {selectedSource?.label} · offset{" "}
-                  {selectedSource?.offsetFromGameTime ?? 0}s
+                  {selectedSource?.offsetFromGameTime ?? 0}s · scrub the bar to
+                  move the tag &amp; stat time
                 </p>
               </section>
 
