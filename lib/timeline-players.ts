@@ -28,6 +28,25 @@ export function eventTagsPlayer(
   return getEventPlayerIds(event).includes(playerId);
 }
 
+export function eventTagsPerson(
+  event: GameTimelineEvent,
+  personId: string,
+): boolean {
+  return getEventPersonIds(event).includes(personId);
+}
+
+/** Match a timeline event to a person via personIds or roster player ids. */
+export function eventTagsPersonOrPlayers(
+  event: GameTimelineEvent,
+  personId: string,
+  rosterPlayerIds: string[],
+): boolean {
+  if (eventTagsPerson(event, personId)) return true;
+  if (rosterPlayerIds.length === 0) return false;
+  const tagged = getEventPlayerIds(event);
+  return tagged.some((id) => rosterPlayerIds.includes(id));
+}
+
 /** Merge player ids into an event payload (for coach marks / tags). */
 export function withEventPlayerIds(
   payload: Record<string, unknown> | undefined,

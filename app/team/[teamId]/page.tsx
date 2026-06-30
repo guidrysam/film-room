@@ -8,6 +8,7 @@ import TeamPageShell from "@/components/TeamPageShell";
 import TeamGameOverview from "@/components/TeamGameOverview";
 import TeamScheduleImport from "@/components/TeamScheduleImport";
 import { signInWithGoogle } from "@/lib/auth-google";
+import { personProfileUrl, teamPlayerProfileUrl } from "@/lib/team-routes";
 import { canCoachTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 
 const panelClass =
@@ -72,11 +73,8 @@ function TeamRosterContent({ team, teamId, currentUid }: {
         <ul className="space-y-1.5">
           {players.map((p) => (
             <li key={p.id}>
-              <Link
-                href={`/team/${teamId}/player/${p.id}`}
-                className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2 transition hover:bg-white/[0.04]"
-              >
-                <span className="min-w-0">
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/50 px-3 py-2 transition hover:bg-white/[0.04]">
+                <Link href={teamPlayerProfileUrl(teamId, p.id)} className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-white">
                     {p.name}
                   </span>
@@ -85,13 +83,23 @@ function TeamRosterContent({ team, teamId, currentUid }: {
                       ? `${p.parentUids.length} linked parent${p.parentUids.length === 1 ? "" : "s"}`
                       : "No linked parents"}
                   </span>
+                </Link>
+                <span className="flex shrink-0 items-center gap-2">
+                  {p.personId ? (
+                    <Link
+                      href={personProfileUrl(p.personId)}
+                      className="rounded-md border border-blue-500/30 bg-blue-950/30 px-2 py-0.5 text-[10px] font-medium text-blue-200"
+                    >
+                      All events
+                    </Link>
+                  ) : null}
+                  {p.jerseyNumber ? (
+                    <span className="font-mono text-sm text-zinc-400">
+                      #{p.jerseyNumber}
+                    </span>
+                  ) : null}
                 </span>
-                {p.jerseyNumber ? (
-                  <span className="shrink-0 font-mono text-sm text-zinc-400">
-                    #{p.jerseyNumber}
-                  </span>
-                ) : null}
-              </Link>
+              </div>
             </li>
           ))}
         </ul>

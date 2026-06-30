@@ -9,7 +9,7 @@ import { markRoomHost } from "@/lib/room-host";
 import { listMyGames, type Game } from "@/lib/games";
 import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
-import { teamRosterUrl } from "@/lib/team-routes";
+import { teamRosterUrl, playersListUrl } from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 import { NON_YOUTUBE_LINK_MESSAGE } from "@/lib/public-copy";
 
@@ -135,6 +135,9 @@ export default function DashboardPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2 text-xs">
+            <Link href={playersListUrl()} className={ghostBtn}>
+              Your players
+            </Link>
             <Link href="/library" className={ghostBtn}>
               Library
             </Link>

@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   serverTimestamp,
   setDoc,
@@ -89,6 +90,15 @@ function parsePerson(id: string, raw: Record<string, unknown>): Person {
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
+}
+
+export async function getPerson(
+  ownerUid: string,
+  personId: string,
+): Promise<Person | null> {
+  const snap = await getDoc(doc(personsCol(ownerUid), personId));
+  if (!snap.exists()) return null;
+  return parsePerson(snap.id, snap.data() as Record<string, unknown>);
 }
 
 export async function listPersons(ownerUid: string): Promise<Person[]> {

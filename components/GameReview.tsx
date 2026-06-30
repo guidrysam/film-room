@@ -542,6 +542,8 @@ export default function GameReview({
     personIdFor,
     refreshEvents,
   ]);
+
+  const handleDeleteEvent = useCallback(
     async (eventId: string) => {
       try {
         await deleteGameEvent(gameId, eventId);

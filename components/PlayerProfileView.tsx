@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import TeamNav from "@/components/TeamNav";
 import { formatPlayerStatLine } from "@/lib/game-stats";
-import { teamStatsUrl } from "@/lib/team-routes";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { highlightMomentPlayhead } from "@/lib/highlight-draft";
 import {
@@ -13,7 +12,11 @@ import {
   loadPlayerProfile,
   type PlayerProfileData,
 } from "@/lib/player-profile";
-import { teamRosterUrl } from "@/lib/team-routes";
+import {
+  personProfileUrl,
+  teamRosterUrl,
+  teamStatsUrl,
+} from "@/lib/team-routes";
 
 export type PlayerProfileViewProps = {
   teamId: string;
@@ -147,6 +150,14 @@ export default function PlayerProfileView({
             <p className="mt-3 text-xs text-zinc-400">
               All-time: {formatPlayerStatLine(allTimeStatSummary)}
             </p>
+          ) : null}
+          {player.personId ? (
+            <Link
+              href={personProfileUrl(player.personId)}
+              className={`${primaryBtn} mt-3 inline-block`}
+            >
+              View all events & film moments
+            </Link>
           ) : null}
           {seasonStatSummaries.length > 0 ? (
             <ul className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">

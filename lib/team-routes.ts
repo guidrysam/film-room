@@ -26,3 +26,15 @@ export function gameCapUrl(opts?: {
   const q = params.toString();
   return q ? `/game-cap?${q}` : "/game-cap";
 }
+
+export function playersListUrl(): string {
+  return "/app/players";
+}
+
+export function personProfileUrl(personId: string): string {
+  return `/app/players/${personId}`;
+}
+
+export function teamPlayerProfileUrl(teamId: string, playerId: string): string {
+  return `/team/${teamId}/player/${playerId}`;
+}

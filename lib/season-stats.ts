@@ -147,6 +147,7 @@ export function flattenStatsForAggregation(
     ...(record.label ? { label: record.label } : {}),
     ...(record.createdBy ? { createdBy: record.createdBy } : {}),
     ...(record.createdByName ? { createdByName: record.createdByName } : {}),
+    ...(record.personIds?.length ? { personIds: record.personIds } : {}),
   }));
 }
 

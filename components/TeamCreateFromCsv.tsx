@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import RosterCsvImportPanel, {
   useRosterCsvImportPreview,
 } from "@/components/RosterCsvImportPanel";
@@ -10,19 +10,31 @@ import {
   classifyTeamSync,
   groupPreviewRowsByTeam,
   importClubRoster,
+  loadBatchImportSyncPlan,
+  type BatchImportPlanItem,
   type ClubImportResult,
   type TeamSyncClassification,
 } from "@/lib/roster-club-import";
-import { createImportBatch, formatEventTeamName } from "@/lib/import-batches";
+import {
+  createImportBatch,
+  formatEventTeamName,
+  listMyImportBatches,
+  type ImportBatch,
+} from "@/lib/import-batches";
 import type {
   RosterImportPreviewRow,
   RosterImportPreviewSummary,
 } from "@/lib/roster-import";
+import { listMyTeams, type Team } from "@/lib/teams";
 import { teamSetupUrl } from "@/lib/team-routes";
 
 export type TeamCreateFromCsvProps = {
   uid: string;
 };
+
+type ImportScope = "new" | "existing";
+
+type PlanItem = BatchImportPlanItem & { loadingExisting: boolean };
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -61,11 +73,38 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     useRosterCsvImportPreview();
   const [nameOverrides, setNameOverrides] = useState<Record<number, string>>({});
   const [fallbackName, setFallbackName] = useState("");
+  const [importScope, setImportScope] = useState<ImportScope>("new");
   const [eventLabel, setEventLabel] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState("");
+  const [batches, setBatches] = useState<ImportBatch[]>([]);
+  const [existingTeams, setExistingTeams] = useState<Team[]>([]);
   const [sport, setSport] = useState("");
   const [importing, setImporting] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ClubImportResult | null>(null);
+  const [plan, setPlan] = useState<PlanItem[]>([]);
+
+  useEffect(() => {
+    void listMyImportBatches(uid)
+      .then(setBatches)
+      .catch(() => setBatches([]));
+    void listMyTeams(uid)
+      .then(setExistingTeams)
+      .catch(() => setExistingTeams([]));
+  }, [uid]);
+
+  const selectedBatch = useMemo(
+    () => batches.find((batch) => batch.id === selectedBatchId),
+    [batches, selectedBatchId],
+  );
+
+  const effectiveEventLabel = useMemo(() => {
+    if (importScope === "existing" && selectedBatch) {
+      return selectedBatch.label;
+    }
+    return eventLabel.trim();
+  }, [importScope, selectedBatch, eventLabel]);
 
   const onPreviewChange = useCallback(
     (
@@ -95,8 +134,8 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     () =>
       baseGroups.map((group, index) => {
         const programName = nameOverrides[index] ?? group.teamName;
-        const displayName = eventLabel.trim()
-          ? formatEventTeamName(programName, eventLabel.trim())
+        const displayName = effectiveEventLabel
+          ? formatEventTeamName(programName, effectiveEventLabel)
           : programName;
         return {
           ...group,
@@ -104,26 +143,44 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
           teamName: displayName,
         };
       }),
-    [baseGroups, nameOverrides, eventLabel],
+    [baseGroups, nameOverrides, effectiveEventLabel],
   );
 
-  const plan = useMemo(
-    () =>
-      groups.map((group) => {
-        const sync: TeamSyncClassification = classifyTeamSync(
-          group.rows,
-          [],
-          [],
-        );
-        return {
-          ...group,
-          matchesExistingTeam: false,
-          loadingExisting: false,
-          sync,
-        };
-      }),
-    [groups],
-  );
+  useEffect(() => {
+    if (groups.length === 0) {
+      setPlan([]);
+      return;
+    }
+
+    if (importScope === "existing" && selectedBatchId) {
+      setPlanLoading(true);
+      void loadBatchImportSyncPlan(groups, existingTeams, selectedBatchId)
+        .then((items) =>
+          setPlan(items.map((item) => ({ ...item, loadingExisting: false }))),
+        )
+        .catch(() => {
+          setPlan(
+            groups.map((group) => ({
+              ...group,
+              matchesExistingTeam: false,
+              sync: classifyTeamSync(group.rows, [], []),
+              loadingExisting: false,
+            })),
+          );
+        })
+        .finally(() => setPlanLoading(false));
+      return;
+    }
+
+    setPlan(
+      groups.map((group) => ({
+        ...group,
+        matchesExistingTeam: false,
+        loadingExisting: false,
+        sync: classifyTeamSync(group.rows, [], []),
+      })),
+    );
+  }, [groups, importScope, selectedBatchId, existingTeams]);
 
   const importableTeams = useMemo(
     () =>
@@ -155,10 +212,21 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     [importableTeams],
   );
 
+  const canImport = useMemo(() => {
+    if (importScope === "existing") {
+      return Boolean(selectedBatchId && effectiveEventLabel);
+    }
+    return Boolean(effectiveEventLabel);
+  }, [importScope, selectedBatchId, effectiveEventLabel]);
+
   const handleImport = useCallback(async () => {
     if (importableTeams.length === 0) return;
-    if (!eventLabel.trim()) {
-      setError("Name this event or season (e.g. Fall 2026, Labor Day Cup).");
+    if (!canImport) {
+      setError(
+        importScope === "existing"
+          ? "Choose an existing event to update."
+          : "Name this event or season (e.g. Fall 2026, Labor Day Cup).",
+      );
       return;
     }
     if (!everyTeamNamed) {
@@ -168,10 +236,16 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     setImporting(true);
     setError(null);
     try {
-      const batchId = await createImportBatch(uid, {
-        label: eventLabel.trim(),
-        ...(sport.trim() ? { sport: sport.trim() } : {}),
-      });
+      let batchId = selectedBatchId;
+      if (importScope === "new") {
+        batchId = await createImportBatch(uid, {
+          label: effectiveEventLabel,
+          ...(sport.trim() ? { sport: sport.trim() } : {}),
+        });
+      }
+      if (!batchId) {
+        throw new Error("Could not resolve the import batch.");
+      }
       const clubResult = await importClubRoster(
         uid,
         importableTeams.map((item) => ({
@@ -182,7 +256,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
         {
           mode: "new_event",
           importBatchId: batchId,
-          importBatchLabel: eventLabel.trim(),
+          importBatchLabel: effectiveEventLabel,
           linkPersons: true,
         },
       );
@@ -192,7 +266,16 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     } finally {
       setImporting(false);
     }
-  }, [uid, importableTeams, everyTeamNamed, eventLabel, sport]);
+  }, [
+    uid,
+    importableTeams,
+    everyTeamNamed,
+    canImport,
+    importScope,
+    selectedBatchId,
+    effectiveEventLabel,
+    sport,
+  ]);
 
   if (result) {
     return (
@@ -202,19 +285,17 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             Roster import complete
           </p>
           <p className="mt-1 text-xs text-emerald-200/90">
-            {result.teamsCreated} new team{result.teamsCreated === 1 ? "" : "s"}{" "}
-            for this event · {result.playersCreated} player
+            {result.teamsCreated} new team{result.teamsCreated === 1 ? "" : "s"}
+            {result.teamsUpdated > 0
+              ? ` · ${result.teamsUpdated} updated`
+              : ""}{" "}
+            · {result.playersCreated} player
             {result.playersCreated === 1 ? "" : "s"} added
           </p>
           <p className="mt-1 text-xs text-emerald-200/90">
             {result.parentsCreated} parent contact
-            {result.parentsCreated === 1 ? "" : "s"} added · players linked to
-            your club roster for cross-event stats
-          </p>
-          <p className="mt-2 text-[11px] text-zinc-400">
-            Each import creates a fresh set of event-specific teams. Re-upload
-            the same CSV into the same event to update roster rows — nothing is
-            removed automatically.
+            {result.parentsCreated === 1 ? "" : "s"} added · players linked for
+            cross-event stats
           </p>
         </div>
 
@@ -228,9 +309,13 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
                 <p className="truncate text-sm font-medium text-white">
                   {team.teamName}
                   <span
-                    className={`ml-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase border-emerald-500/40 bg-emerald-950/35 text-emerald-200`}
+                    className={`ml-2 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${
+                      team.teamCreated
+                        ? "border-emerald-500/40 bg-emerald-950/35 text-emerald-200"
+                        : "border-amber-500/40 bg-amber-950/35 text-amber-200"
+                    }`}
                   >
-                    new for event
+                    {team.teamCreated ? "new for event" : "roster updated"}
                   </span>
                 </p>
                 <p className="text-[11px] text-zinc-400">
@@ -252,12 +337,36 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
   return (
     <div>
       <p className="mb-4 text-sm text-zinc-400">
-        Upload a TeamLinkt roster export for a{" "}
-        <span className="font-medium text-zinc-200">new event or season</span>.
-        Film Room creates a fresh team for each program in the CSV — past
-        tournaments and seasons stay separate. Players are linked by name so
-        stats can follow them across events.
+        Upload a TeamLinkt roster export. Start a{" "}
+        <span className="font-medium text-zinc-200">new event</span> or re-import
+        into an existing one to update roster rows. Players are linked by name
+        so stats follow them across events.
       </p>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setImportScope("new")}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+            importScope === "new"
+              ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+              : "border-white/12 bg-white/[0.04] text-zinc-300 hover:bg-white/[0.08]"
+          }`}
+        >
+          New event / season
+        </button>
+        <button
+          type="button"
+          onClick={() => setImportScope("existing")}
+          className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+            importScope === "existing"
+              ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+              : "border-white/12 bg-white/[0.04] text-zinc-300 hover:bg-white/[0.08]"
+          }`}
+        >
+          Update existing event
+        </button>
+      </div>
 
       <RosterCsvImportPanel
         existingPlayers={[]}
@@ -274,6 +383,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             <p className="text-[11px] text-zinc-400">
               {plan.length} team{plan.length === 1 ? "" : "s"} · {totalPlayers}{" "}
               player{totalPlayers === 1 ? "" : "s"}
+              {planLoading ? " · loading…" : ""}
             </p>
           </div>
 
@@ -290,21 +400,46 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             </label>
           ) : null}
 
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-medium text-zinc-400">
-              Event or season name <span className="text-rose-300">*</span>
-            </span>
-            <input
-              type="text"
-              value={eventLabel}
-              onChange={(e) => setEventLabel(e.target.value)}
-              placeholder="e.g. Fall 2026, Labor Day Cup"
-              className={inputClass}
-            />
-            <span className="mt-1 block text-[10px] text-zinc-500">
-              Teams are named “Program · Event” (e.g. CMFC U12 Girls · Fall 2026).
-            </span>
-          </label>
+          {importScope === "existing" ? (
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-zinc-400">
+                Existing event <span className="text-rose-300">*</span>
+              </span>
+              <select
+                value={selectedBatchId}
+                onChange={(e) => setSelectedBatchId(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">Choose an event…</option>
+                {batches.map((batch) => (
+                  <option key={batch.id} value={batch.id}>
+                    {batch.label}
+                  </option>
+                ))}
+              </select>
+              {batches.length === 0 ? (
+                <span className="mt-1 block text-[10px] text-zinc-500">
+                  No past imports yet — use “New event / season” first.
+                </span>
+              ) : null}
+            </label>
+          ) : (
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-zinc-400">
+                Event or season name <span className="text-rose-300">*</span>
+              </span>
+              <input
+                type="text"
+                value={eventLabel}
+                onChange={(e) => setEventLabel(e.target.value)}
+                placeholder="e.g. Fall 2026, Labor Day Cup"
+                className={inputClass}
+              />
+              <span className="mt-1 block text-[10px] text-zinc-500">
+                Teams are named “Program · Event” (e.g. CMFC U12 Girls · Fall 2026).
+              </span>
+            </label>
+          )}
 
           <ul className="space-y-2">
             {plan.map((item, index) => (
@@ -313,8 +448,14 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
                 className="space-y-2 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="rounded-full border border-emerald-500/40 bg-emerald-950/35 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-emerald-200">
-                    new team
+                  <span
+                    className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase ${
+                      item.matchesExistingTeam
+                        ? "border-amber-500/40 bg-amber-950/35 text-amber-200"
+                        : "border-emerald-500/40 bg-emerald-950/35 text-emerald-200"
+                    }`}
+                  >
+                    {item.matchesExistingTeam ? "update roster" : "new team"}
                   </span>
                 </div>
 
@@ -334,7 +475,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
                   />
                 </label>
 
-                {eventLabel.trim() ? (
+                {effectiveEventLabel ? (
                   <p className="text-[10px] text-zinc-500">
                     Will import as:{" "}
                     <span className="font-medium text-zinc-300">
@@ -364,17 +505,22 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             onClick={() => void handleImport()}
             disabled={
               importing ||
+              planLoading ||
               importableTeams.length === 0 ||
               !everyTeamNamed ||
-              !eventLabel.trim()
+              !canImport
             }
             className={`${primaryBtn} w-full`}
           >
             {importing
               ? "Importing roster…"
-              : importableTeams.length === 1
-                ? "Create event & import 1 team"
-                : `Create event & import ${importableTeams.length} teams`}
+              : importScope === "existing"
+                ? importableTeams.length === 1
+                  ? "Update 1 team roster"
+                  : `Update ${importableTeams.length} team rosters`
+                : importableTeams.length === 1
+                  ? "Create event & import 1 team"
+                  : `Create event & import ${importableTeams.length} teams`}
           </button>
           {error ? <p className="text-xs text-rose-300">{error}</p> : null}
         </div>

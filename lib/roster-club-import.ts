@@ -247,6 +247,47 @@ export async function loadTeamRosterData(
   return { players, parents };
 }
 
+export type BatchImportPlanItem = ClubImportTeamGroup & {
+  programName: string;
+  teamName: string;
+  matchesExistingTeam: boolean;
+  existingTeamId?: string;
+  sync: TeamSyncClassification;
+};
+
+/** Preview a re-import into an existing event batch. */
+export async function loadBatchImportSyncPlan(
+  groups: Array<
+    ClubImportTeamGroup & { programName: string; teamName: string }
+  >,
+  existingTeams: Team[],
+  importBatchId: string,
+): Promise<BatchImportPlanItem[]> {
+  return Promise.all(
+    groups.map(async (group) => {
+      const existingInBatch = findTeamInBatch(
+        existingTeams,
+        importBatchId,
+        group.programName,
+      );
+      if (!existingInBatch) {
+        return {
+          ...group,
+          matchesExistingTeam: false,
+          sync: classifyTeamSync(group.rows, [], []),
+        };
+      }
+      const { players, parents } = await loadTeamRosterData(existingInBatch.id);
+      return {
+        ...group,
+        matchesExistingTeam: true,
+        existingTeamId: existingInBatch.id,
+        sync: classifyTeamSync(group.rows, players, parents),
+      };
+    }),
+  );
+}
+
 export type ClubImportMode = "new_event" | "sync_existing";
 
 export type ClubImportOptions = {

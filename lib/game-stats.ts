@@ -6,7 +6,11 @@ import {
   type Game,
   type GameTimelineEvent,
 } from "@/lib/games";
-import { getEventPlayerIds, withEventPlayerIds } from "@/lib/timeline-players";
+import {
+  getEventPersonIds,
+  getEventPlayerIds,
+  withEventPlayerIds,
+} from "@/lib/timeline-players";
 import { canCoachTeam, type Player, type Team } from "@/lib/teams";
 
 export type GameStatType =
@@ -61,6 +65,7 @@ export type GameStatRecord = {
   t: number;
   statType: GameStatType | string;
   playerIds: string[];
+  personIds?: string[];
   note?: string;
   sourceId?: string;
   label?: string;
@@ -120,6 +125,7 @@ export function parseGameStat(event: GameTimelineEvent): GameStatRecord | null {
       ? rawType.trim()
       : event.label?.trim() || "custom";
   const playerIds = getEventPlayerIds(event);
+  const personIds = getEventPersonIds(event);
   const note =
     typeof event.payload?.note === "string" && event.payload.note.trim()
       ? event.payload.note.trim()
@@ -130,6 +136,7 @@ export function parseGameStat(event: GameTimelineEvent): GameStatRecord | null {
     t: event.t,
     statType,
     playerIds,
+    ...(personIds.length > 0 ? { personIds } : {}),
     ...(note ? { note } : {}),
     ...(event.sourceId ? { sourceId: event.sourceId } : {}),
     ...(event.label ? { label: event.label } : {}),
