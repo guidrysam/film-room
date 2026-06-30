@@ -2134,10 +2134,19 @@ function RoomContent() {
     if (!roomState) return;
     const synced =
       (roomState.syncAnchorTime ?? 0) > 0 || roomState.manualSyncLocked === true;
-    if (!synced && roomState.angles.length > 1) {
+    if (synced) {
+      setIsManualSyncMode(false);
+    } else if (roomState.angles.length > 1) {
       setIsManualSyncMode(true);
     }
   }, [isHost, roomState, roomViewMode]);
+
+  useEffect(() => {
+    if (!teamRoomMode || !roomState) return;
+    if (roomState.angles.length > 1 && !isSyncLayoutMode(roomViewMode)) {
+      navigateRoomView("sync");
+    }
+  }, [teamRoomMode, roomState, roomViewMode, navigateRoomView]);
   const [syncSetupUi, setSyncSetupUi] = useState<{
     primaryTime: number;
     primaryDur: number;
@@ -6709,19 +6718,38 @@ function RoomContent() {
       try {
         const st = p.getPlayerState?.();
         const YT_UNSTARTED = -1;
-        if (st === YT_UNSTARTED) {
-          const cue = (
+        const YT_CUED = 5;
+        const start = Math.max(0, s.currentTime ?? 0);
+        const vid = s.videoId?.trim();
+        if (vid && (st === YT_UNSTARTED || st === YT_CUED)) {
+          const loader = (
             p as YouTubePlayer & {
-              cueVideoById?: (args: {
+              loadVideoById?: (args: {
                 videoId: string;
                 startSeconds?: number;
               }) => void;
             }
-          ).cueVideoById;
-          cue?.({
-            videoId: s.videoId,
-            startSeconds: Math.max(0, s.currentTime ?? 0),
-          });
+          ).loadVideoById;
+          if (loader) {
+            loader({ videoId: vid, startSeconds: start });
+          } else {
+            const cue = (
+              p as YouTubePlayer & {
+                cueVideoById?: (args: {
+                  videoId: string;
+                  startSeconds?: number;
+                }) => void;
+              }
+            ).cueVideoById;
+            cue?.({ videoId: vid, startSeconds: start });
+          }
+          if (!s.isPlaying) {
+            try {
+              p.pauseVideo?.();
+            } catch {
+              /* YouTube API */
+            }
+          }
         }
       } catch {
         /* YouTube API */
@@ -7542,19 +7570,29 @@ function RoomContent() {
       {gameHubNavLink}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={() => navigateRoomView("clip")}
-            className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-          >
-            ← Clip View
-          </button>
+          {!teamRoomMode || (roomState?.angles.length ?? 0) <= 1 ? (
+            <button
+              type="button"
+              onClick={() => navigateRoomView("clip")}
+              className="rounded-lg border border-white/[0.08] bg-zinc-950/85 px-3 py-2 text-xs font-semibold text-zinc-100 shadow-sm shadow-black/30 backdrop-blur-sm transition hover:border-white/15 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            >
+              ← Clip View
+            </button>
+          ) : (
+            <p className="text-xs text-zinc-500">Team Film Room · Sync View</p>
+          )}
           <div className="flex min-w-0 items-center gap-2">
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
                 onClick={() => navigateRoomView("clip")}
-                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                disabled={teamRoomMode && (roomState?.angles.length ?? 0) > 1}
+                title={
+                  teamRoomMode && (roomState?.angles.length ?? 0) > 1
+                    ? "Multi-angle team games use Sync View"
+                    : undefined
+                }
+                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                   roomViewMode === "clip"
                     ? "bg-blue-600/40 text-white"
                     : "text-zinc-300 hover:text-white"
@@ -8429,14 +8467,16 @@ function RoomContent() {
           </div>
         </div>
 
-        {isHost && !teamRoomMode ? (
+        {isHost ? (
           <div className="mt-3 w-full">
-            <GameMarksToolbar
-              variant="band"
-              busy={gameMarksBusy}
-              onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
-              onCustomMark={handleGameMarkCustomPrompt}
-            />
+            {!teamRoomMode ? (
+              <GameMarksToolbar
+                variant="band"
+                busy={gameMarksBusy}
+                onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+                onCustomMark={handleGameMarkCustomPrompt}
+              />
+            ) : null}
             <div
               className={`${hostControlsBar} mt-2 ${
                 isManualSyncMode ? "pointer-events-none opacity-35" : ""
@@ -8865,7 +8905,13 @@ function RoomContent() {
                 <button
                   type="button"
                   onClick={() => navigateRoomView("clip")}
-                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
+                  disabled={teamRoomMode && (roomState?.angles.length ?? 0) > 1}
+                  title={
+                    teamRoomMode && (roomState?.angles.length ?? 0) > 1
+                      ? "Multi-angle team games use Sync View"
+                      : undefined
+                  }
+                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     roomViewMode === "clip"
                       ? "bg-blue-600/40 text-white"
                       : "text-zinc-300 hover:text-white"
@@ -9664,7 +9710,11 @@ function RoomContent() {
               >
                 <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                   <YouTube
-                    key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                    key={
+                      isHost
+                        ? `host-${safeDecodeVideoId(effectiveVideoId)}`
+                        : `viewer-${safeDecodeVideoId(effectiveVideoId)}`
+                    }
                     ref={playerRef}
                     videoId={safeDecodeVideoId(effectiveVideoId)}
                     onReady={handlePlayerReady}
@@ -10409,7 +10459,11 @@ function RoomContent() {
                   >
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
                       <YouTube
-                        key={isHost ? "host" : `${safeDecodeVideoId(effectiveVideoId)}-viewer`}
+                        key={
+                      isHost
+                        ? `host-${safeDecodeVideoId(effectiveVideoId)}`
+                        : `viewer-${safeDecodeVideoId(effectiveVideoId)}`
+                    }
                         ref={playerRef}
                         videoId={safeDecodeVideoId(effectiveVideoId)}
                         onReady={handlePlayerReady}

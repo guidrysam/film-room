@@ -1,4 +1,4 @@
-import { get, ref, set } from "firebase/database";
+import { ref, set } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { gameTimeToSourceTime } from "@/lib/game-timeline";
 import type { GameTimelineEvent, GameVideoSource } from "@/lib/games";
@@ -197,8 +197,6 @@ export async function seedTeamFilmRoom(
   );
 
   const roomRef = ref(db, `rooms/${roomId}`);
-  const existingSnap = await get(roomRef);
-  const existing = existingSnap.val() as Record<string, unknown> | null;
 
   const payload: Record<string, unknown> = {
     ...(input.uid ? { ownerId: input.uid } : {}),
@@ -223,27 +221,6 @@ export async function seedTeamFilmRoom(
     actionId: 1,
     updatedAt: Date.now(),
   };
-
-  if (existing && typeof existing === "object") {
-    if (typeof existing.isPlaying === "boolean") {
-      payload.isPlaying = existing.isPlaying;
-    }
-    if (typeof existing.currentTime === "number" && Number.isFinite(existing.currentTime)) {
-      payload.currentTime = existing.currentTime;
-    }
-    if (
-      typeof existing.currentClipIndex === "number" &&
-      Number.isFinite(existing.currentClipIndex)
-    ) {
-      payload.currentClipIndex = existing.currentClipIndex;
-    }
-    if (typeof existing.currentAngleId === "string" && existing.currentAngleId.trim()) {
-      payload.currentAngleId = existing.currentAngleId.trim();
-    }
-    if (typeof existing.playbackRate === "number" && Number.isFinite(existing.playbackRate)) {
-      payload.playbackRate = existing.playbackRate;
-    }
-  }
 
   await set(roomRef, payload);
 
