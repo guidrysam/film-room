@@ -20,6 +20,7 @@ import { canContributeGameSources } from "@/lib/games";
 import { canCoachTeam } from "@/lib/teams";
 import {
   gameCapUrl,
+  teamFilmRoomUrl,
   teamGamesUrl,
   teamRosterUrl,
   teamSetupUrl,
@@ -345,6 +346,11 @@ export default function GameDashboard({
             <Link href={`/game/${game.id}/review`} className={primaryBtn}>
               Open Review
             </Link>
+            {metrics.sourceCount > 0 ? (
+              <Link href={teamFilmRoomUrl(game.id)} className={ghostBtn}>
+                Open Team Film Room
+              </Link>
+            ) : null}
           </div>
         </section>
 

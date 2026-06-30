@@ -46,3 +46,7 @@ export function linkedPlayerProfileUrl(groupKey: string): string {
 export function teamPlayerProfileUrl(teamId: string, playerId: string): string {
   return `/team/${teamId}/player/${playerId}`;
 }
+
+export function teamFilmRoomUrl(gameId: string): string {
+  return `/game/${gameId}/room`;
+}

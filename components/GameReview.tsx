@@ -47,7 +47,7 @@ import {
   type HighlightMoment,
 } from "@/lib/highlight-draft";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
-import { gameCapUrl } from "@/lib/team-routes";
+import { gameCapUrl, teamFilmRoomUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
 import VideoTransport from "@/components/VideoTransport";
 import ImportTagPlays from "@/components/ImportTagPlays";
@@ -946,9 +946,16 @@ export default function GameReview({
                 .join(" · ") || "Synced multi-angle review"}
             </p>
           </div>
-          <Link href={`/game/${gameId}`} className={ghostBtn}>
-            ← Back to Game
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {playableSources.length > 0 ? (
+              <Link href={teamFilmRoomUrl(gameId)} className={primaryBtn}>
+                Open Team Film Room
+              </Link>
+            ) : null}
+            <Link href={`/game/${gameId}`} className={ghostBtn}>
+              ← Back to Game
+            </Link>
+          </div>
         </div>
         ) : null}
 

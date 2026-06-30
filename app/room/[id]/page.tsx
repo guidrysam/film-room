@@ -1734,6 +1734,8 @@ function RoomContent() {
   const videoFromUrl = searchParams.get("video");
   /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
   const gameIdFromUrl = searchParams.get("gameId");
+  /** Team Film Room: marks come from Review; room is view-only for marking. */
+  const teamRoomMode = searchParams.get("teamRoom") === "1";
   const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
   const videoIdFromUrl = useMemo(() => {
@@ -3303,6 +3305,7 @@ function RoomContent() {
 
   const handleCreateGameMark = useCallback(
     async (label: string) => {
+      if (teamRoomMode) return;
       const trimmed = label.trim();
       if (!trimmed || !roomId) return;
       const s = roomStateRef.current;
@@ -3407,7 +3410,7 @@ function RoomContent() {
         setGameMarksBusy(false);
       }
     },
-    [roomId, user?.displayName, user?.uid, gameIdFromUrl],
+    [roomId, user?.displayName, user?.uid, gameIdFromUrl, teamRoomMode],
   );
 
   const handleGameMarkCustomPrompt = useCallback(() => {
@@ -4722,6 +4725,7 @@ function RoomContent() {
   );
 
   const handleAddChapter = useCallback(() => {
+    if (teamRoomMode) return;
     if (!isHost) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
@@ -4757,9 +4761,10 @@ function RoomContent() {
         /* RTDB */
       });
     })();
-  }, [isHost]);
+  }, [isHost, teamRoomMode]);
 
   const handleMarkPlay = useCallback(() => {
+    if (teamRoomMode) return;
     if (!isHost) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
@@ -4800,9 +4805,10 @@ function RoomContent() {
         /* RTDB */
       }
     })();
-  }, [isHost]);
+  }, [isHost, teamRoomMode]);
 
   const handleDeleteChapter = useCallback((index: number) => {
+    if (teamRoomMode) return;
     if (!isHost) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
@@ -4818,9 +4824,10 @@ function RoomContent() {
     }).catch(() => {
       /* RTDB */
     });
-  }, [isHost]);
+  }, [isHost, teamRoomMode]);
 
   const handleRenameChapter = useCallback((index: number) => {
+    if (teamRoomMode) return;
     if (!isHost) return;
     const rr = roomRefForWrite.current;
     if (!rr) return;
@@ -4841,7 +4848,7 @@ function RoomContent() {
     }).catch(() => {
       /* RTDB */
     });
-  }, [isHost]);
+  }, [isHost, teamRoomMode]);
 
   const handleRenameClip = useCallback((index: number) => {
     if (!isHost) return;
@@ -7351,12 +7358,22 @@ function RoomContent() {
 
   const gameHubNavLink =
     gameIdFromUrl?.trim() ? (
-      <Link
-        href={`/game/${gameIdFromUrl.trim()}`}
-        className="fixed left-4 top-[3.25rem] z-50 rounded-lg border border-white/[0.08] bg-zinc-950/70 px-2.5 py-1 text-[11px] font-medium text-zinc-400 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-      >
-        ← Game
-      </Link>
+      <>
+        <Link
+          href={`/game/${gameIdFromUrl.trim()}`}
+          className="fixed left-4 top-[3.25rem] z-50 rounded-lg border border-white/[0.08] bg-zinc-950/70 px-2.5 py-1 text-[11px] font-medium text-zinc-400 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-white/15 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+        >
+          ← Game
+        </Link>
+        {teamRoomMode ? (
+          <Link
+            href={`/game/${gameIdFromUrl.trim()}/review`}
+            className="fixed left-4 top-[5.5rem] z-50 rounded-lg border border-violet-500/30 bg-violet-950/55 px-2.5 py-1 text-[11px] font-medium text-violet-100 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-violet-400/45 hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40"
+          >
+            Edit marks in Review
+          </Link>
+        ) : null}
+      </>
     ) : null;
 
   if (!roomId.trim()) {
@@ -8342,7 +8359,9 @@ function RoomContent() {
           <div className="max-h-[140px] overflow-y-auto overscroll-y-contain pr-1">
             {chaptersDisplay.length === 0 ? (
               <p className="text-[11px] leading-snug text-zinc-500">
-                No chapters yet. Add marks in Clip View.
+                {teamRoomMode
+                  ? "No marks yet. Add them in Review."
+                  : "No chapters yet. Add marks in Clip View."}
               </p>
             ) : (
               <ul className="flex flex-col gap-1">
@@ -8381,7 +8400,7 @@ function RoomContent() {
                             </span>
                           ) : null}
                         </button>
-                        {isHost ? (
+                        {isHost && !teamRoomMode ? (
                           <>
                             <button
                               type="button"
@@ -8410,7 +8429,7 @@ function RoomContent() {
           </div>
         </div>
 
-        {isHost ? (
+        {isHost && !teamRoomMode ? (
           <div className="mt-3 w-full">
             <GameMarksToolbar
               variant="band"
@@ -8944,7 +8963,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!cleanMode && roomState ? (
+        {!cleanMode && roomState && !teamRoomMode ? (
           <div className={`${frPanel} mb-3`}>
             <GameMarksToolbar
               busy={gameMarksBusy}
@@ -9001,7 +9020,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!cleanMode && user && roomState && roomState.angles.length > 1 ? (
+        {!cleanMode && user && roomState && roomState.angles.length > 1 && !teamRoomMode ? (
           <div className={`${frPanel} mb-3`}>
             <CutStudio
               gameId={gameIdFromUrl}
@@ -9097,13 +9116,15 @@ function RoomContent() {
           <div className={frPanel}>
             <p className={frPanelTitle}>Chapters</p>
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleAddChapter()}
-                className={secondaryHostBtn}
-              >
-                Add Chapter
-              </button>
+              {!teamRoomMode ? (
+                <button
+                  type="button"
+                  onClick={() => void handleAddChapter()}
+                  className={secondaryHostBtn}
+                >
+                  Add Chapter
+                </button>
+              ) : null}
               <button
                 type="button"
                 disabled={!sessionPrevChapter}
@@ -9130,7 +9151,11 @@ function RoomContent() {
               </button>
             </div>
             {roomState.chapters.length === 0 ? (
-              <p className="text-xs text-zinc-400">No chapters yet.</p>
+              <p className="text-xs text-zinc-400">
+                {teamRoomMode
+                  ? "No marks yet. Add them in Review."
+                  : "No chapters yet."}
+              </p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
@@ -9171,6 +9196,8 @@ function RoomContent() {
                             </span>
                           ) : null}
                         </button>
+                        {!teamRoomMode ? (
+                          <>
                         <button
                           type="button"
                           onClick={() => handleRenameChapter(i)}
@@ -9186,6 +9213,8 @@ function RoomContent() {
                         >
                           ×
                         </button>
+                          </>
+                        ) : null}
                       </div>
                     </li>
                   );
@@ -9812,12 +9841,14 @@ function RoomContent() {
                     </div>
                   ) : null}
                 </div>
-                <GameMarksToolbar
-                  variant="band"
-                  busy={gameMarksBusy}
-                  onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
-                  onCustomMark={handleGameMarkCustomPrompt}
-                />
+                {!teamRoomMode ? (
+                  <GameMarksToolbar
+                    variant="band"
+                    busy={gameMarksBusy}
+                    onQuickMark={(lbl) => void handleCreateGameMark(lbl)}
+                    onCustomMark={handleGameMarkCustomPrompt}
+                  />
+                ) : null}
               </div>
               <div className="h-44 w-full shrink-0 md:hidden" aria-hidden />
             </div>

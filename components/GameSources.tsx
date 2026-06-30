@@ -22,7 +22,8 @@ import {
   canAutoApplyClockSync,
   youtubeClockSyncPatch,
 } from "@/lib/youtube-clock-sync";
-import { gameSourcesToAngles, openGameInFilmRoom } from "@/lib/open-game-room";
+import { gameSourcesToAngles } from "@/lib/open-game-room";
+import { teamFilmRoomRoute } from "@/lib/team-film-room";
 import {
   fetchYouTubeVideoMeta,
   fetchYouTubeVideoMetaWithRetry,
@@ -258,19 +259,12 @@ export default function GameSources({
     autoAlignYouTube,
   ]);
 
-  const handleOpen = useCallback(async () => {
+  const handleOpen = useCallback(() => {
+    if (playableCount === 0) return;
     setOpening(true);
     setError(null);
-    try {
-      const { url } = await openGameInFilmRoom(game, sources, currentUid);
-      router.push(url);
-    } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Could not open this game in Film Room.",
-      );
-      setOpening(false);
-    }
-  }, [game, sources, currentUid, router]);
+    router.push(teamFilmRoomRoute(game.id));
+  }, [game.id, playableCount, router]);
 
   const handleRefreshMetadata = useCallback(
     async (source: GameVideoSource) => {
@@ -388,14 +382,14 @@ export default function GameSources({
               ? "Add a YouTube source first"
               : playableCount > 1
                 ? "Open all angles in sync"
-                : "Open Review"
+                : "Open Team Film Room"
           }
         >
           {opening
             ? "Opening…"
             : playableCount > 1
-              ? `Open Review (${playableCount} angles)`
-              : "Open Review"}
+              ? `Open Team Film Room (${playableCount} angles)`
+              : "Open Team Film Room"}
         </button>
       </div>
       ) : (
@@ -410,14 +404,14 @@ export default function GameSources({
                 ? "Add a YouTube source first"
                 : playableCount > 1
                   ? "Open all angles in sync"
-                  : "Open Review"
+                  : "Open Team Film Room"
             }
           >
             {opening
               ? "Opening…"
               : playableCount > 1
-                ? `Open Review (${playableCount} angles)`
-                : "Open Review"}
+                ? `Open Team Film Room (${playableCount} angles)`
+                : "Open Team Film Room"}
           </button>
         </div>
       )}

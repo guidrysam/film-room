@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HighlightReelPlayer, {
   type HighlightReelPlayerHandle,
 } from "@/components/HighlightReelPlayer";
-import { openGameInFilmRoom } from "@/lib/open-game-room";
+import { teamFilmRoomRoute } from "@/lib/team-film-room";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import {
   deleteDirectorTrack,
@@ -320,13 +320,7 @@ export default function HighlightReelStudio({
     try {
       const id = editingId && !dirty ? editingId : await persistReel();
       if (!id) return;
-      const { url } = await openGameInFilmRoom(
-        { id: gameId },
-        sources,
-        currentUid,
-      );
-      const sep = url.includes("?") ? "&" : "?";
-      router.push(`${url}${sep}reel=${encodeURIComponent(id)}`);
+      router.push(teamFilmRoomRoute(gameId, { reelId: id }));
     } catch (e) {
       setMessage(
         e instanceof Error
@@ -336,7 +330,7 @@ export default function HighlightReelStudio({
     } finally {
       setOpeningRoom(false);
     }
-  }, [editingId, dirty, persistReel, gameId, sources, currentUid, router]);
+  }, [editingId, dirty, persistReel, gameId, router]);
 
   const handleDeleteReel = useCallback(
     async (reel: HighlightDraft) => {
