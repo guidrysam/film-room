@@ -74,6 +74,18 @@ describe("buildTeamFilmRoomNavigateUrl", () => {
     assert.equal(qs.get("viewer"), "1");
     assert.equal(qs.get("reel"), "r1");
   });
+
+  it("includes sync view for single-angle team rooms", () => {
+    const url = buildTeamFilmRoomNavigateUrl(
+      "g-game1",
+      "game1",
+      "vid11111111",
+      false,
+    );
+    const qs = new URLSearchParams(url.split("?")[1]);
+    assert.equal(qs.get("view"), "sync");
+    assert.equal(qs.get("teamRoom"), "1");
+  });
 });
 
 describe("timelineEventToFilmRoomChapter", () => {

@@ -1776,6 +1776,8 @@ function RoomContent() {
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
+  /** Team Film Room: allow tapping the YouTube iframe (native controls enabled). */
+  const blockHostYoutubePointer = isHost && !teamRoomMode;
 
   const handleReturnHome = useCallback(() => {
     if (
@@ -1829,14 +1831,19 @@ function RoomContent() {
           : {}),
         fs: isHost ? 0 : 1,
         ...(isHost
-          ? {
-              controls: 0,
-              disablekb: 1,
-            }
+          ? teamRoomMode
+            ? {
+                controls: 1,
+                disablekb: 0,
+              }
+            : {
+                controls: 0,
+                disablekb: 1,
+              }
           : {}),
       },
     }),
-    [isHost, isLiveRoom],
+    [isHost, isLiveRoom, teamRoomMode],
   );
 
   const activeYouTubeVideoId = useMemo(() => {
@@ -2143,7 +2150,7 @@ function RoomContent() {
 
   useEffect(() => {
     if (!teamRoomMode || !roomState) return;
-    if (roomState.angles.length > 1 && !isSyncLayoutMode(roomViewMode)) {
+    if (!isSyncLayoutMode(roomViewMode)) {
       navigateRoomView("sync");
     }
   }, [teamRoomMode, roomState, roomViewMode, navigateRoomView]);
@@ -3215,10 +3222,12 @@ function RoomContent() {
 
   const getPlayer = () => {
     const s = roomStateRef.current;
-    if (s && isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 1) {
-      const id = s.currentAngleId;
-      const hit = syncPlayerRefs.current[id];
-      if (hit) return hit;
+    if (s && isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 0) {
+      const id = s.currentAngleId || s.angles[0]?.id;
+      if (id) {
+        const hit = syncPlayerRefs.current[id];
+        if (hit) return hit;
+      }
     }
     return playerRef.current?.getInternalPlayer() as
       | YouTubePlayer
@@ -6011,51 +6020,59 @@ function RoomContent() {
 
   const handlePlay = () => {
     if (!isHost) return;
-    if (isManualSyncModeRef.current) return;
+    const snapGuard = roomStateRef.current;
+    if (isManualSyncModeRef.current) {
+      if (!teamRoomMode || !snapGuard?.manualSyncLocked) return;
+    }
     hostLastPlayGestureAtRef.current = Date.now();
     const pr = clearFfIfActive();
+
+    const snapKick = roomStateRef.current;
+    const activeAngleId =
+      snapKick?.currentAngleId ?? snapKick?.angles[0]?.id ?? "";
+    const kickPlayers: YouTubePlayer[] = [];
+    if (
+      snapKick &&
+      isSyncLayoutMode(roomViewModeRef.current) &&
+      snapKick.angles.length > 0
+    ) {
+      for (const a of snapKick.angles) {
+        const p = syncPlayerRefs.current[a.id];
+        if (p) kickPlayers.push(p);
+      }
+    }
+    if (kickPlayers.length === 0) {
+      const p = getPlayer();
+      if (p) kickPlayers.push(p);
+    }
+    const seenKick = new Set<YouTubePlayer>();
+    for (const player of kickPlayers) {
+      if (seenKick.has(player)) continue;
+      seenKick.add(player);
+      if (snapKick?.sourceType === "live") {
+        forceYouTubePlay(player, "handlePlay-gesture-kick", activeAngleId, {
+          delayedUnmute: true,
+        });
+        void forceLiveBootstrapPlay(
+          player,
+          `handlePlay-gesture-kick:${activeAngleId}`,
+        );
+      } else {
+        try {
+          player.playVideo?.();
+        } catch {
+          /* YouTube API */
+        }
+      }
+    }
+    syncLog("transport play clicked (gesture kick)", {
+      activeAngleId,
+      kickCount: seenKick.size,
+    });
+
     void (async () => {
       const snap0 = roomStateRef.current;
-      const activeAngleId =
-        snap0?.currentAngleId ?? snap0?.angles[0]?.id ?? "";
       const player = getPlayer();
-      let stKick: number | undefined;
-      try {
-        stKick = await readYoutubePlayerState(player);
-      } catch {
-        stKick = undefined;
-      }
-      syncLog("transport play clicked", {
-        activeAngleId,
-        playerState:
-          stKick === undefined ? undefined : youtubeStateLabel(stKick),
-        hasPlayer: !!player,
-      });
-      if (
-        player &&
-        (stKick === undefined ||
-          stKick === YT_UNSTARTED ||
-          stKick === YT_CUED ||
-          stKick === YT_PAUSED ||
-          stKick === YT_BUFFERING)
-      ) {
-        if (snap0?.sourceType === "live") {
-          forceYouTubePlay(player, "handlePlay-initial-kick", activeAngleId, {
-            delayedUnmute: true,
-          });
-          void forceLiveBootstrapPlay(
-            player,
-            `handlePlay-initial-kick:${activeAngleId}`,
-          );
-        } else {
-          try {
-            player.playVideo?.();
-          } catch {
-            /* YouTube API */
-          }
-        }
-        syncLog("youtube playVideo called", { activeAngleId });
-      }
 
       syncLog("host pressed Play");
       const fb = roomStateRef.current?.currentTime ?? 0;
@@ -6716,32 +6733,14 @@ function RoomContent() {
     const p = getPlayer();
     if (p && isHostRef.current && s.sourceType !== "live") {
       try {
-        const st = p.getPlayerState?.();
-        const YT_UNSTARTED = -1;
-        const YT_CUED = 5;
-        const start = Math.max(0, s.currentTime ?? 0);
-        const vid = s.videoId?.trim();
-        if (vid && (st === YT_UNSTARTED || st === YT_CUED)) {
-          const loader = (
-            p as YouTubePlayer & {
-              loadVideoById?: (args: {
-                videoId: string;
-                startSeconds?: number;
-              }) => void;
+        const start = Math.max(0, s.currentTime ?? 0, s.syncAnchorTime ?? 0);
+        void readYoutubeCurrentTime(p, start).then((cur) => {
+          if (Math.abs(cur - start) > 0.35) {
+            try {
+              p.seekTo?.(start, true);
+            } catch {
+              /* YouTube API */
             }
-          ).loadVideoById;
-          if (loader) {
-            loader({ videoId: vid, startSeconds: start });
-          } else {
-            const cue = (
-              p as YouTubePlayer & {
-                cueVideoById?: (args: {
-                  videoId: string;
-                  startSeconds?: number;
-                }) => void;
-              }
-            ).cueVideoById;
-            cue?.({ videoId: vid, startSeconds: start });
           }
           if (!s.isPlaying) {
             try {
@@ -6750,7 +6749,7 @@ function RoomContent() {
               /* YouTube API */
             }
           }
-        }
+        });
       } catch {
         /* YouTube API */
       }
@@ -7570,7 +7569,9 @@ function RoomContent() {
       {gameHubNavLink}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
-          {!teamRoomMode || (roomState?.angles.length ?? 0) <= 1 ? (
+          {teamRoomMode ? (
+            <p className="text-xs text-zinc-500">Team Film Room · Sync View</p>
+          ) : (
             <button
               type="button"
               onClick={() => navigateRoomView("clip")}
@@ -7578,19 +7579,15 @@ function RoomContent() {
             >
               ← Clip View
             </button>
-          ) : (
-            <p className="text-xs text-zinc-500">Team Film Room · Sync View</p>
           )}
           <div className="flex min-w-0 items-center gap-2">
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
                 onClick={() => navigateRoomView("clip")}
-                disabled={teamRoomMode && (roomState?.angles.length ?? 0) > 1}
+                disabled={teamRoomMode}
                 title={
-                  teamRoomMode && (roomState?.angles.length ?? 0) > 1
-                    ? "Multi-angle team games use Sync View"
-                    : undefined
+                  teamRoomMode ? "Team Film Room uses Sync View" : undefined
                 }
                 className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                   roomViewMode === "clip"
@@ -7998,7 +7995,7 @@ function RoomContent() {
                               : "absolute inset-0 h-full w-full bg-black"
                           }
                         >
-                          <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                          <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                             <YouTube
                               key={angle.id}
                               videoId={safeDecodeVideoId(angle.videoId)}
@@ -8299,9 +8296,9 @@ function RoomContent() {
                     drawLocked={drawGateOn}
                     className="absolute inset-0 z-10 min-h-0 min-w-0 bg-black"
                   >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
-                        key="sync-primary"
+                        key={`sync-primary-${safeDecodeVideoId(activeAngle.videoId)}`}
                         ref={playerRef}
                         videoId={safeDecodeVideoId(activeAngle.videoId)}
                         onReady={(e) => {
@@ -8905,11 +8902,9 @@ function RoomContent() {
                 <button
                   type="button"
                   onClick={() => navigateRoomView("clip")}
-                  disabled={teamRoomMode && (roomState?.angles.length ?? 0) > 1}
+                  disabled={teamRoomMode}
                   title={
-                    teamRoomMode && (roomState?.angles.length ?? 0) > 1
-                      ? "Multi-angle team games use Sync View"
-                      : undefined
+                    teamRoomMode ? "Team Film Room uses Sync View" : undefined
                   }
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     roomViewMode === "clip"
@@ -9407,7 +9402,7 @@ function RoomContent() {
                       }
                       className="absolute inset-0 h-full w-full bg-black"
                     >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={fsMA?.activeAngle.id ?? "active"}
                         videoId={safeDecodeVideoId(
@@ -9507,7 +9502,7 @@ function RoomContent() {
                       }
                       className="absolute inset-0 h-full w-full bg-black"
                     >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={hostMultiAngles.secondaryAngle.id}
                         videoId={safeDecodeVideoId(
@@ -9587,7 +9582,7 @@ function RoomContent() {
                       }
                     }}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={fsMA?.activeAngle.id ?? "active"}
                         videoId={safeDecodeVideoId(fsMA?.activeAngle.videoId ?? "")}
@@ -9645,7 +9640,7 @@ function RoomContent() {
                       }
                     }}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={fsMA?.secondaryAngle.id ?? "secondary"}
                         videoId={safeDecodeVideoId(
@@ -9708,7 +9703,7 @@ function RoomContent() {
                 drawLocked={drawGateOn}
                 className={`absolute inset-0 bg-black ${fsStageClass}`}
               >
-                <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                   <YouTube
                     key={
                       isHost
@@ -10159,7 +10154,7 @@ function RoomContent() {
                             Tap to switch
                           </span>
                         )}
-                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                           <YouTube
                             key={hostMultiAngles!.activeAngle.id}
                             videoId={safeDecodeVideoId(
@@ -10252,7 +10247,7 @@ function RoomContent() {
                             {hostMultiAngles.secondaryAngle.name}
                           </span>
                         )}
-                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                           <YouTube
                             key={hostMultiAngles.secondaryAngle.id}
                             videoId={safeDecodeVideoId(
@@ -10331,7 +10326,7 @@ function RoomContent() {
                           }
                         }}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                           <YouTube
                             key={hostMultiAngles!.activeAngle.id}
                             videoId={safeDecodeVideoId(
@@ -10394,7 +10389,7 @@ function RoomContent() {
                           }
                         }}
                       >
-                        <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                        <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                           <YouTube
                             key={hostMultiAngles!.secondaryAngle.id}
                             videoId={safeDecodeVideoId(
@@ -10457,7 +10452,7 @@ function RoomContent() {
                     drawLocked={drawGateOn}
                     className={`absolute inset-0 bg-black ${fsStageClass}`}
                   >
-                    <YoutubePointerGate drawOn={drawGateOn} blockOn={isHost}>
+                    <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={
                       isHost

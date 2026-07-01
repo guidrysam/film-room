@@ -44,7 +44,7 @@ export function buildTeamFilmRoomNavigateUrl(
 ): string {
   const qs = new URLSearchParams();
   qs.set("video", primaryVideoId);
-  if (multi) qs.set("view", "sync");
+  qs.set("view", "sync");
   qs.set("gameId", gameId);
   qs.set("teamRoom", "1");
   if (opts?.viewer) qs.set("viewer", "1");
