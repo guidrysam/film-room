@@ -1,0 +1,116 @@
+import { parseGameStat } from "@/lib/game-stats";
+import type { AddHighlightMomentInput } from "@/lib/highlight-draft";
+import type { GameTimelineEvent } from "@/lib/games";
+import {
+  generatePresetMoments,
+  type HighlightPresetId,
+} from "@/lib/highlight-presets";
+import { getEventPlayerIds } from "@/lib/timeline-players";
+
+export const HIGHLIGHT_MARK_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
+  "coach_mark",
+  "stat",
+  "tag",
+]);
+
+const DEFAULT_START_OFFSET = -5;
+const DEFAULT_END_OFFSET = 10;
+
+export function isHighlightMarkEvent(event: GameTimelineEvent): boolean {
+  return HIGHLIGHT_MARK_EVENT_TYPES.has(event.type) && Number.isFinite(event.t);
+}
+
+export function formatHighlightMarkLabel(event: GameTimelineEvent): string {
+  if (event.type === "stat") {
+    const stat = parseGameStat(event);
+    if (stat) {
+      const base = stat.label?.trim() || stat.statType;
+      return base.charAt(0).toUpperCase() + base.slice(1);
+    }
+  }
+  if (typeof event.label === "string" && event.label.trim() !== "") {
+    return event.label.trim();
+  }
+  switch (event.type) {
+    case "coach_mark":
+      return "Mark";
+    case "tag":
+      return "Tag";
+    case "stat":
+      return "Stat";
+    default:
+      return "Highlight";
+  }
+}
+
+/** Resolve which camera angle to use for a mark's clip segment. */
+export function resolveHighlightMarkSourceId(
+  event: GameTimelineEvent,
+  playableSourceIds: string[],
+  primarySourceId: string,
+): string {
+  const sid = event.sourceId?.trim();
+  if (sid && playableSourceIds.includes(sid)) return sid;
+  if (primarySourceId && playableSourceIds.includes(primarySourceId)) {
+    return primarySourceId;
+  }
+  return playableSourceIds[0] ?? primarySourceId;
+}
+
+export type HighlightFromMarksOptions = {
+  primarySourceId: string;
+  playableSourceIds: string[];
+  startOffsetSec?: number;
+  endOffsetSec?: number;
+  presetId?: HighlightPresetId;
+};
+
+/**
+ * Turn Review coach marks, stats, and tags into ordered highlight reel segments.
+ * One mark may expand to multiple segments when a multi-beat preset is chosen.
+ */
+export function highlightMomentsFromGameMarks(
+  events: GameTimelineEvent[],
+  opts: HighlightFromMarksOptions,
+): AddHighlightMomentInput[] {
+  const startOffsetSec = opts.startOffsetSec ?? DEFAULT_START_OFFSET;
+  const endOffsetSec = opts.endOffsetSec ?? DEFAULT_END_OFFSET;
+  const presetId = opts.presetId ?? "single";
+  const playable = new Set(opts.playableSourceIds);
+
+  const marks = events.filter(isHighlightMarkEvent).sort((a, b) => a.t - b.t);
+  const out: AddHighlightMomentInput[] = [];
+
+  for (const event of marks) {
+    const primarySourceId = resolveHighlightMarkSourceId(
+      event,
+      opts.playableSourceIds,
+      opts.primarySourceId,
+    );
+    if (!primarySourceId || !playable.has(primarySourceId)) continue;
+
+    const label = formatHighlightMarkLabel(event);
+    const playerIds = getEventPlayerIds(event);
+    const generated = generatePresetMoments(
+      presetId,
+      {
+        gameTime: Math.max(0, event.t),
+        startOffsetSec,
+        endOffsetSec,
+        primarySourceId,
+        label,
+        ...(playerIds.length > 0 ? { playerIds } : {}),
+      },
+      opts.playableSourceIds,
+    );
+
+    for (const moment of generated) {
+      out.push({
+        ...moment,
+        timelineEventId: event.id,
+      });
+    }
+  }
+
+  return out;
+}

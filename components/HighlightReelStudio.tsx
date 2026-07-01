@@ -34,6 +34,10 @@ import {
   type HighlightPresetId,
 } from "@/lib/highlight-presets";
 import {
+  highlightMomentsFromGameMarks,
+  isHighlightMarkEvent,
+} from "@/lib/highlight-from-marks";
+import {
   downloadRecording,
   isReelRecordingSupported,
   startReelRecording,
@@ -98,6 +102,7 @@ function momentToInput(m: HighlightMoment): AddHighlightMomentInput {
  */
 export default function HighlightReelStudio({
   gameId,
+  game,
   sources,
   events,
   currentUid,
@@ -124,14 +129,7 @@ export default function HighlightReelStudio({
   );
 
   const seedMarks = useMemo(
-    () =>
-      events
-        .filter(
-          (e) =>
-            (e.type === "coach_mark" || e.type === "stat" || e.type === "tag") &&
-            Number.isFinite(e.t),
-        )
-        .sort((a, b) => a.t - b.t),
+    () => events.filter(isHighlightMarkEvent).sort((a, b) => a.t - b.t),
     [events],
   );
 
@@ -148,6 +146,7 @@ export default function HighlightReelStudio({
   const [baseTimeStr, setBaseTimeStr] = useState("0");
   const [basePrimary, setBasePrimary] = useState<string>("");
   const [presetId, setPresetId] = useState<HighlightPresetId>("replay");
+  const [bulkPresetId, setBulkPresetId] = useState<HighlightPresetId>("single");
 
   // Recording.
   const [recording, setRecording] = useState(false);
@@ -238,6 +237,45 @@ export default function HighlightReelStudio({
     mutateMoments([...moments, ...generated.map(inputToMoment)]);
     setMessage(`Added ${generated.length} styled segment${generated.length === 1 ? "" : "s"}.`);
   }, [baseTimeStr, basePrimary, presetId, playableSources, moments, mutateMoments]);
+
+  const buildFromAllMarks = useCallback(
+    (mode: "replace" | "append") => {
+      if (!basePrimary || seedMarks.length === 0) return;
+      const generated = highlightMomentsFromGameMarks(seedMarks, {
+        primarySourceId: basePrimary,
+        playableSourceIds: playableSources.map((s) => s.id),
+        presetId: bulkPresetId,
+      });
+      if (generated.length === 0) {
+        setMessage("No marks could be turned into clips.");
+        return;
+      }
+      const nextMoments = generated.map(inputToMoment);
+      if (mode === "replace") {
+        setEditingId(null);
+        setName(`${game.title.trim() || "Game"} highlights`);
+        setVisibility("private");
+        setMoments(nextMoments);
+        setDirty(true);
+      } else {
+        mutateMoments([...moments, ...nextMoments]);
+      }
+      setMessage(
+        mode === "replace"
+          ? `Built a reel with ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${seedMarks.length} mark${seedMarks.length === 1 ? "" : "s"}.`
+          : `Added ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${seedMarks.length} mark${seedMarks.length === 1 ? "" : "s"}.`,
+      );
+    },
+    [
+      basePrimary,
+      seedMarks,
+      playableSources,
+      bulkPresetId,
+      game.title,
+      moments,
+      mutateMoments,
+    ],
+  );
 
   const updateMoment = useCallback(
     (id: string, patch: Partial<HighlightMoment>) => {
@@ -540,7 +578,16 @@ export default function HighlightReelStudio({
                 <select
                   className={inputClass}
                   onChange={(e) => {
-                    if (e.target.value) setBaseTimeStr(e.target.value);
+                    const val = e.target.value;
+                    if (!val) return;
+                    setBaseTimeStr(val);
+                    const picked = seedMarks.find((m) => String(m.t) === val);
+                    if (
+                      picked?.sourceId &&
+                      playableSources.some((s) => s.id === picked.sourceId)
+                    ) {
+                      setBasePrimary(picked.sourceId);
+                    }
                   }}
                   value=""
                 >
@@ -616,6 +663,54 @@ export default function HighlightReelStudio({
                 </button>
               </div>
             </div>
+
+            {seedMarks.length > 0 ? (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/15 p-2.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/90">
+                  All game marks ({seedMarks.length})
+                </p>
+                <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+                  Turn every Review mark, stat, and tag into reel segments in
+                  game order. Each mark uses its tagged angle when available.
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    Style per mark
+                  </label>
+                  <select
+                    className={inputClass}
+                    value={bulkPresetId}
+                    onChange={(e) =>
+                      setBulkPresetId(e.target.value as HighlightPresetId)
+                    }
+                    aria-label="Preset for all marks"
+                  >
+                    {HIGHLIGHT_PRESET_LIST.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => buildFromAllMarks("replace")}
+                    className={primaryBtn}
+                  >
+                    Build reel from all marks
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => buildFromAllMarks("append")}
+                    disabled={moments.length === 0}
+                    className={ghostBtn}
+                  >
+                    Add all marks to reel
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
