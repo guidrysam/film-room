@@ -1066,45 +1066,47 @@ export default function HighlightReelStudio({
                         {group.moments.map((m, beatIndex) => (
                           <div
                             key={m.id}
-                            className="flex flex-wrap items-center gap-2 rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
+                            className="rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
                           >
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                              {beatIndex === 0
-                                ? "Live"
-                                : m.label?.trim() || `Beat ${beatIndex + 1}`}
-                            </span>
-                            <select
-                              className={inputClass}
-                              value={m.speed ?? 1}
-                              onChange={(e) =>
+                            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                                {beatIndex === 0
+                                  ? "Live"
+                                  : m.label?.trim() || `Beat ${beatIndex + 1}`}
+                              </span>
+                              <select
+                                className={inputClass}
+                                value={m.speed ?? 1}
+                                onChange={(e) =>
+                                  updateMoment(m.id, {
+                                    speed:
+                                      Number(e.target.value) === 1
+                                        ? undefined
+                                        : Number(e.target.value),
+                                  })
+                                }
+                                aria-label="Speed"
+                              >
+                                {HIGHLIGHT_SPEEDS.map((sp) => (
+                                  <option key={sp} value={sp}>
+                                    {sp}×
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <ReelClipTrimBar
+                              gameTime={m.gameTime}
+                              startOffsetSec={m.startOffsetSec}
+                              endOffsetSec={m.endOffsetSec}
+                              onChange={(startOffsetSec, endOffsetSec) =>
                                 updateMoment(m.id, {
-                                  speed:
-                                    Number(e.target.value) === 1
-                                      ? undefined
-                                      : Number(e.target.value),
+                                  startOffsetSec,
+                                  endOffsetSec,
                                 })
                               }
-                              aria-label="Speed"
-                            >
-                              {HIGHLIGHT_SPEEDS.map((sp) => (
-                                <option key={sp} value={sp}>
-                                  {sp}×
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </div>
                         ))}
-                        <ReelClipTrimBar
-                          gameTime={primary.gameTime}
-                          startOffsetSec={primary.startOffsetSec}
-                          endOffsetSec={primary.endOffsetSec}
-                          onChange={(startOffsetSec, endOffsetSec) =>
-                            patchGroup(group, {
-                              startOffsetSec,
-                              endOffsetSec,
-                            })
-                          }
-                        />
                         <p className="text-[10px] text-zinc-500">
                           at{" "}
                           <span className="font-mono text-zinc-300">

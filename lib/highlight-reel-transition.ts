@@ -6,9 +6,9 @@ export const REEL_FADE_OUT_MS = 500;
 export const REEL_FADE_POST_READY_MS = 400;
 
 /** Start fading to black this many seconds before a clip ends. */
-export const REEL_PRE_TRANSITION_SEC = 1;
+export const REEL_PRE_TRANSITION_SEC = 2.5;
 /** Play the incoming clip under black for this long after the previous clip ends. */
-export const REEL_SEGMENT_PREROLL_MS = 1000;
+export const REEL_SEGMENT_PREROLL_MS = 2500;
 
 export function reelTransitionLeadSec(step: {
   sourceStartTime: number;
