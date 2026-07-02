@@ -490,7 +490,12 @@ export default function HighlightReelStudio({
         previewSteps,
         sources: playableSources,
       });
-      const shareId = await ensureHighlightReelSharing(gameId, id, payload);
+      const shareId = await ensureHighlightReelSharing(
+        gameId,
+        id,
+        payload,
+        currentUid,
+      );
       const url = highlightReelWatchUrl(shareId);
       setWatchUrl(url);
       const copied = await copyTextToClipboard(url);
@@ -517,6 +522,7 @@ export default function HighlightReelStudio({
     previewSteps,
     playableSources,
     gameId,
+    currentUid,
   ]);
 
   const handleCopyWatchUrlAgain = useCallback(async () => {

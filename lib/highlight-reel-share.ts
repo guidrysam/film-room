@@ -68,6 +68,22 @@ function firestoreErrorCode(err: unknown): string | undefined {
   return undefined;
 }
 
+function firestoreJson(value: unknown): unknown {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => firestoreJson(item))
+      .filter((item) => item !== undefined);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    const next = firestoreJson(val);
+    if (next !== undefined) out[key] = next;
+  }
+  return out;
+}
+
 function cutsDoc(gameId: string, cutId: string) {
   return doc(firestore, "games", gameId, "cuts", cutId);
 }
@@ -191,7 +207,12 @@ export async function ensureHighlightReelSharing(
   gameId: string,
   cutId: string,
   payload: HighlightReelSharePayload,
+  sharerUid: string,
 ): Promise<string> {
+  const uid = sharerUid.trim();
+  if (!uid) {
+    throw new Error("Sign in to create a watch link.");
+  }
   const ref = cutsDoc(gameId, cutId);
   let snap;
   try {
@@ -208,13 +229,6 @@ export async function ensureHighlightReelSharing(
   if (raw.kind !== "highlight") {
     throw new Error("Only highlight reels can be shared with a watch link.");
   }
-  const createdBy =
-    typeof raw.createdBy === "string" && raw.createdBy.trim()
-      ? raw.createdBy.trim()
-      : null;
-  if (!createdBy) {
-    throw new Error("This reel is missing an owner and cannot be shared.");
-  }
 
   const existingShareId =
     raw.isShared === true &&
@@ -227,8 +241,8 @@ export async function ensureHighlightReelSharing(
     shareId: existingShareId,
     gameId,
     cutId,
-    createdBy,
-    payload,
+    createdBy: uid,
+    payload: firestoreJson(payload) as HighlightReelSharePayload,
     updatedAt: serverTimestamp(),
     ...(typeof raw.createdByName === "string" && raw.createdByName.trim()
       ? { createdByName: raw.createdByName.trim() }
@@ -240,7 +254,7 @@ export async function ensureHighlightReelSharing(
     await updateDoc(ref, {
       shareId: existingShareId,
       isShared: true,
-      sharePayload: payload,
+      sharePayload: firestoreJson(payload),
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
