@@ -8,23 +8,29 @@ export const REEL_FADE_OUT_MS = 500;
 
 /** Black over the tail of the outgoing clip before the cut. */
 export const REEL_PRE_TRANSITION_SEC = 0.25;
-/** Source seconds to start playback before the trim in-point (hidden under black). */
+/** Wall-clock seconds under black to hide YouTube overlay before reveal. */
 export const REEL_CLIP_PREROLL_SEC = 3;
-/** Incoming clip plays under black this long before it is revealed (1× speed). */
+/** Incoming clip plays under black this long before it is revealed. */
 export const REEL_SEGMENT_PREROLL_MS = REEL_CLIP_PREROLL_SEC * 1000;
+
+/** Source seconds to rewind before trim in-point (scaled by playback speed). */
+export function reelClipPrerollSourceSec(speed: number): number {
+  const rate = speed > 0 ? speed : 1;
+  return REEL_CLIP_PREROLL_SEC * rate;
+}
 
 export function reelPlaybackStartSec(
   sourceStartTime: number,
   usePreroll = true,
+  speed = 1,
 ): number {
   if (!usePreroll) return Math.max(0, sourceStartTime);
-  return Math.max(0, sourceStartTime - REEL_CLIP_PREROLL_SEC);
+  return Math.max(0, sourceStartTime - reelClipPrerollSourceSec(speed));
 }
 
-/** Wall-clock black hold while the preroll portion of the clip plays. */
-export function reelPrerollWallMs(speed: number): number {
-  const rate = speed > 0 ? speed : 1;
-  return (REEL_CLIP_PREROLL_SEC / rate) * 1000;
+/** Fixed wall-clock black hold — overlay clearing is real-time, not source-time. */
+export function reelPrerollWallMs(_speed?: number): number {
+  return REEL_SEGMENT_PREROLL_MS;
 }
 
 export function reelTransitionLeadSec(step: {

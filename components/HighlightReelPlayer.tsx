@@ -191,6 +191,7 @@ const HighlightReelPlayer = forwardRef<
         const playbackStart = reelPlaybackStartSec(
           step.sourceStartTime,
           REEL_USE_BLACK_TRANSITIONS,
+          step.speed,
         );
         const check = () => {
           const player = playerRef.current;
@@ -279,6 +280,7 @@ const HighlightReelPlayer = forwardRef<
       const playbackStart = reelPlaybackStartSec(
         step.sourceStartTime,
         REEL_USE_BLACK_TRANSITIONS,
+        step.speed,
       );
       lastObservedTimeRef.current = Math.max(0, playbackStart);
       lastTimeAdvanceAtRef.current = Date.now();

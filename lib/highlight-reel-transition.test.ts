@@ -4,6 +4,7 @@ import {
   REEL_CLIP_PREROLL_SEC,
   REEL_PRE_TRANSITION_SEC,
   REEL_SEGMENT_PREROLL_MS,
+  reelClipPrerollSourceSec,
   reelPlaybackStartSec,
   reelPrerollWallMs,
   reelTransitionLeadSec,
@@ -26,9 +27,11 @@ describe("reelTransitionLeadSec", () => {
 
   it("starts playback before the trim in-point to absorb black preroll", () => {
     assert.equal(reelPlaybackStartSec(100), 97);
+    assert.equal(reelPlaybackStartSec(100, true, 0.5), 98.5);
+    assert.equal(reelClipPrerollSourceSec(0.5), 1.5);
     assert.equal(reelPlaybackStartSec(2), 0);
     assert.equal(reelPlaybackStartSec(100, false), 100);
-    assert.equal(reelPrerollWallMs(1), REEL_CLIP_PREROLL_SEC * 1000);
-    assert.equal(reelPrerollWallMs(0.5), REEL_CLIP_PREROLL_SEC * 2000);
+    assert.equal(reelPrerollWallMs(1), REEL_SEGMENT_PREROLL_MS);
+    assert.equal(reelPrerollWallMs(0.5), REEL_SEGMENT_PREROLL_MS);
   });
 });
