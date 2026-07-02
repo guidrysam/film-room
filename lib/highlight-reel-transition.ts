@@ -3,7 +3,7 @@ export const REEL_FADE_IN_MS = 450;
 export const REEL_FADE_HOLD_MS = 650;
 export const REEL_FADE_OUT_MS = 500;
 /** Extra black hold after playback resumes (YouTube chrome can linger briefly). */
-export const REEL_FADE_POST_READY_MS = 550;
+export const REEL_FADE_POST_READY_MS = 900;
 
 export function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));

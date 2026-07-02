@@ -176,41 +176,55 @@ const HighlightReelPlayer = forwardRef<
     [videoIdForSource],
   );
 
-  const waitForSegmentPresentable = useCallback((index: number): Promise<void> => {
-    return new Promise((resolve) => {
-      const step = stepsRef.current[index];
-      if (!step) {
-        resolve();
-        return;
-      }
-      const deadline = Date.now() + 3200;
-      const check = () => {
-        const player = playerRef.current;
-        if (!player) {
+  const waitForSegmentPlaying = useCallback(
+    (index: number): Promise<void> => {
+      return new Promise((resolve) => {
+        const step = stepsRef.current[index];
+        if (!step) {
           resolve();
           return;
         }
-        try {
-          const state = player.getPlayerState?.();
-          const current = player.getCurrentTime?.() ?? 0;
-          const timeOk = current + 0.35 >= step.sourceStartTime;
-          const stateOk =
-            state === YT_PLAYING ||
-            state === YT_BUFFERING ||
-            state === YT_PAUSED;
-          if ((timeOk && stateOk) || Date.now() >= deadline) {
+        const deadline = Date.now() + 4000;
+        const check = () => {
+          const player = playerRef.current;
+          if (!player) {
             resolve();
             return;
           }
-        } catch {
-          resolve();
-          return;
-        }
-        window.setTimeout(check, 90);
-      };
-      window.setTimeout(check, 180);
-    });
-  }, []);
+          try {
+            const state = player.getPlayerState?.();
+            const current = player.getCurrentTime?.() ?? 0;
+            const timeOk = current + 0.35 >= step.sourceStartTime;
+            const playingOk =
+              state === YT_PLAYING || (state === YT_BUFFERING && timeOk);
+            if (timeOk && playingOk) {
+              resolve();
+              return;
+            }
+            if (
+              timeOk &&
+              (state === YT_PAUSED ||
+                state === YT_CUED ||
+                state === YT_UNSTARTED ||
+                state === YT_BUFFERING)
+            ) {
+              kickPlayback(player);
+            }
+            if (Date.now() >= deadline) {
+              resolve();
+              return;
+            }
+          } catch {
+            resolve();
+            return;
+          }
+          window.setTimeout(check, 90);
+        };
+        window.setTimeout(check, 120);
+      });
+    },
+    [kickPlayback],
+  );
 
   const loadStep = useCallback(
     (index: number, pass: number) => {
@@ -237,6 +251,9 @@ const HighlightReelPlayer = forwardRef<
             videoId,
             startSeconds: start,
           });
+          if (playingRef.current) {
+            window.setTimeout(() => kickPlayback(player), 180);
+          }
         }
         window.setTimeout(() => {
           try {
@@ -253,18 +270,47 @@ const HighlightReelPlayer = forwardRef<
     [videoIdForSource, kickPlayback],
   );
 
+  const ensureSegmentPlaying = useCallback(
+    (index: number, pass: number, reuseIfSame: boolean) => {
+      const player = playerRef.current;
+      if (!player) return;
+      if (
+        reuseIfSame &&
+        stepIndexRef.current === index &&
+        repeatPassRef.current === pass
+      ) {
+        kickPlayback(player);
+        return;
+      }
+      loadStep(index, pass);
+    },
+    [kickPlayback, loadStep],
+  );
+
   const presentSegmentUnderBlack = useCallback(
-    async (index: number, pass: number, seq: number) => {
+    async (
+      index: number,
+      pass: number,
+      seq: number,
+      options?: { alreadyBlack?: boolean; segmentStarted?: boolean },
+    ) => {
+      const { alreadyBlack = false, segmentStarted = false } = options ?? {};
       const step = stepsRef.current[index];
       const stat = statInterstitialFromStep(step);
       setInterstitial(stat);
 
-      setFadeOpaque(true);
-      await delayMs(REEL_FADE_IN_MS);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
+      if (!alreadyBlack) {
+        setFadeOpaque(true);
+        if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
+        await delayMs(REEL_FADE_IN_MS);
+        if (seq !== playSeqRef.current || !playingRef.current) return;
+      } else if (segmentStarted) {
+        ensureSegmentPlaying(index, pass, true);
+      } else {
+        ensureSegmentPlaying(index, pass, false);
+      }
 
-      loadStep(index, pass);
-      await waitForSegmentPresentable(index);
+      await waitForSegmentPlaying(index);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
       await delayMs(stat ? REEL_STAT_HOLD_MS : REEL_FADE_HOLD_MS);
@@ -275,7 +321,7 @@ const HighlightReelPlayer = forwardRef<
       setFadeOpaque(false);
       await delayMs(REEL_FADE_OUT_MS);
     },
-    [loadStep, waitForSegmentPresentable],
+    [ensureSegmentPlaying, waitForSegmentPlaying],
   );
 
   const beginPlayback = useCallback(async () => {
@@ -283,16 +329,22 @@ const HighlightReelPlayer = forwardRef<
     setPlayingState(true);
 
     const title = titleCardRef.current;
+    let segmentStarted = false;
     if (title) {
       setInterstitial({ kind: "title", ...title });
       setFadeOpaque(true);
+      ensureSegmentPlaying(0, 0, false);
+      segmentStarted = true;
       await delayMs(REEL_FADE_IN_MS);
       await delayMs(REEL_TITLE_HOLD_MS);
       if (seq !== playSeqRef.current || !playingRef.current) return;
     }
 
-    await presentSegmentUnderBlack(0, 0, seq);
-  }, [presentSegmentUnderBlack, setPlayingState]);
+    await presentSegmentUnderBlack(0, 0, seq, {
+      alreadyBlack: !!title,
+      segmentStarted,
+    });
+  }, [ensureSegmentPlaying, presentSegmentUnderBlack, setPlayingState]);
 
   const stop = useCallback(() => {
     playSeqRef.current += 1;
