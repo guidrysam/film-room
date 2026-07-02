@@ -119,6 +119,32 @@ describe("buildReelSteps", () => {
     const steps = buildReelSteps(moments, {});
     assert.equal(reelDurationSec(steps), 25);
   });
+
+  it("carries timelineEventId onto playable steps", () => {
+    const steps = buildReelSteps(
+      [
+        {
+          id: "m1",
+          gameTime: 100,
+          startOffsetSec: -2,
+          endOffsetSec: 3,
+          activeSourceId: "s1",
+          timelineEventId: "evt-1",
+        },
+        {
+          id: "m2",
+          gameTime: 100,
+          startOffsetSec: -2,
+          endOffsetSec: 3,
+          activeSourceId: "s1",
+          timelineEventId: "evt-1",
+        },
+      ],
+      {},
+    );
+    assert.equal(steps[0]!.timelineEventId, "evt-1");
+    assert.equal(steps[1]!.timelineEventId, "evt-1");
+  });
 });
 
 describe("highlight presets", () => {

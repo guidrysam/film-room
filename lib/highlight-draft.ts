@@ -558,6 +558,8 @@ export type ReelStep = {
   speed: number;
   repeat: number;
   label?: string;
+  /** Coach-mark / game event this beat belongs to (live + replay share one id). */
+  timelineEventId?: string;
   /** On-screen player name text (goal / assist). */
   playerOverlay?: string;
   /** How long to show {@link playerOverlay} after each segment starts. */
@@ -588,6 +590,7 @@ export function buildReelSteps(
       speed: normalizeHighlightSpeed(m.speed),
       repeat: normalizeHighlightRepeat(m.repeat),
       ...(m.label ? { label: m.label } : {}),
+      ...(m.timelineEventId ? { timelineEventId: m.timelineEventId } : {}),
     });
   }
   return steps;

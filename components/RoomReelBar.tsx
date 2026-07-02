@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReelStep } from "@/lib/highlight-draft";
+import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
+  REEL_FADE_HOLD_MS,
   REEL_FADE_IN_MS,
   REEL_FADE_OUT_MS,
   runReelSegmentTransition,
@@ -86,15 +88,26 @@ export default function RoomReelBar({
   }, []);
 
   const advanceToStep = useCallback(
-    (index: number, pass: number, withFade: boolean) => {
+    (
+      index: number,
+      pass: number,
+      transition: ReturnType<typeof reelStepTransitionKind> | "none",
+    ) => {
       if (transitioningRef.current) return;
       const run = () => goToStep(index, pass);
-      if (!withFade) {
+      if (transition === "none") {
         run();
         return;
       }
       transitioningRef.current = true;
-      void runReelSegmentTransition(run, setFadeOpaque).finally(() => {
+      const holdMs =
+        transition === "beat" ? REEL_FADE_HOLD_MS : undefined;
+      void runReelSegmentTransition(
+        run,
+        setFadeOpaque,
+        undefined,
+        holdMs,
+      ).finally(() => {
         transitioningRef.current = false;
       });
     },
@@ -126,7 +139,7 @@ export default function RoomReelBar({
         if (t < step.sourceEndTime - 0.1) return;
         const pass = repeatPassRef.current;
         if (pass + 1 < step.repeat) {
-          advanceToStep(stepIndexRef.current, pass + 1, false);
+          advanceToStep(stepIndexRef.current, pass + 1, "none");
           return;
         }
         const next = stepIndexRef.current + 1;
@@ -134,7 +147,9 @@ export default function RoomReelBar({
           stop();
           return;
         }
-        advanceToStep(next, 0, true);
+        const cur = stepsRef.current[stepIndexRef.current];
+        const nextStep = stepsRef.current[next];
+        advanceToStep(next, 0, reelStepTransitionKind(cur, nextStep));
       })();
     }, POLL_MS);
     return () => window.clearInterval(id);

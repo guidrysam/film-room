@@ -20,6 +20,7 @@ import {
   type ReelInterstitial as ReelInterstitialCard,
   type ReelTitleCard,
 } from "@/lib/highlight-reel-cards";
+import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
   REEL_FADE_HOLD_MS,
   REEL_FADE_IN_MS,
@@ -324,6 +325,28 @@ const HighlightReelPlayer = forwardRef<
     [ensureSegmentPlaying, waitForSegmentPlaying],
   );
 
+  /** Black-only cut between beats of the same event (live → replay). */
+  const presentEventBeatUnderBlack = useCallback(
+    async (index: number, pass: number, seq: number) => {
+      setInterstitial(null);
+      setFadeOpaque(true);
+      ensureSegmentPlaying(index, pass, false);
+      await delayMs(REEL_FADE_IN_MS);
+      if (seq !== playSeqRef.current || !playingRef.current) return;
+
+      await waitForSegmentPlaying(index);
+      if (seq !== playSeqRef.current || !playingRef.current) return;
+
+      await delayMs(REEL_FADE_HOLD_MS);
+      await delayMs(REEL_FADE_POST_READY_MS);
+      if (seq !== playSeqRef.current || !playingRef.current) return;
+
+      setFadeOpaque(false);
+      await delayMs(REEL_FADE_OUT_MS);
+    },
+    [ensureSegmentPlaying, waitForSegmentPlaying],
+  );
+
   const beginPlayback = useCallback(async () => {
     const seq = ++playSeqRef.current;
     setPlayingState(true);
@@ -362,6 +385,20 @@ const HighlightReelPlayer = forwardRef<
     }
   }, [setPlayingState]);
 
+  const transitionToEventBeat = useCallback(
+    async (index: number, pass: number) => {
+      if (transitioningRef.current) return;
+      transitioningRef.current = true;
+      const seq = playSeqRef.current;
+      try {
+        await presentEventBeatUnderBlack(index, pass, seq);
+      } finally {
+        transitioningRef.current = false;
+      }
+    },
+    [presentEventBeatUnderBlack],
+  );
+
   const transitionToSegment = useCallback(
     async (index: number, pass: number) => {
       if (transitioningRef.current) return;
@@ -377,14 +414,22 @@ const HighlightReelPlayer = forwardRef<
   );
 
   const advanceToStep = useCallback(
-    (index: number, pass: number, withFade: boolean) => {
-      if (withFade) {
-        void transitionToSegment(index, pass);
+    (
+      index: number,
+      pass: number,
+      transition: ReturnType<typeof reelStepTransitionKind> | "none",
+    ) => {
+      if (transition === "none") {
+        loadStep(index, pass);
         return;
       }
-      loadStep(index, pass);
+      if (transition === "beat") {
+        void transitionToEventBeat(index, pass);
+        return;
+      }
+      void transitionToSegment(index, pass);
     },
-    [loadStep, transitionToSegment],
+    [loadStep, transitionToEventBeat, transitionToSegment],
   );
 
   const play = useCallback(() => {
@@ -451,7 +496,7 @@ const HighlightReelPlayer = forwardRef<
       if (current >= step.sourceEndTime - 0.05) {
         const pass = repeatPassRef.current;
         if (pass + 1 < step.repeat) {
-          advanceToStep(stepIndexRef.current, pass + 1, false);
+          advanceToStep(stepIndexRef.current, pass + 1, "none");
           return;
         }
         const nextIndex = stepIndexRef.current + 1;
@@ -460,7 +505,9 @@ const HighlightReelPlayer = forwardRef<
           onEnded?.();
           return;
         }
-        advanceToStep(nextIndex, 0, true);
+        const cur = stepsRef.current[stepIndexRef.current];
+        const next = stepsRef.current[nextIndex];
+        advanceToStep(nextIndex, 0, reelStepTransitionKind(cur, next));
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
@@ -482,7 +529,7 @@ const HighlightReelPlayer = forwardRef<
         const step = stepsRef.current[stepIndexRef.current];
         if (!step) return;
         if (pass + 1 < step.repeat) {
-          advanceToStep(stepIndexRef.current, pass + 1, false);
+          advanceToStep(stepIndexRef.current, pass + 1, "none");
           return;
         }
         const nextIndex = stepIndexRef.current + 1;
@@ -491,7 +538,9 @@ const HighlightReelPlayer = forwardRef<
           onEnded?.();
           return;
         }
-        advanceToStep(nextIndex, 0, true);
+        const cur = stepsRef.current[stepIndexRef.current];
+        const next = stepsRef.current[nextIndex];
+        advanceToStep(nextIndex, 0, reelStepTransitionKind(cur, next));
       }
     },
     [advanceToStep, kickPlayback, onEnded, stop],
