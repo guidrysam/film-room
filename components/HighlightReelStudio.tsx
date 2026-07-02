@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HighlightReelPlayer, {
   type HighlightReelPlayerHandle,
 } from "@/components/HighlightReelPlayer";
+import ReelClipTrimBar from "@/components/ReelClipTrimBar";
 import { teamFilmRoomRoute } from "@/lib/team-film-room";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import {
@@ -1060,64 +1061,18 @@ export default function HighlightReelStudio({
                   <div
                     className={`mt-2 space-y-2 ${multiBeat ? "border-t border-white/[0.05] pt-2" : ""}`}
                   >
-                    {group.moments.map((m, beatIndex) => (
-                      <div
-                        key={m.id}
-                        className={
-                          multiBeat
-                            ? "rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
-                            : ""
-                        }
-                      >
-                        {multiBeat ? (
-                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                            {beatIndex === 0
-                              ? "Live"
-                              : m.label?.trim() || `Beat ${beatIndex + 1}`}
-                          </p>
-                        ) : null}
-                        <div className="flex flex-wrap items-center gap-2">
-                          {!multiBeat ? (
-                            <>
-                              <select
-                                className={inputClass}
-                                value={m.speed ?? 1}
-                                onChange={(e) =>
-                                  updateMoment(m.id, {
-                                    speed:
-                                      Number(e.target.value) === 1
-                                        ? undefined
-                                        : Number(e.target.value),
-                                  })
-                                }
-                                aria-label="Speed"
-                              >
-                                {HIGHLIGHT_SPEEDS.map((sp) => (
-                                  <option key={sp} value={sp}>
-                                    {sp}×
-                                  </option>
-                                ))}
-                              </select>
-                              <label className="flex items-center gap-1 text-[10px] text-zinc-500">
-                                loop
-                                <input
-                                  className={`${inputClass} w-12`}
-                                  type="number"
-                                  min={1}
-                                  max={10}
-                                  value={m.repeat ?? 1}
-                                  onChange={(e) => {
-                                    const r = normalizeHighlightRepeat(
-                                      e.target.value,
-                                    );
-                                    updateMoment(m.id, {
-                                      repeat: r === 1 ? undefined : r,
-                                    });
-                                  }}
-                                />
-                              </label>
-                            </>
-                          ) : (
+                    {multiBeat ? (
+                      <>
+                        {group.moments.map((m, beatIndex) => (
+                          <div
+                            key={m.id}
+                            className="flex flex-wrap items-center gap-2 rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
+                          >
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                              {beatIndex === 0
+                                ? "Live"
+                                : m.label?.trim() || `Beat ${beatIndex + 1}`}
+                            </span>
                             <select
                               className={inputClass}
                               value={m.speed ?? 1}
@@ -1137,62 +1092,89 @@ export default function HighlightReelStudio({
                                 </option>
                               ))}
                             </select>
-                          )}
-                        </div>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500">
-                          {!multiBeat ? (
-                            <span>
-                              at{" "}
-                              <span className="font-mono text-zinc-300">
-                                {formatTimelineSeconds(m.gameTime)}
-                              </span>
-                            </span>
-                          ) : null}
-                          <label className="flex items-center gap-1">
-                            in
-                            <input
-                              className={`${inputClass} w-14`}
-                              type="number"
-                              step={1}
-                              value={m.startOffsetSec}
-                              onChange={(e) =>
-                                updateMoment(m.id, {
-                                  startOffsetSec: Number(e.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="flex items-center gap-1">
-                            out
-                            <input
-                              className={`${inputClass} w-14`}
-                              type="number"
-                              step={1}
-                              value={m.endOffsetSec}
-                              onChange={(e) =>
-                                updateMoment(m.id, {
-                                  endOffsetSec: Number(e.target.value),
-                                })
-                              }
-                            />
-                          </label>
-                          <span>
-                            clip{" "}
-                            {Math.max(0, m.endOffsetSec - m.startOffsetSec)}s
+                          </div>
+                        ))}
+                        <ReelClipTrimBar
+                          gameTime={primary.gameTime}
+                          startOffsetSec={primary.startOffsetSec}
+                          endOffsetSec={primary.endOffsetSec}
+                          onChange={(startOffsetSec, endOffsetSec) =>
+                            patchGroup(group, {
+                              startOffsetSec,
+                              endOffsetSec,
+                            })
+                          }
+                        />
+                        <p className="text-[10px] text-zinc-500">
+                          at{" "}
+                          <span className="font-mono text-zinc-300">
+                            {formatTimelineSeconds(primary.gameTime)}
                           </span>
+                        </p>
+                      </>
+                    ) : (
+                      group.moments.map((m) => (
+                        <div key={m.id}>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              className={inputClass}
+                              value={m.speed ?? 1}
+                              onChange={(e) =>
+                                updateMoment(m.id, {
+                                  speed:
+                                    Number(e.target.value) === 1
+                                      ? undefined
+                                      : Number(e.target.value),
+                                })
+                              }
+                              aria-label="Speed"
+                            >
+                              {HIGHLIGHT_SPEEDS.map((sp) => (
+                                <option key={sp} value={sp}>
+                                  {sp}×
+                                </option>
+                              ))}
+                            </select>
+                            <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                              loop
+                              <input
+                                className={`${inputClass} w-12`}
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={m.repeat ?? 1}
+                                onChange={(e) => {
+                                  const r = normalizeHighlightRepeat(
+                                    e.target.value,
+                                  );
+                                  updateMoment(m.id, {
+                                    repeat: r === 1 ? undefined : r,
+                                  });
+                                }}
+                              />
+                            </label>
+                          </div>
+                          <ReelClipTrimBar
+                            gameTime={m.gameTime}
+                            startOffsetSec={m.startOffsetSec}
+                            endOffsetSec={m.endOffsetSec}
+                            onChange={(startOffsetSec, endOffsetSec) =>
+                              updateMoment(m.id, {
+                                startOffsetSec,
+                                endOffsetSec,
+                              })
+                            }
+                          />
+                          <p className="mt-1 text-[10px] text-zinc-500">
+                            at{" "}
+                            <span className="font-mono text-zinc-300">
+                              {formatTimelineSeconds(m.gameTime)}
+                            </span>
+                          </p>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
-
-                  {multiBeat ? (
-                    <p className="mt-2 text-[10px] text-zinc-500">
-                      at{" "}
-                      <span className="font-mono text-zinc-300">
-                        {formatTimelineSeconds(primary.gameTime)}
-                      </span>
-                    </p>
-                  ) : null}
                 </li>
               );
             })}

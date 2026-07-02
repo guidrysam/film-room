@@ -6,7 +6,7 @@ import {
 } from "./highlight-reel-transition";
 
 describe("reelTransitionLeadSec", () => {
-  it("uses up to two and a half seconds of lead time on normal clips", () => {
+  it("uses up to one second of lead time on normal clips", () => {
     assert.equal(
       reelTransitionLeadSec({ sourceStartTime: 10, sourceEndTime: 25 }),
       REEL_PRE_TRANSITION_SEC,
