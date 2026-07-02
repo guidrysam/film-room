@@ -68,6 +68,7 @@ import {
   ensureHighlightReelSharing,
   highlightReelWatchUrl,
 } from "@/lib/highlight-reel-share";
+import { copyTextToClipboard } from "@/lib/copy-text";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 
 export type HighlightReelStudioProps = {
@@ -195,6 +196,7 @@ export default function HighlightReelStudio({
   const [recordMessage, setRecordMessage] = useState<string | null>(null);
   const [sharingLink, setSharingLink] = useState(false);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [watchUrl, setWatchUrl] = useState<string | null>(null);
   const recordSupported = useMemo(() => isReelRecordingSupported(), []);
   const controllerRef = useRef<ReelRecordingController | null>(null);
   const recordingRef = useRef(false);
@@ -490,8 +492,13 @@ export default function HighlightReelStudio({
       });
       const shareId = await ensureHighlightReelSharing(gameId, id, payload);
       const url = highlightReelWatchUrl(shareId);
-      await navigator.clipboard.writeText(url);
-      setShareMessage("Watch link copied — anyone with the link can play this reel.");
+      setWatchUrl(url);
+      const copied = await copyTextToClipboard(url);
+      setShareMessage(
+        copied
+          ? "Watch link copied — anyone with the link can play this reel."
+          : "Watch link ready — tap Copy below or select the link.",
+      );
     } catch (e) {
       setShareMessage(
         e instanceof Error ? e.message : "Could not create a watch link.",
@@ -511,6 +518,14 @@ export default function HighlightReelStudio({
     playableSources,
     gameId,
   ]);
+
+  const handleCopyWatchUrlAgain = useCallback(async () => {
+    if (!watchUrl) return;
+    const copied = await copyTextToClipboard(watchUrl);
+    setShareMessage(
+      copied ? "Link copied." : "Select the link and copy manually (⌘C).",
+    );
+  }, [watchUrl]);
 
   const handlePlayInRoom = useCallback(async () => {
     setOpeningRoom(true);
@@ -734,13 +749,40 @@ export default function HighlightReelStudio({
           {shareMessage ? (
             <p
               className={`mt-2 text-[10px] ${
-                shareMessage.startsWith("Watch link")
-                  ? "text-emerald-300/90"
-                  : "text-rose-200/90"
+                shareMessage.includes("Could not") ||
+                shareMessage.includes("Add at least")
+                  ? "text-rose-200/90"
+                  : "text-emerald-300/90"
               }`}
             >
               {shareMessage}
             </p>
+          ) : null}
+          {watchUrl ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                readOnly
+                value={watchUrl}
+                className={`${inputClass} min-w-0 flex-1 font-mono text-[10px]`}
+                aria-label="Watch link"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <button
+                type="button"
+                onClick={() => void handleCopyWatchUrlAgain()}
+                className={ghostBtn}
+              >
+                Copy
+              </button>
+              <a
+                href={watchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={ghostBtn}
+              >
+                Open
+              </a>
+            </div>
           ) : null}
 
           <details className="mt-4 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
