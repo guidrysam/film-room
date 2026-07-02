@@ -34,8 +34,12 @@ import {
   type HighlightPresetId,
 } from "@/lib/highlight-presets";
 import {
+  formatHighlightMarkLabel,
+  highlightMomentsFromGameMark,
   highlightMomentsFromGameMarks,
   isHighlightMarkEvent,
+  listHighlightReelMarks,
+  resolveHighlightMarkSourceId,
 } from "@/lib/highlight-from-marks";
 import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
 import { listTeamPlayers, type Player } from "@/lib/teams";
@@ -64,6 +68,10 @@ const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50";
 const inputClass =
   "rounded-lg border border-white/10 bg-black/30 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-1 focus:ring-blue-500/30";
+const markPresetBtn =
+  "rounded-md border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-40";
+const markPresetBtnPrimary =
+  "rounded-md border border-blue-500/45 bg-blue-950/40 px-2 py-0.5 text-[10px] font-semibold text-blue-100 transition hover:bg-blue-900/50 disabled:cursor-not-allowed disabled:opacity-40";
 
 function localMomentId(): string {
   return `hm_${Math.random().toString(36).slice(2, 10)}`;
@@ -140,8 +148,9 @@ export default function HighlightReelStudio({
     [playableSources],
   );
 
-  const seedMarks = useMemo(
-    () => events.filter(isHighlightMarkEvent).sort((a, b) => a.t - b.t),
+  const reelMarks = useMemo(() => listHighlightReelMarks(events), [events]);
+  const rawMarkCount = useMemo(
+    () => events.filter(isHighlightMarkEvent).length,
     [events],
   );
 
@@ -159,7 +168,7 @@ export default function HighlightReelStudio({
   const [baseTimeStr, setBaseTimeStr] = useState("0");
   const [basePrimary, setBasePrimary] = useState<string>("");
   const [presetId, setPresetId] = useState<HighlightPresetId>("replay");
-  const [bulkPresetId, setBulkPresetId] = useState<HighlightPresetId>("single");
+  const [bulkPresetId, setBulkPresetId] = useState<HighlightPresetId>("replay");
 
   // Recording.
   const [recording, setRecording] = useState(false);
@@ -282,8 +291,8 @@ export default function HighlightReelStudio({
 
   const buildFromAllMarks = useCallback(
     (mode: "replace" | "append") => {
-      if (!basePrimary || seedMarks.length === 0) return;
-      const generated = highlightMomentsFromGameMarks(seedMarks, {
+      if (!basePrimary || reelMarks.length === 0) return;
+      const generated = highlightMomentsFromGameMarks(events, {
         primarySourceId: basePrimary,
         playableSourceIds: playableSources.map((s) => s.id),
         presetId: bulkPresetId,
@@ -304,19 +313,43 @@ export default function HighlightReelStudio({
       }
       setMessage(
         mode === "replace"
-          ? `Built a reel with ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${seedMarks.length} mark${seedMarks.length === 1 ? "" : "s"}.`
-          : `Added ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${seedMarks.length} mark${seedMarks.length === 1 ? "" : "s"}.`,
+          ? `Built a reel with ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${reelMarks.length} event${reelMarks.length === 1 ? "" : "s"}.`
+          : `Added ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${reelMarks.length} event${reelMarks.length === 1 ? "" : "s"}.`,
       );
     },
     [
       basePrimary,
-      seedMarks,
+      reelMarks.length,
+      events,
       playableSources,
       bulkPresetId,
       game.title,
       moments,
       mutateMoments,
     ],
+  );
+
+  const addMarkToReel = useCallback(
+    (event: GameTimelineEvent, markPresetId: HighlightPresetId) => {
+      if (!basePrimary) return;
+      const generated = highlightMomentsFromGameMark(event, {
+        primarySourceId: basePrimary,
+        playableSourceIds: playableSources.map((s) => s.id),
+        presetId: markPresetId,
+      });
+      if (generated.length === 0) {
+        setMessage("Could not add that mark — no playable angle.");
+        return;
+      }
+      mutateMoments([...moments, ...generated.map(inputToMoment)]);
+      const presetName =
+        HIGHLIGHT_PRESET_LIST.find((p) => p.id === markPresetId)?.name ??
+        "segments";
+      setMessage(
+        `Added ${formatHighlightMarkLabel(event)} (${presetName}, ${generated.length} segment${generated.length === 1 ? "" : "s"}).`,
+      );
+    },
+    [basePrimary, playableSources, moments, mutateMoments],
   );
 
   const updateMoment = useCallback(
@@ -659,14 +692,14 @@ export default function HighlightReelStudio({
               <label className="text-[10px] uppercase tracking-wide text-zinc-500">
                 Moment
               </label>
-              {seedMarks.length > 0 ? (
+              {reelMarks.length > 0 ? (
                 <select
                   className={inputClass}
                   onChange={(e) => {
                     const val = e.target.value;
                     if (!val) return;
                     setBaseTimeStr(val);
-                    const picked = seedMarks.find((m) => String(m.t) === val);
+                    const picked = reelMarks.find((m) => String(m.t) === val);
                     if (
                       picked?.sourceId &&
                       playableSources.some((s) => s.id === picked.sourceId)
@@ -676,11 +709,11 @@ export default function HighlightReelStudio({
                   }}
                   value=""
                 >
-                  <option value="">From a coach mark…</option>
-                  {seedMarks.map((m) => (
+                  <option value="">From a game event…</option>
+                  {reelMarks.map((m) => (
                     <option key={m.id} value={String(m.t)}>
                       {formatTimelineSeconds(m.t)} ·{" "}
-                      {m.label?.trim() || "Mark"}
+                      {formatHighlightMarkLabel(m)}
                     </option>
                   ))}
                 </select>
@@ -749,18 +782,76 @@ export default function HighlightReelStudio({
               </div>
             </div>
 
-            {seedMarks.length > 0 ? (
+            {reelMarks.length > 0 ? (
               <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/15 p-2.5">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/90">
-                  All game marks ({seedMarks.length})
+                  Game events ({reelMarks.length}
+                  {rawMarkCount > reelMarks.length
+                    ? ` · ${rawMarkCount} marks merged`
+                    : ""}
+                  )
                 </p>
                 <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
-                  Turn every Review mark, stat, and tag into reel segments in
-                  game order. Each mark uses its tagged angle when available.
+                  Goal and assist on the same play count as one event. Add a
+                  quick clip or a stylized live + replay cut for each moment.
                 </p>
+
+                <ul className="mt-2 max-h-64 space-y-1.5 overflow-y-auto">
+                  {reelMarks.map((m) => {
+                    const sourceId = resolveHighlightMarkSourceId(
+                      m,
+                      playableSources.map((s) => s.id),
+                      basePrimary,
+                    );
+                    const sourceLabel =
+                      playableSources.find((s) => s.id === sourceId)?.label ??
+                      "Angle";
+                    return (
+                      <li
+                        key={m.id}
+                        className="rounded-md border border-white/[0.06] bg-black/30 px-2 py-1.5"
+                      >
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          <span className="font-mono text-[10px] text-zinc-400">
+                            {formatTimelineSeconds(m.t)}
+                          </span>
+                          <span className="text-[11px] font-semibold text-zinc-100">
+                            {formatHighlightMarkLabel(m)}
+                          </span>
+                          <span className="text-[10px] text-zinc-500">
+                            · {sourceLabel}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {HIGHLIGHT_PRESET_LIST.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              title={p.description}
+                              disabled={!basePrimary}
+                              onClick={() => addMarkToReel(m, p.id)}
+                              className={
+                                p.id === "replay"
+                                  ? markPresetBtnPrimary
+                                  : markPresetBtn
+                              }
+                            >
+                              {p.id === "replay" ? "Live + replay" : p.name}
+                            </button>
+                          ))}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                <div className="mt-3 border-t border-white/[0.06] pt-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    All events at once
+                  </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <label className="text-[10px] uppercase tracking-wide text-zinc-500">
-                    Style per mark
+                    Style per event
                   </label>
                   <select
                     className={inputClass}
@@ -768,11 +859,11 @@ export default function HighlightReelStudio({
                     onChange={(e) =>
                       setBulkPresetId(e.target.value as HighlightPresetId)
                     }
-                    aria-label="Preset for all marks"
+                    aria-label="Preset for all events"
                   >
                     {HIGHLIGHT_PRESET_LIST.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name}
+                        {p.id === "replay" ? "Live + replay" : p.name}
                       </option>
                     ))}
                   </select>
@@ -783,7 +874,7 @@ export default function HighlightReelStudio({
                     onClick={() => buildFromAllMarks("replace")}
                     className={primaryBtn}
                   >
-                    Build reel from all marks
+                    Build reel from all events
                   </button>
                   <button
                     type="button"
@@ -791,8 +882,9 @@ export default function HighlightReelStudio({
                     disabled={moments.length === 0}
                     className={ghostBtn}
                   >
-                    Add all marks to reel
+                    Add all events to reel
                   </button>
+                </div>
                 </div>
               </div>
             ) : null}

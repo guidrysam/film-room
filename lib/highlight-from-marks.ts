@@ -173,11 +173,10 @@ export type HighlightFromMarksOptions = {
 };
 
 /**
- * Turn Review coach marks, stats, and tags into ordered highlight reel segments.
- * One mark may expand to multiple segments when a multi-beat preset is chosen.
+ * Turn one Review mark into highlight reel segment(s) for the chosen preset.
  */
-export function highlightMomentsFromGameMarks(
-  events: GameTimelineEvent[],
+export function highlightMomentsFromGameMark(
+  event: GameTimelineEvent,
   opts: HighlightFromMarksOptions,
 ): AddHighlightMomentInput[] {
   const startOffsetSec = opts.startOffsetSec ?? DEFAULT_START_OFFSET;
@@ -185,43 +184,59 @@ export function highlightMomentsFromGameMarks(
   const presetId = opts.presetId ?? "single";
   const playable = new Set(opts.playableSourceIds);
 
+  const primarySourceId = resolveHighlightMarkSourceId(
+    event,
+    opts.playableSourceIds,
+    opts.primarySourceId,
+  );
+  if (!primarySourceId || !playable.has(primarySourceId)) return [];
+
+  const label = formatHighlightMarkLabel(event);
+  const playerIds = getEventPlayerIds(event);
+  const { goalPlayerIds, assistPlayerIds } = highlightPlayerIdsFromMark(event);
+  const generated = generatePresetMoments(
+    presetId,
+    {
+      gameTime: Math.max(0, event.t),
+      startOffsetSec,
+      endOffsetSec,
+      primarySourceId,
+      label,
+      ...(playerIds.length > 0 ? { playerIds } : {}),
+      ...(goalPlayerIds ? { goalPlayerIds } : {}),
+      ...(assistPlayerIds ? { assistPlayerIds } : {}),
+    },
+    opts.playableSourceIds,
+  );
+
+  return generated.map((moment) => ({
+    ...moment,
+    timelineEventId: event.id,
+    ...(goalPlayerIds ? { goalPlayerIds } : {}),
+    ...(assistPlayerIds ? { assistPlayerIds } : {}),
+  }));
+}
+
+/** Ordered highlight marks with goal + assist merged into one event. */
+export function listHighlightReelMarks(
+  events: GameTimelineEvent[],
+): GameTimelineEvent[] {
+  return mergeGoalAssistMarks(events);
+}
+
+/**
+ * Turn Review coach marks, stats, and tags into ordered highlight reel segments.
+ * One mark may expand to multiple segments when a multi-beat preset is chosen.
+ */
+export function highlightMomentsFromGameMarks(
+  events: GameTimelineEvent[],
+  opts: HighlightFromMarksOptions,
+): AddHighlightMomentInput[] {
   const marks = mergeGoalAssistMarks(events);
   const out: AddHighlightMomentInput[] = [];
 
   for (const event of marks) {
-    const primarySourceId = resolveHighlightMarkSourceId(
-      event,
-      opts.playableSourceIds,
-      opts.primarySourceId,
-    );
-    if (!primarySourceId || !playable.has(primarySourceId)) continue;
-
-    const label = formatHighlightMarkLabel(event);
-    const playerIds = getEventPlayerIds(event);
-    const { goalPlayerIds, assistPlayerIds } = highlightPlayerIdsFromMark(event);
-    const generated = generatePresetMoments(
-      presetId,
-      {
-        gameTime: Math.max(0, event.t),
-        startOffsetSec,
-        endOffsetSec,
-        primarySourceId,
-        label,
-        ...(playerIds.length > 0 ? { playerIds } : {}),
-        ...(goalPlayerIds ? { goalPlayerIds } : {}),
-        ...(assistPlayerIds ? { assistPlayerIds } : {}),
-      },
-      opts.playableSourceIds,
-    );
-
-    for (const moment of generated) {
-      out.push({
-        ...moment,
-        timelineEventId: event.id,
-        ...(goalPlayerIds ? { goalPlayerIds } : {}),
-        ...(assistPlayerIds ? { assistPlayerIds } : {}),
-      });
-    }
+    out.push(...highlightMomentsFromGameMark(event, opts));
   }
 
   return out;

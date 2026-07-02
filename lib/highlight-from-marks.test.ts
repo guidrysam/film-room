@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import type { GameTimelineEvent } from "./games";
 import {
   formatHighlightMarkLabel,
+  highlightMomentsFromGameMark,
   highlightMomentsFromGameMarks,
   isHighlightMarkEvent,
+  listHighlightReelMarks,
   mergeGoalAssistMarks,
   resolveHighlightMarkSourceId,
 } from "./highlight-from-marks";
@@ -162,5 +164,54 @@ describe("highlightMomentsFromGameMarks", () => {
     assert.deepEqual(moments[0]!.goalPlayerIds, ["p1"]);
     assert.deepEqual(moments[0]!.assistPlayerIds, ["p2"]);
     assert.equal(moments[1]!.label, "Shot");
+  });
+
+  it("listHighlightReelMarks merges goal and assist before listing", () => {
+    const listed = listHighlightReelMarks([
+      mark({
+        id: "goal1",
+        type: "stat",
+        t: 374,
+        payload: { statType: "goal", playerIds: ["p1"] },
+      }),
+      mark({
+        id: "ast1",
+        type: "stat",
+        t: 374,
+        payload: { statType: "assist", playerIds: ["p2"] },
+      }),
+      mark({ id: "shot1", type: "stat", t: 400, payload: { statType: "shot" } }),
+    ]);
+    assert.equal(listed.length, 2);
+    assert.equal(listed[0]!.label, "Goal + Assist");
+    assert.equal(formatHighlightMarkLabel(listed[1]!), "Shot");
+  });
+
+  it("highlightMomentsFromGameMark expands replay into live + slow-mo", () => {
+    const moments = highlightMomentsFromGameMark(
+      mark({
+        id: "goal1",
+        type: "stat",
+        t: 90,
+        sourceId: "cam-a",
+        label: "Goal + Assist",
+        payload: {
+          statType: "goal",
+          highlightGoalPlayerIds: ["p1"],
+          highlightAssistPlayerIds: ["p2"],
+          playerIds: ["p1", "p2"],
+        },
+      }),
+      {
+        primarySourceId: "cam-a",
+        playableSourceIds: ["cam-a"],
+        presetId: "replay",
+      },
+    );
+    assert.equal(moments.length, 2);
+    assert.equal(moments[0]!.label, "Goal + Assist");
+    assert.equal(moments[1]!.label, "Slow-mo replay");
+    assert.deepEqual(moments[0]!.goalPlayerIds, ["p1"]);
+    assert.deepEqual(moments[0]!.assistPlayerIds, ["p2"]);
   });
 });
