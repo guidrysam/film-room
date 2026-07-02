@@ -1,12 +1,9 @@
 import {
-  collectionGroup,
   doc,
   getDoc,
-  getDocs,
-  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
-  where,
 } from "firebase/firestore";
 import type { ReelStep } from "@/lib/highlight-draft";
 import type { Game, GameVideoSource } from "@/lib/games";
@@ -73,6 +70,10 @@ function firestoreErrorCode(err: unknown): string | undefined {
 
 function cutsDoc(gameId: string, cutId: string) {
   return doc(firestore, "games", gameId, "cuts", cutId);
+}
+
+function shareDoc(shareId: string) {
+  return doc(firestore, "highlightReelShares", shareId);
 }
 
 /** Public watch URL for a shared highlight reel. */
@@ -162,6 +163,26 @@ export function parseHighlightReelSharePayload(
   };
 }
 
+function parseShareDoc(
+  shareId: string,
+  raw: Record<string, unknown>,
+): SharedHighlightReelLookupResult | null {
+  const payload = parseHighlightReelSharePayload(raw.payload);
+  if (!payload) return null;
+  const gameId = typeof raw.gameId === "string" ? raw.gameId.trim() : "";
+  const cutId = typeof raw.cutId === "string" ? raw.cutId.trim() : "";
+  if (!gameId || !cutId) return null;
+  return {
+    ok: true,
+    gameId,
+    cutId,
+    payload,
+    ...(typeof raw.createdByName === "string" && raw.createdByName.trim()
+      ? { createdByName: raw.createdByName.trim() }
+      : {}),
+  };
+}
+
 /**
  * Ensures a reel has a public watch link and refreshes the denormalized playback
  * payload so anonymous viewers do not need game source reads.
@@ -187,6 +208,13 @@ export async function ensureHighlightReelSharing(
   if (raw.kind !== "highlight") {
     throw new Error("Only highlight reels can be shared with a watch link.");
   }
+  const createdBy =
+    typeof raw.createdBy === "string" && raw.createdBy.trim()
+      ? raw.createdBy.trim()
+      : null;
+  if (!createdBy) {
+    throw new Error("This reel is missing an owner and cannot be shared.");
+  }
 
   const existingShareId =
     raw.isShared === true &&
@@ -195,7 +223,20 @@ export async function ensureHighlightReelSharing(
       ? raw.shareId.trim()
       : generateShareId();
 
+  const shareRecord = {
+    shareId: existingShareId,
+    gameId,
+    cutId,
+    createdBy,
+    payload,
+    updatedAt: serverTimestamp(),
+    ...(typeof raw.createdByName === "string" && raw.createdByName.trim()
+      ? { createdByName: raw.createdByName.trim() }
+      : {}),
+  };
+
   try {
+    await setDoc(shareDoc(existingShareId), shareRecord, { merge: true });
     await updateDoc(ref, {
       shareId: existingShareId,
       isShared: true,
@@ -210,47 +251,21 @@ export async function ensureHighlightReelSharing(
   return existingShareId;
 }
 
-/** Fetch a shared highlight reel by public share id (collection group query). */
+/** Fetch a shared highlight reel by public share id (top-level public doc). */
 export async function getHighlightReelByShareId(
   shareId: string,
 ): Promise<SharedHighlightReelLookupResult> {
   const trimmed = shareId.trim();
   if (!trimmed) return { ok: false, kind: "not_found" };
 
-  const q = query(
-    collectionGroup(firestore, "cuts"),
-    where("shareId", "==", trimmed),
-    where("isShared", "==", true),
-  );
-
   try {
-    const snap = await getDocs(q);
-    if (snap.empty) return { ok: false, kind: "not_found" };
-
-    const match = snap.docs.find((d) => {
-      const data = d.data() as Record<string, unknown>;
-      return data.kind === "highlight" && parseHighlightReelSharePayload(data.sharePayload);
-    });
-    if (!match) return { ok: false, kind: "not_found" };
-
-    const data = match.data() as Record<string, unknown>;
-    const payload = parseHighlightReelSharePayload(data.sharePayload);
-    if (!payload) return { ok: false, kind: "not_found" };
-
-    const gameId =
-      typeof data.gameId === "string" && data.gameId.trim()
-        ? data.gameId.trim()
-        : match.ref.parent.parent?.id ?? "";
-
-    return {
-      ok: true,
-      gameId,
-      cutId: match.id,
-      payload,
-      ...(typeof data.createdByName === "string" && data.createdByName.trim()
-        ? { createdByName: data.createdByName.trim() }
-        : {}),
-    };
+    const snap = await getDoc(shareDoc(trimmed));
+    if (!snap.exists()) {
+      return { ok: false, kind: "not_found" };
+    }
+    const parsed = parseShareDoc(trimmed, snap.data() as Record<string, unknown>);
+    if (!parsed) return { ok: false, kind: "not_found" };
+    return parsed;
   } catch (err) {
     return {
       ok: false,

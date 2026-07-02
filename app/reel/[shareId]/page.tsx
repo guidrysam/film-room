@@ -98,7 +98,8 @@ export default function SharedHighlightReelPage() {
         <div className={`${panelClass} max-w-md text-center`}>
           <p className="text-lg font-semibold">Highlight reel not found</p>
           <p className="mt-2 text-sm text-zinc-400">
-            This link may have expired or the reel was removed.
+            This link may have expired or the reel was removed. Ask the coach to
+            open the reel studio and tap <strong>Copy watch link</strong> again.
           </p>
           <Link href="/" className="mt-4 inline-block text-sm text-blue-300 hover:text-blue-200">
             Go to Film Room

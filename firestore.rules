@@ -472,6 +472,16 @@ service cloud.firestore {
       allow read: if isPublicSharedHighlightReel();
     }
 
+    // Public highlight reel watch links (anonymous read by share id).
+    match /highlightReelShares/{shareId} {
+      allow read: if true;
+      allow create, update: if request.auth != null &&
+                               request.resource.data.createdBy == request.auth.uid &&
+                               request.resource.data.shareId == shareId;
+      allow delete: if request.auth != null &&
+                       resource.data.createdBy == request.auth.uid;
+    }
+
     // ---- Import batches (event/season team groups) --------------------
     match /importBatches/{batchId} {
       allow read: if request.auth != null &&
