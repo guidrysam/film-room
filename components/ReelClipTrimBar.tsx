@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import {
   applyTrimHandleDrag,
@@ -20,6 +20,11 @@ export type ReelClipTrimBarProps = {
   beatLabel?: string;
 };
 
+type DragAnchor = {
+  startOffsetSec: number;
+  endOffsetSec: number;
+};
+
 export default function ReelClipTrimBar({
   gameTime,
   startOffsetSec,
@@ -28,25 +33,31 @@ export default function ReelClipTrimBar({
   beatLabel,
 }: ReelClipTrimBarProps) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef<"start" | "end" | null>(null);
   const dragContextRef = useRef<ClipTrimContext | null>(null);
-  const offsetsRef = useRef({ startOffsetSec, endOffsetSec });
+  const anchorRef = useRef<DragAnchor | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
   const [dragging, setDragging] = useState<"start" | "end" | null>(null);
+  const [draft, setDraft] = useState<DragAnchor | null>(null);
 
-  offsetsRef.current = { startOffsetSec, endOffsetSec };
-
-  const ctx = clipTrimContext(gameTime, startOffsetSec, endOffsetSec);
+  const displayStart = draft?.startOffsetSec ?? startOffsetSec;
+  const displayEnd = draft?.endOffsetSec ?? endOffsetSec;
+  const displayCtx =
+    dragging && dragContextRef.current
+      ? dragContextRef.current
+      : clipTrimContext(gameTime, displayStart, displayEnd);
   const { left, width } = selectionRatios(
     gameTime,
-    startOffsetSec,
-    endOffsetSec,
-    ctx,
+    displayStart,
+    displayEnd,
+    displayCtx,
   );
-  const clipStart = Math.max(0, gameTime + startOffsetSec);
-  const clipEnd = Math.max(clipStart, gameTime + endOffsetSec);
-  const duration = clipDurationSec(startOffsetSec, endOffsetSec);
+  const clipStart = Math.max(0, gameTime + displayStart);
+  const clipEnd = Math.max(clipStart, gameTime + displayEnd);
+  const duration = clipDurationSec(displayStart, displayEnd);
 
-  const ratioFromClientX = useCallback((clientX: number, mapCtx: ClipTrimContext) => {
+  const pointerGameTime = useCallback((clientX: number, mapCtx: ClipTrimContext) => {
     const track = trackRef.current;
     if (!track) return gameTime;
     const rect = track.getBoundingClientRect();
@@ -54,55 +65,74 @@ export default function ReelClipTrimBar({
     return gameTimeFromTrimRatio((clientX - rect.left) / rect.width, mapCtx);
   }, [gameTime]);
 
-  const endDrag = useCallback(() => {
-    draggingRef.current = null;
-    dragContextRef.current = null;
-    setDragging(null);
-  }, []);
-
-  useEffect(() => {
-    if (!dragging) return;
-
-    const onPointerMove = (event: PointerEvent) => {
-      const handle = draggingRef.current;
-      const mapCtx = dragContextRef.current;
-      if (!handle || !mapCtx) return;
-      const { startOffsetSec: start, endOffsetSec: end } = offsetsRef.current;
-      const pointerGameTime = ratioFromClientX(event.clientX, mapCtx);
-      const next = applyTrimHandleDrag(
-        gameTime,
-        start,
-        end,
-        handle,
-        pointerGameTime,
-      );
-      onChange(next.startOffsetSec, next.endOffsetSec);
-    };
-
-    const onPointerUp = () => endDrag();
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-    };
-  }, [dragging, endDrag, gameTime, onChange, ratioFromClientX]);
-
   const beginDrag = useCallback(
-    (handle: "start" | "end") => (event: React.PointerEvent) => {
+    (handle: "start" | "end") => (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
+      event.stopPropagation();
+
+      const anchor: DragAnchor = { startOffsetSec, endOffsetSec };
+      anchorRef.current = anchor;
       dragContextRef.current = clipTrimContext(
         gameTime,
-        startOffsetSec,
-        endOffsetSec,
+        anchor.startOffsetSec,
+        anchor.endOffsetSec,
       );
-      draggingRef.current = handle;
+      setDraft(anchor);
       setDragging(handle);
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const mapCtx = dragContextRef.current;
+        const locked = anchorRef.current;
+        if (!mapCtx || !locked) return;
+
+        const at = pointerGameTime(moveEvent.clientX, mapCtx);
+        if (handle === "start") {
+          const nextStart = applyTrimHandleDrag(
+            gameTime,
+            locked.startOffsetSec,
+            locked.endOffsetSec,
+            "start",
+            at,
+          ).startOffsetSec;
+          const next = {
+            startOffsetSec: nextStart,
+            endOffsetSec: locked.endOffsetSec,
+          };
+          setDraft(next);
+          onChangeRef.current(next.startOffsetSec, next.endOffsetSec);
+          return;
+        }
+
+        const nextEnd = applyTrimHandleDrag(
+          gameTime,
+          locked.startOffsetSec,
+          locked.endOffsetSec,
+          "end",
+          at,
+        ).endOffsetSec;
+        const next = {
+          startOffsetSec: locked.startOffsetSec,
+          endOffsetSec: nextEnd,
+        };
+        setDraft(next);
+        onChangeRef.current(next.startOffsetSec, next.endOffsetSec);
+      };
+
+      const onPointerUp = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointercancel", onPointerUp);
+        anchorRef.current = null;
+        dragContextRef.current = null;
+        setDragging(null);
+        setDraft(null);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
     },
-    [endOffsetSec, gameTime, startOffsetSec],
+    [endOffsetSec, gameTime, pointerGameTime, startOffsetSec],
   );
 
   return (
@@ -121,11 +151,8 @@ export default function ReelClipTrimBar({
           {duration}s
         </span>
       </div>
-      <div
-        ref={trackRef}
-        className="relative h-9 select-none rounded-md border border-white/[0.08] bg-zinc-900/80 px-2"
-      >
-        <div className="relative h-full">
+      <div className="rounded-md border border-white/[0.08] bg-zinc-900/80 px-2 py-1">
+        <div ref={trackRef} className="relative h-7 select-none">
           <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/[0.08]" />
           <div
             className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-blue-500/70"
@@ -134,21 +161,24 @@ export default function ReelClipTrimBar({
               width: `${width * 100}%`,
             }}
           />
-          {(["start", "end"] as const).map((handle) => {
-            const at = handle === "start" ? left : left + width;
-            return (
-              <button
-                key={handle}
-                type="button"
-                aria-label={handle === "start" ? "Trim start" : "Trim end"}
-                className={`absolute top-1/2 z-10 h-7 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
-                  dragging === handle ? "ring-2 ring-blue-400/60" : ""
-                }`}
-                style={{ left: `${at * 100}%` }}
-                onPointerDown={beginDrag(handle)}
-              />
-            );
-          })}
+          <button
+            type="button"
+            aria-label="Trim start"
+            className={`absolute top-1/2 z-10 h-6 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
+              dragging === "start" ? "ring-2 ring-blue-400/60" : ""
+            }`}
+            style={{ left: `${left * 100}%` }}
+            onPointerDown={beginDrag("start")}
+          />
+          <button
+            type="button"
+            aria-label="Trim end"
+            className={`absolute top-1/2 z-10 h-6 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
+              dragging === "end" ? "ring-2 ring-blue-400/60" : ""
+            }`}
+            style={{ left: `${(left + width) * 100}%` }}
+            onPointerDown={beginDrag("end")}
+          />
         </div>
       </div>
     </div>

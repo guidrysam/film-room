@@ -22,11 +22,15 @@ describe("reel-clip-trim", () => {
     assert.ok(left + width <= 1.01);
   });
 
-  it("drags start/end handles with a minimum clip length", () => {
+  it("drags start/end handles independently with a minimum clip length", () => {
     const endDrag = applyTrimHandleDrag(100, -5, 10, "end", 120);
     assert.equal(endDrag.endOffsetSec, 20);
+    assert.equal(endDrag.startOffsetSec, -5);
+
     const startDrag = applyTrimHandleDrag(100, -5, 10, "start", 90);
     assert.equal(startDrag.startOffsetSec, -10);
+    assert.equal(startDrag.endOffsetSec, 10);
+
     assert.equal(clipDurationSec(-5, 10), 15);
   });
 });
