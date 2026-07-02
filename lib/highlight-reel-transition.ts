@@ -8,8 +8,24 @@ export const REEL_FADE_OUT_MS = 500;
 
 /** Black over the tail of the outgoing clip before the cut. */
 export const REEL_PRE_TRANSITION_SEC = 0.25;
-/** Incoming clip plays under black this long before it is revealed. */
-export const REEL_SEGMENT_PREROLL_MS = 3000;
+/** Source seconds to start playback before the trim in-point (hidden under black). */
+export const REEL_CLIP_PREROLL_SEC = 3;
+/** Incoming clip plays under black this long before it is revealed (1× speed). */
+export const REEL_SEGMENT_PREROLL_MS = REEL_CLIP_PREROLL_SEC * 1000;
+
+export function reelPlaybackStartSec(
+  sourceStartTime: number,
+  usePreroll = true,
+): number {
+  if (!usePreroll) return Math.max(0, sourceStartTime);
+  return Math.max(0, sourceStartTime - REEL_CLIP_PREROLL_SEC);
+}
+
+/** Wall-clock black hold while the preroll portion of the clip plays. */
+export function reelPrerollWallMs(speed: number): number {
+  const rate = speed > 0 ? speed : 1;
+  return (REEL_CLIP_PREROLL_SEC / rate) * 1000;
+}
 
 export function reelTransitionLeadSec(step: {
   sourceStartTime: number;

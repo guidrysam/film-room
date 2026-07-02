@@ -23,9 +23,10 @@ import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
   REEL_FADE_IN_MS,
   REEL_FADE_OUT_MS,
-  REEL_SEGMENT_PREROLL_MS,
   REEL_USE_BLACK_TRANSITIONS,
   delayMs,
+  reelPlaybackStartSec,
+  reelPrerollWallMs,
   reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
 
@@ -187,6 +188,10 @@ const HighlightReelPlayer = forwardRef<
           return;
         }
         const deadline = Date.now() + 4000;
+        const playbackStart = reelPlaybackStartSec(
+          step.sourceStartTime,
+          REEL_USE_BLACK_TRANSITIONS,
+        );
         const check = () => {
           const player = playerRef.current;
           if (!player) {
@@ -196,7 +201,7 @@ const HighlightReelPlayer = forwardRef<
           try {
             const state = player.getPlayerState?.();
             const current = player.getCurrentTime?.() ?? 0;
-            const timeOk = current + 0.35 >= step.sourceStartTime;
+            const timeOk = current + 0.35 >= playbackStart;
             const playingOk =
               state === YT_PLAYING || (state === YT_BUFFERING && timeOk);
             if (timeOk && playingOk) {
@@ -271,10 +276,14 @@ const HighlightReelPlayer = forwardRef<
       stepIndexRef.current = index;
       repeatPassRef.current = pass;
       seekSettledAtRef.current = Date.now() + SEEK_SETTLE_MS;
-      lastObservedTimeRef.current = Math.max(0, step.sourceStartTime);
+      const playbackStart = reelPlaybackStartSec(
+        step.sourceStartTime,
+        REEL_USE_BLACK_TRANSITIONS,
+      );
+      lastObservedTimeRef.current = Math.max(0, playbackStart);
       lastTimeAdvanceAtRef.current = Date.now();
 
-      const start = Math.max(0, step.sourceStartTime);
+      const start = playbackStart;
       try {
         if (loadedVideoIdRef.current === videoId) {
           player.seekTo(start, true);
@@ -346,7 +355,7 @@ const HighlightReelPlayer = forwardRef<
       await waitForSegmentPlaying(index);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
-      await delayMs(REEL_SEGMENT_PREROLL_MS);
+      await delayMs(reelPrerollWallMs(step.speed));
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
       setInterstitial(null);
@@ -391,7 +400,7 @@ const HighlightReelPlayer = forwardRef<
         await waitForSegmentPlaying(toIndex);
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
-        await delayMs(REEL_SEGMENT_PREROLL_MS);
+        await delayMs(reelPrerollWallMs(toStep.speed));
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
         setInterstitial(null);
