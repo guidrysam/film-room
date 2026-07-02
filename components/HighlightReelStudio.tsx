@@ -43,6 +43,17 @@ import {
 } from "@/lib/highlight-from-marks";
 import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
 import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
+import {
+  countReelEventGroups,
+  groupHighlightMoments,
+  isMultiBeatReelGroup,
+  moveReelMomentGroup,
+  patchReelMomentGroup,
+  reelGroupDisplayLabel,
+  reelGroupStyleLabel,
+  removeReelMomentGroup,
+  type ReelMomentGroup,
+} from "@/lib/highlight-reel-groups";
 import { getTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 import {
   downloadRecording,
@@ -190,6 +201,8 @@ export default function HighlightReelStudio({
     () => buildReelSteps(moments, sourceOffsets),
     [moments, sourceOffsets],
   );
+  const reelGroups = useMemo(() => groupHighlightMoments(moments), [moments]);
+  const reelEventCount = reelGroups.length;
   const playerNameForId = useCallback(
     (playerId: string) => rosterPlayers.find((p) => p.id === playerId)?.name,
     [rosterPlayers],
@@ -299,8 +312,11 @@ export default function HighlightReelStudio({
       },
       playableSources.map((s) => s.id),
     );
-    mutateMoments([...moments, ...generated.map(inputToMoment)]);
-    setMessage(`Added ${generated.length} styled segment${generated.length === 1 ? "" : "s"}.`);
+    const next = [...moments, ...generated.map(inputToMoment)];
+    mutateMoments(next);
+    setMessage(
+      `Added ${countReelEventGroups(next) === 1 ? "1 event" : `${countReelEventGroups(next)} events`}.`,
+    );
   }, [baseTimeStr, basePrimary, presetId, playableSources, moments, mutateMoments]);
 
   const buildFromAllMarks = useCallback(
@@ -327,8 +343,8 @@ export default function HighlightReelStudio({
       }
       setMessage(
         mode === "replace"
-          ? `Built a reel with ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${reelMarks.length} event${reelMarks.length === 1 ? "" : "s"}.`
-          : `Added ${nextMoments.length} segment${nextMoments.length === 1 ? "" : "s"} from ${reelMarks.length} event${reelMarks.length === 1 ? "" : "s"}.`,
+          ? `Built a reel with ${countReelEventGroups(nextMoments)} event${countReelEventGroups(nextMoments) === 1 ? "" : "s"}.`
+          : `Added ${countReelEventGroups(nextMoments)} event${countReelEventGroups(nextMoments) === 1 ? "" : "s"}.`,
       );
     },
     [
@@ -357,11 +373,11 @@ export default function HighlightReelStudio({
       }
       mutateMoments([...moments, ...generated.map(inputToMoment)]);
       const presetName =
-        HIGHLIGHT_PRESET_LIST.find((p) => p.id === markPresetId)?.name ??
-        "segments";
-      setMessage(
-        `Added ${formatHighlightMarkLabel(event)} (${presetName}, ${generated.length} segment${generated.length === 1 ? "" : "s"}).`,
-      );
+        markPresetId === "replay"
+          ? "Live + replay"
+          : (HIGHLIGHT_PRESET_LIST.find((p) => p.id === markPresetId)?.name ??
+            "clip");
+      setMessage(`Added ${formatHighlightMarkLabel(event)} (${presetName}).`);
     },
     [basePrimary, playableSources, moments, mutateMoments],
   );
@@ -375,18 +391,23 @@ export default function HighlightReelStudio({
     [moments, mutateMoments],
   );
 
-  const removeMoment = useCallback(
-    (id: string) => mutateMoments(moments.filter((m) => m.id !== id)),
+  const removeGroup = useCallback(
+    (group: ReelMomentGroup) =>
+      mutateMoments(removeReelMomentGroup(moments, group)),
     [moments, mutateMoments],
   );
 
-  const moveMoment = useCallback(
-    (index: number, dir: -1 | 1) => {
-      const next = [...moments];
-      const target = index + dir;
-      if (target < 0 || target >= next.length) return;
-      [next[index], next[target]] = [next[target]!, next[index]!];
-      mutateMoments(next);
+  const moveGroup = useCallback(
+    (groupIndex: number, dir: -1 | 1) => {
+      const next = moveReelMomentGroup(moments, groupIndex, dir);
+      if (next) mutateMoments(next);
+    },
+    [moments, mutateMoments],
+  );
+
+  const patchGroup = useCallback(
+    (group: ReelMomentGroup, patch: Partial<HighlightMoment>) => {
+      mutateMoments(patchReelMomentGroup(moments, group, patch));
     },
     [moments, mutateMoments],
   );
@@ -593,7 +614,7 @@ export default function HighlightReelStudio({
                 >
                   {r.name}
                   <span className="ml-1 text-[9px] text-zinc-500">
-                    {r.moments.length}
+                    {countReelEventGroups(r.moments)}
                   </span>
                 </button>
                 <button
@@ -912,7 +933,12 @@ export default function HighlightReelStudio({
       <div className={panel}>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-            Reel segments ({moments.length})
+            Reel events ({reelEventCount})
+            {moments.length > reelEventCount ? (
+              <span className="ml-1 font-normal normal-case text-zinc-500">
+                · {moments.length} beats
+              </span>
+            ) : null}
           </p>
           <div className="flex items-center gap-2">
             <input
@@ -956,140 +982,217 @@ export default function HighlightReelStudio({
           </p>
         ) : (
           <ul className="space-y-2">
-            {moments.map((m, i) => (
-              <li
-                key={m.id}
-                className="rounded-lg border border-white/[0.06] bg-black/25 p-2.5"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[10px] text-zinc-500">
-                    #{i + 1}
-                  </span>
-                  <input
-                    className={`${inputClass} w-36`}
-                    value={m.label ?? ""}
-                    placeholder="Segment label"
-                    onChange={(e) =>
-                      updateMoment(m.id, {
-                        label: e.target.value.trim() || undefined,
-                      })
-                    }
-                  />
-                  <select
-                    className={inputClass}
-                    value={m.activeSourceId}
-                    onChange={(e) =>
-                      updateMoment(m.id, { activeSourceId: e.target.value })
-                    }
-                    aria-label="Angle"
-                  >
-                    {playableSources.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className={inputClass}
-                    value={m.speed ?? 1}
-                    onChange={(e) =>
-                      updateMoment(m.id, {
-                        speed: Number(e.target.value) === 1 ? undefined : Number(e.target.value),
-                      })
-                    }
-                    aria-label="Speed"
-                  >
-                    {HIGHLIGHT_SPEEDS.map((sp) => (
-                      <option key={sp} value={sp}>
-                        {sp}×
-                      </option>
-                    ))}
-                  </select>
-                  <label className="flex items-center gap-1 text-[10px] text-zinc-500">
-                    loop
-                    <input
-                      className={`${inputClass} w-12`}
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={m.repeat ?? 1}
-                      onChange={(e) => {
-                        const r = normalizeHighlightRepeat(e.target.value);
-                        updateMoment(m.id, { repeat: r === 1 ? undefined : r });
-                      }}
-                    />
-                  </label>
-                  <div className="ml-auto flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => moveMoment(i, -1)}
-                      disabled={i === 0}
-                      className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:bg-white/[0.07] disabled:opacity-30"
-                      title="Move up"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveMoment(i, 1)}
-                      disabled={i === moments.length - 1}
-                      className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:bg-white/[0.07] disabled:opacity-30"
-                      title="Move down"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeMoment(m.id)}
-                      className="rounded border border-rose-500/25 bg-rose-950/20 px-1.5 py-0.5 text-[11px] text-rose-200 hover:bg-rose-950/40"
-                      title="Remove segment"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500">
-                  <span>
-                    at{" "}
-                    <span className="font-mono text-zinc-300">
-                      {formatTimelineSeconds(m.gameTime)}
+            {reelGroups.map((group, groupIndex) => {
+              const primary = group.moments[0]!;
+              const styleLabel = reelGroupStyleLabel(group);
+              const multiBeat = isMultiBeatReelGroup(group);
+              return (
+                <li
+                  key={group.moments.map((m) => m.id).join("-")}
+                  className="rounded-lg border border-white/[0.06] bg-black/25 p-2.5"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[10px] text-zinc-500">
+                      #{groupIndex + 1}
                     </span>
-                  </span>
-                  <label className="flex items-center gap-1">
-                    in
                     <input
-                      className={`${inputClass} w-14`}
-                      type="number"
-                      step={1}
-                      value={m.startOffsetSec}
+                      className={`${inputClass} w-36`}
+                      value={reelGroupDisplayLabel(group)}
+                      placeholder="Event label"
                       onChange={(e) =>
-                        updateMoment(m.id, {
-                          startOffsetSec: Number(e.target.value),
+                        updateMoment(primary.id, {
+                          label: e.target.value.trim() || undefined,
                         })
                       }
                     />
-                  </label>
-                  <label className="flex items-center gap-1">
-                    out
-                    <input
-                      className={`${inputClass} w-14`}
-                      type="number"
-                      step={1}
-                      value={m.endOffsetSec}
+                    {styleLabel ? (
+                      <span className="rounded-full border border-blue-500/30 bg-blue-950/35 px-2 py-0.5 text-[10px] font-semibold text-blue-100">
+                        {styleLabel}
+                      </span>
+                    ) : null}
+                    <select
+                      className={inputClass}
+                      value={primary.activeSourceId}
                       onChange={(e) =>
-                        updateMoment(m.id, {
-                          endOffsetSec: Number(e.target.value),
-                        })
+                        patchGroup(group, { activeSourceId: e.target.value })
                       }
-                    />
-                  </label>
-                  <span>
-                    clip{" "}
-                    {Math.max(0, m.endOffsetSec - m.startOffsetSec)}s
-                  </span>
-                </div>
-              </li>
-            ))}
+                      aria-label="Angle"
+                    >
+                      {playableSources.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="ml-auto flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => moveGroup(groupIndex, -1)}
+                        disabled={groupIndex === 0}
+                        className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:bg-white/[0.07] disabled:opacity-30"
+                        title="Move up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveGroup(groupIndex, 1)}
+                        disabled={groupIndex === reelGroups.length - 1}
+                        className="rounded border border-white/10 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:bg-white/[0.07] disabled:opacity-30"
+                        title="Move down"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeGroup(group)}
+                        className="rounded border border-rose-500/25 bg-rose-950/20 px-1.5 py-0.5 text-[11px] text-rose-200 hover:bg-rose-950/40"
+                        title="Remove event"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`mt-2 space-y-2 ${multiBeat ? "border-t border-white/[0.05] pt-2" : ""}`}
+                  >
+                    {group.moments.map((m, beatIndex) => (
+                      <div
+                        key={m.id}
+                        className={
+                          multiBeat
+                            ? "rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
+                            : ""
+                        }
+                      >
+                        {multiBeat ? (
+                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                            {beatIndex === 0
+                              ? "Live"
+                              : m.label?.trim() || `Beat ${beatIndex + 1}`}
+                          </p>
+                        ) : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!multiBeat ? (
+                            <>
+                              <select
+                                className={inputClass}
+                                value={m.speed ?? 1}
+                                onChange={(e) =>
+                                  updateMoment(m.id, {
+                                    speed:
+                                      Number(e.target.value) === 1
+                                        ? undefined
+                                        : Number(e.target.value),
+                                  })
+                                }
+                                aria-label="Speed"
+                              >
+                                {HIGHLIGHT_SPEEDS.map((sp) => (
+                                  <option key={sp} value={sp}>
+                                    {sp}×
+                                  </option>
+                                ))}
+                              </select>
+                              <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                                loop
+                                <input
+                                  className={`${inputClass} w-12`}
+                                  type="number"
+                                  min={1}
+                                  max={10}
+                                  value={m.repeat ?? 1}
+                                  onChange={(e) => {
+                                    const r = normalizeHighlightRepeat(
+                                      e.target.value,
+                                    );
+                                    updateMoment(m.id, {
+                                      repeat: r === 1 ? undefined : r,
+                                    });
+                                  }}
+                                />
+                              </label>
+                            </>
+                          ) : (
+                            <select
+                              className={inputClass}
+                              value={m.speed ?? 1}
+                              onChange={(e) =>
+                                updateMoment(m.id, {
+                                  speed:
+                                    Number(e.target.value) === 1
+                                      ? undefined
+                                      : Number(e.target.value),
+                                })
+                              }
+                              aria-label="Speed"
+                            >
+                              {HIGHLIGHT_SPEEDS.map((sp) => (
+                                <option key={sp} value={sp}>
+                                  {sp}×
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500">
+                          {!multiBeat ? (
+                            <span>
+                              at{" "}
+                              <span className="font-mono text-zinc-300">
+                                {formatTimelineSeconds(m.gameTime)}
+                              </span>
+                            </span>
+                          ) : null}
+                          <label className="flex items-center gap-1">
+                            in
+                            <input
+                              className={`${inputClass} w-14`}
+                              type="number"
+                              step={1}
+                              value={m.startOffsetSec}
+                              onChange={(e) =>
+                                updateMoment(m.id, {
+                                  startOffsetSec: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            out
+                            <input
+                              className={`${inputClass} w-14`}
+                              type="number"
+                              step={1}
+                              value={m.endOffsetSec}
+                              onChange={(e) =>
+                                updateMoment(m.id, {
+                                  endOffsetSec: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </label>
+                          <span>
+                            clip{" "}
+                            {Math.max(0, m.endOffsetSec - m.startOffsetSec)}s
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {multiBeat ? (
+                    <p className="mt-2 text-[10px] text-zinc-500">
+                      at{" "}
+                      <span className="font-mono text-zinc-300">
+                        {formatTimelineSeconds(primary.gameTime)}
+                      </span>
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
 
