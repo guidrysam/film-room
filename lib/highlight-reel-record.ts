@@ -1,10 +1,16 @@
 /**
- * Screen-recording helper for highlight reels. Uses the browser's tab/screen
- * capture (`getDisplayMedia`) + `MediaRecorder` so we can record a reel exactly
- * as it plays — including the YouTube embeds, which can't be drawn to a canvas
- * because of cross-origin restrictions. The user picks which tab/window to
- * share once; we record until they stop or the reel finishes.
+ * Record a highlight reel by capturing the browser tab, then cropping to the
+ * reel preview video element (Region Capture in Chrome/Edge, canvas crop in
+ * Safari). YouTube iframes cannot be drawn to canvas directly, so we still
+ * use display capture — but only the video frame is kept in the output.
  */
+
+import {
+  cropDisplayStreamToElement,
+  isRegionCaptureSupported,
+  startCanvasCropSession,
+  type CanvasCropSession,
+} from "@/lib/highlight-reel-crop";
 
 export function isReelRecordingSupported(): boolean {
   return (
@@ -13,6 +19,10 @@ export function isReelRecordingSupported(): boolean {
     typeof window !== "undefined" &&
     typeof window.MediaRecorder === "function"
   );
+}
+
+export function reelRecordingUsesRegionCapture(): boolean {
+  return isRegionCaptureSupported();
 }
 
 function pickMimeType(): string | undefined {
@@ -45,24 +55,81 @@ export type ReelRecordingController = {
   /** Abort without producing a file. */
   cancel: () => void;
   readonly stream: MediaStream;
+  /** How the preview was isolated from the rest of the tab. */
+  readonly cropMode: "region" | "canvas" | "none";
 };
 
-/**
- * Begin a screen recording. Resolves once the user has granted capture and
- * recording has started. `onAutoStop` fires if the user ends sharing via the
- * browser's own "Stop sharing" control.
- */
-export async function startReelRecording(opts?: {
+export type StartReelRecordingOptions = {
+  /** Preview video frame to record (16:9 surface, not the whole page). */
+  cropElement: HTMLElement;
   onAutoStop?: () => void;
-}): Promise<ReelRecordingController> {
+};
+
+async function prepareCroppedStream(
+  cropElement: HTMLElement,
+): Promise<{
+  stream: MediaStream;
+  cropMode: ReelRecordingController["cropMode"];
+  cleanup: () => void;
+}> {
+  const displayStream = await navigator.mediaDevices.getDisplayMedia({
+    video: {
+      frameRate: 30,
+    } as MediaTrackConstraints,
+    audio: true,
+    ...(typeof window !== "undefined" &&
+    "preferCurrentTab" in (navigator.mediaDevices.getDisplayMedia as object)
+      ? { preferCurrentTab: true }
+      : {}),
+  } as DisplayMediaStreamOptions);
+
+  let canvasSession: CanvasCropSession | null = null;
+  const stopDisplayTracks = () => {
+    for (const t of displayStream.getTracks()) t.stop();
+  };
+
+  const regionOk = await cropDisplayStreamToElement(displayStream, cropElement);
+  if (regionOk) {
+    return {
+      stream: displayStream,
+      cropMode: "region",
+      cleanup: stopDisplayTracks,
+    };
+  }
+
+  try {
+    canvasSession = startCanvasCropSession(displayStream, cropElement, 30);
+    return {
+      stream: canvasSession.stream,
+      cropMode: "canvas",
+      cleanup: () => {
+        canvasSession?.stop();
+        stopDisplayTracks();
+      },
+    };
+  } catch {
+    stopDisplayTracks();
+    throw new Error("Could not crop the capture to the reel preview.");
+  }
+}
+
+/**
+ * Begin recording the reel preview element. The user must share this browser
+ * tab when prompted; the saved file is cropped to the video frame only.
+ */
+export async function startReelRecording(
+  opts: StartReelRecordingOptions,
+): Promise<ReelRecordingController> {
   if (!isReelRecordingSupported()) {
     throw new Error("Screen recording isn't supported in this browser.");
   }
+  if (!opts.cropElement?.isConnected) {
+    throw new Error("Reel preview is not ready to record.");
+  }
 
-  const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: 30 },
-    audio: true,
-  });
+  const { stream, cropMode, cleanup } = await prepareCroppedStream(
+    opts.cropElement,
+  );
 
   const mimeType = pickMimeType();
   const recorder = new MediaRecorder(
@@ -75,13 +142,27 @@ export async function startReelRecording(opts?: {
   });
 
   let stopResolve: ((v: ReelRecording | null) => void) | null = null;
+  let cleanedUp = false;
+  const runCleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    cleanup();
+    for (const t of stream.getTracks()) {
+      try {
+        t.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
   recorder.addEventListener("stop", () => {
     const type = recorder.mimeType || mimeType || "video/webm";
     const ext = type.includes("mp4") ? "mp4" : "webm";
     const blob = chunks.length > 0 ? new Blob(chunks, { type }) : null;
     stopResolve?.(blob ? { blob, mimeType: type, ext } : null);
     stopResolve = null;
-    for (const t of stream.getTracks()) t.stop();
+    runCleanup();
   });
 
   const videoTrack = stream.getVideoTracks()[0];
@@ -102,6 +183,7 @@ export async function startReelRecording(opts?: {
 
   return {
     stream,
+    cropMode,
     stop: () =>
       new Promise<ReelRecording | null>((resolve) => {
         if (recorder.state === "inactive") {
@@ -121,7 +203,7 @@ export async function startReelRecording(opts?: {
       } catch {
         /* ignore */
       }
-      for (const t of stream.getTracks()) t.stop();
+      runCleanup();
     },
   };
 }

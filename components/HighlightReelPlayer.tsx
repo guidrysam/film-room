@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type Ref,
 } from "react";
 import YouTube, { type YouTubePlayer } from "react-youtube";
 import type { ReelStep } from "@/lib/highlight-draft";
@@ -19,6 +20,21 @@ import {
 import { REEL_PLAYER_OVERLAY_SEC } from "@/lib/highlight-player-overlay";
 
 const POLL_MS = 150;
+/** Ignore segment-end checks until a seek/load has had time to settle. */
+const SEEK_SETTLE_MS = 900;
+const PLAY_RETRY_MS = 400;
+
+const YT_UNSTARTED = -1;
+const YT_ENDED = 0;
+const YT_PLAYING = 1;
+const YT_PAUSED = 2;
+const YT_BUFFERING = 3;
+const YT_CUED = 5;
+
+type YouTubePlayerWithCue = YouTubePlayer & {
+  loadVideoById?: (o: { videoId: string; startSeconds?: number }) => void;
+  cueVideoById?: (o: { videoId: string; startSeconds?: number }) => void;
+};
 
 export type HighlightReelPlayerHandle = {
   /** Start the reel from the first segment. */
@@ -33,6 +49,8 @@ export type HighlightReelPlayerProps = {
   videoIdForSource: (sourceId: string) => string | undefined;
   /** Resolve a source id to a human label (for the overlay). */
   labelForSource?: (sourceId: string) => string | undefined;
+  /** 16:9 surface used for tab capture / recording (video frame only). */
+  captureRef?: Ref<HTMLDivElement>;
   /** Fires when the reel reaches the end of the last segment. */
   onEnded?: () => void;
   /** Fires whenever play/pause state changes. */
@@ -50,7 +68,7 @@ const HighlightReelPlayer = forwardRef<
   HighlightReelPlayerHandle,
   HighlightReelPlayerProps
 >(function HighlightReelPlayer(
-  { steps, videoIdForSource, onEnded, onPlayingChange },
+  { steps, videoIdForSource, captureRef, onEnded, onPlayingChange },
   ref,
 ) {
   const [playing, setPlaying] = useState(false);
@@ -72,6 +90,10 @@ const HighlightReelPlayer = forwardRef<
   const repeatPassRef = useRef(0);
   const pendingPlayRef = useRef(false);
   const transitioningRef = useRef(false);
+  const seekSettledAtRef = useRef(0);
+  const lastPlayKickAtRef = useRef(0);
+  const lastObservedTimeRef = useRef(0);
+  const lastTimeAdvanceAtRef = useRef(0);
 
   const setPlayingState = useCallback(
     (next: boolean) => {
@@ -135,6 +157,90 @@ const HighlightReelPlayer = forwardRef<
 
   useEffect(() => () => clearPlayerOverlay(), [clearPlayerOverlay]);
 
+  const kickPlayback = useCallback((player: YouTubePlayer, reason: string) => {
+    const now = Date.now();
+    if (now - lastPlayKickAtRef.current < PLAY_RETRY_MS) return;
+    lastPlayKickAtRef.current = now;
+    try {
+      let state: number | undefined;
+      try {
+        state = player.getPlayerState?.();
+      } catch {
+        state = undefined;
+      }
+      if (state === YT_PLAYING || state === YT_BUFFERING) return;
+      player.playVideo?.();
+      if (reason === "state") {
+        const t = player.getCurrentTime?.() ?? 0;
+        if (Number.isFinite(t) && t >= 0) {
+          player.seekTo?.(t, true);
+        }
+      }
+    } catch {
+      /* player not ready */
+    }
+  }, []);
+
+  const cueIdlePreview = useCallback(
+    (player: YouTubePlayer) => {
+      if (playingRef.current) return;
+      const step = stepsRef.current[0];
+      if (!step) return;
+      const videoId = videoIdForSource(step.sourceId);
+      if (!videoId) return;
+      const start = Math.max(0, step.sourceStartTime);
+      const yt = player as YouTubePlayerWithCue;
+      try {
+        if (loadedVideoIdRef.current === videoId) {
+          player.seekTo?.(start, true);
+          player.pauseVideo?.();
+        } else {
+          yt.cueVideoById?.({ videoId, startSeconds: start });
+          loadedVideoIdRef.current = videoId;
+        }
+      } catch {
+        /* player not ready */
+      }
+    },
+    [videoIdForSource],
+  );
+
+  const waitForSegmentPresentable = useCallback((index: number): Promise<void> => {
+    return new Promise((resolve) => {
+      const step = stepsRef.current[index];
+      if (!step) {
+        resolve();
+        return;
+      }
+      const deadline = Date.now() + 2800;
+      const check = () => {
+        const player = playerRef.current;
+        if (!player) {
+          resolve();
+          return;
+        }
+        try {
+          const state = player.getPlayerState?.();
+          const current = player.getCurrentTime?.() ?? 0;
+          const timeOk = current + 0.35 >= step.sourceStartTime;
+          const stateOk =
+            state === YT_PLAYING ||
+            state === YT_BUFFERING ||
+            state === YT_PAUSED;
+          if ((timeOk && stateOk) || Date.now() >= deadline) {
+            resolve();
+            return;
+          }
+        } catch {
+          resolve();
+          return;
+        }
+        window.setTimeout(check, 90);
+      };
+      window.setTimeout(check, 180);
+    });
+  }, []);
+
   /** Load (or seek within) the source for a given step + repeat pass. */
   const loadStep = useCallback(
     (index: number, pass: number) => {
@@ -149,6 +255,9 @@ const HighlightReelPlayer = forwardRef<
       setStepIndex(index);
       setRepeatPass(pass);
       showPlayerOverlay(step);
+      seekSettledAtRef.current = Date.now() + SEEK_SETTLE_MS;
+      lastObservedTimeRef.current = Math.max(0, step.sourceStartTime);
+      lastTimeAdvanceAtRef.current = Date.now();
 
       const start = Math.max(0, step.sourceStartTime);
       try {
@@ -158,19 +267,15 @@ const HighlightReelPlayer = forwardRef<
         } else {
           loadedVideoIdRef.current = videoId;
           // loadVideoById autoplays from startSeconds.
-          (
-            player as YouTubePlayer & {
-              loadVideoById?: (o: {
-                videoId: string;
-                startSeconds?: number;
-              }) => void;
-            }
-          ).loadVideoById?.({ videoId, startSeconds: start });
+          (player as YouTubePlayerWithCue).loadVideoById?.({
+            videoId,
+            startSeconds: start,
+          });
         }
-        // Apply speed shortly after; YouTube can reset rate on load/seek.
         window.setTimeout(() => {
           try {
             player.setPlaybackRate?.(step.speed);
+            if (playingRef.current) kickPlayback(player, "load");
           } catch {
             /* unsupported rate */
           }
@@ -179,7 +284,7 @@ const HighlightReelPlayer = forwardRef<
         /* player not ready */
       }
     },
-    [videoIdForSource, showPlayerOverlay],
+    [videoIdForSource, showPlayerOverlay, kickPlayback],
   );
 
   const stop = useCallback(() => {
@@ -208,11 +313,15 @@ const HighlightReelPlayer = forwardRef<
         return;
       }
       transitioningRef.current = true;
-      void runReelSegmentTransition(run, setFadeOpaque).finally(() => {
+      void runReelSegmentTransition(
+        run,
+        setFadeOpaque,
+        () => waitForSegmentPresentable(index),
+      ).finally(() => {
         transitioningRef.current = false;
       });
     },
-    [loadStep],
+    [loadStep, waitForSegmentPresentable],
   );
 
   const play = useCallback(() => {
@@ -227,6 +336,15 @@ const HighlightReelPlayer = forwardRef<
 
   useImperativeHandle(ref, () => ({ play, stop }), [play, stop]);
 
+  // Cue the first segment when the reel changes while idle (no autoplay).
+  useEffect(() => {
+    if (!ready || playingRef.current) return;
+    const player = playerRef.current;
+    if (!player) return;
+    const id = window.setTimeout(() => cueIdlePreview(player), 120);
+    return () => window.clearTimeout(id);
+  }, [steps, ready, cueIdlePreview]);
+
   // Advance loop: watch source time and move through repeats + segments.
   useEffect(() => {
     if (!playing) return;
@@ -235,12 +353,34 @@ const HighlightReelPlayer = forwardRef<
       if (!player || !playingRef.current) return;
       const step = stepsRef.current[stepIndexRef.current];
       if (!step) return;
+      if (Date.now() < seekSettledAtRef.current) return;
       let current = 0;
+      let state: number | undefined;
       try {
         current = player.getCurrentTime?.() ?? 0;
+        state = player.getPlayerState?.();
       } catch {
         return;
       }
+      if (
+        Number.isFinite(current) &&
+        current > lastObservedTimeRef.current + 0.08
+      ) {
+        lastObservedTimeRef.current = current;
+        lastTimeAdvanceAtRef.current = Date.now();
+      }
+      if (
+        playingRef.current &&
+        (state === YT_PAUSED ||
+          state === YT_CUED ||
+          state === YT_UNSTARTED ||
+          state === YT_BUFFERING) &&
+        Date.now() - lastTimeAdvanceAtRef.current > 1800
+      ) {
+        kickPlayback(player, "stall");
+      }
+      // Ignore stale times from before a seek lands on this segment.
+      if (current + 0.2 < step.sourceStartTime) return;
       // Keep the segment speed pinned (YouTube occasionally drifts to 1×).
       try {
         if (Math.abs((player.getPlaybackRate?.() ?? 1) - step.speed) > 0.01) {
@@ -265,19 +405,52 @@ const HighlightReelPlayer = forwardRef<
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, advanceToStep, stop, onEnded]);
+  }, [playing, advanceToStep, stop, onEnded, kickPlayback]);
 
-  const activeStep = stepIndex >= 0 ? steps[stepIndex] : null;
+  const handleYoutubeStateChange = useCallback(
+    (event: { data: number; target: YouTubePlayer }) => {
+      if (!playingRef.current) return;
+      const state = event.data;
+      if (
+        state === YT_PAUSED ||
+        state === YT_CUED ||
+        state === YT_UNSTARTED
+      ) {
+        kickPlayback(event.target, "state");
+      }
+      if (state === YT_ENDED) {
+        const pass = repeatPassRef.current;
+        const step = stepsRef.current[stepIndexRef.current];
+        if (!step) return;
+        if (pass + 1 < step.repeat) {
+          advanceToStep(stepIndexRef.current, pass + 1, false);
+          return;
+        }
+        const nextIndex = stepIndexRef.current + 1;
+        if (nextIndex >= stepsRef.current.length) {
+          stop();
+          onEnded?.();
+          return;
+        }
+        advanceToStep(nextIndex, 0, true);
+      }
+    },
+    [advanceToStep, kickPlayback, onEnded, stop],
+  );
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black">
-      <div className="relative aspect-video w-full overflow-hidden">
+      <div
+        ref={captureRef}
+        data-reel-capture
+        className="relative aspect-video w-full overflow-hidden bg-black"
+      >
         {firstVideoId ? (
           <div className="absolute inset-0 overflow-hidden">
             <YouTube
               key={firstVideoId}
               videoId={firstVideoId}
-              className="h-[108%] w-[108%] -translate-x-[4%] -translate-y-[4%]"
+              className="h-[118%] w-[118%] -translate-x-[9%] -translate-y-[9%]"
               iframeClassName="h-full w-full pointer-events-none"
               opts={youtubeOpts}
               onReady={(e) => {
@@ -287,10 +460,18 @@ const HighlightReelPlayer = forwardRef<
                 if (pendingPlayRef.current) {
                   pendingPlayRef.current = false;
                   loadStep(0, 0);
+                  return;
                 }
+                cueIdlePreview(e.target);
               }}
+              onStateChange={handleYoutubeStateChange}
             />
-            <div className="absolute inset-0 z-10" aria-hidden />
+            <div className="pointer-events-none absolute inset-0 z-10" aria-hidden />
+            {/* Mask YouTube chrome that flashes on seek / loadVideoById. */}
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-[25] h-[11%] bg-black" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] h-[14%] bg-black" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 z-[25] w-[4%] bg-black" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-[4%] bg-black" />
           </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
@@ -307,7 +488,7 @@ const HighlightReelPlayer = forwardRef<
         ) : null}
 
         <div
-          className="pointer-events-none absolute inset-0 z-20 bg-black transition-opacity ease-in-out"
+          className="pointer-events-none absolute inset-0 z-40 bg-black transition-opacity ease-in-out"
           style={{
             opacity: fadeOpaque ? 1 : 0,
             transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
