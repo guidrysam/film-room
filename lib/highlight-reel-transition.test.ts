@@ -17,7 +17,7 @@ describe("reelTransitionLeadSec", () => {
       REEL_PRE_TRANSITION_SEC,
     );
     assert.equal(REEL_PRE_TRANSITION_SEC, 0.25);
-    assert.equal(REEL_SEGMENT_PREROLL_MS, 3000);
+    assert.equal(REEL_SEGMENT_PREROLL_MS, 3500);
   });
 
   it("skips end black on clips too short to trim", () => {
@@ -26,9 +26,9 @@ describe("reelTransitionLeadSec", () => {
   });
 
   it("starts playback before the trim in-point to absorb black preroll", () => {
-    assert.equal(reelPlaybackStartSec(100), 97);
-    assert.equal(reelPlaybackStartSec(100, true, 0.5), 98.5);
-    assert.equal(reelClipPrerollSourceSec(0.5), 1.5);
+    assert.equal(reelPlaybackStartSec(100), 96.5);
+    assert.equal(reelPlaybackStartSec(100, true, 0.5), 98.25);
+    assert.equal(reelClipPrerollSourceSec(0.5), 1.75);
     assert.equal(reelPlaybackStartSec(2), 0);
     assert.equal(reelPlaybackStartSec(100, false), 100);
     assert.equal(reelPrerollWallMs(1), REEL_SEGMENT_PREROLL_MS);

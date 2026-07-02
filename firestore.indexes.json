@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "cuts",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "shareId", "order": "ASCENDING" },
+        { "fieldPath": "isShared", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -39,6 +39,13 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    function isPublicSharedHighlightReel() {
+      return resource.data.isShared == true &&
+             resource.data.shareId is string &&
+             resource.data.shareId.size() > 0 &&
+             resource.data.kind == 'highlight';
+    }
+
     match /{path=**}/savedSessions/{sessionId} {
       allow read: if isPublicSharedSession();
     }
@@ -445,11 +452,12 @@ service cloud.firestore {
           canWriteGameEvent(gameId, request.auth.uid);
       }
       match /cuts/{cutId} {
-        allow read: if request.auth != null &&
-                       (resource.data.createdBy == request.auth.uid ||
-                        (resource.data.visibility != 'private' &&
-                         (canReadGameSubdocData(resource.data) ||
-                          canReadGameFromParent(gameId, request.auth.uid))));
+        allow read: if isPublicSharedHighlightReel() ||
+                       (request.auth != null &&
+                        (resource.data.createdBy == request.auth.uid ||
+                         (resource.data.visibility != 'private' &&
+                          (canReadGameSubdocData(resource.data) ||
+                           canReadGameFromParent(gameId, request.auth.uid)))));
         allow create: if request.auth != null &&
                          request.resource.data.createdBy == request.auth.uid &&
                          (isEditor(gameId, request.auth.uid) ||
@@ -458,6 +466,10 @@ service cloud.firestore {
                                  (isOwner(gameId, request.auth.uid) ||
                                   resource.data.createdBy == request.auth.uid);
       }
+    }
+
+    match /{path=**}/cuts/{cutId} {
+      allow read: if isPublicSharedHighlightReel();
     }
 
     // ---- Import batches (event/season team groups) --------------------

@@ -63,6 +63,11 @@ import {
   startReelRecording,
   type ReelRecordingController,
 } from "@/lib/highlight-reel-record";
+import {
+  buildHighlightReelSharePayload,
+  ensureHighlightReelSharing,
+  highlightReelWatchUrl,
+} from "@/lib/highlight-reel-share";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 
 export type HighlightReelStudioProps = {
@@ -131,8 +136,8 @@ function momentToInput(m: HighlightMoment): AddHighlightMomentInput {
  * Highlight Reel Studio: any team member can stitch the game's angles into a
  * single cut. Each segment carries its own angle, in/out window, speed, and
  * repeat count. Presets auto-generate a styled multi-angle cut from one key
- * moment, the reel previews in an isolated player, and it can be screen
- * recorded to a downloadable file.
+ * moment, the reel previews in an isolated player, and a watch link can be
+ * shared with anyone — no screen recording required.
  */
 export default function HighlightReelStudio({
   gameId,
@@ -185,10 +190,11 @@ export default function HighlightReelStudio({
   const [presetId, setPresetId] = useState<HighlightPresetId>("replay");
   const [bulkPresetId, setBulkPresetId] = useState<HighlightPresetId>("replay");
 
-  // Recording.
+  // Recording (optional download — not required for sharing).
   const [recording, setRecording] = useState(false);
-  const [recordFocus, setRecordFocus] = useState(false);
   const [recordMessage, setRecordMessage] = useState<string | null>(null);
+  const [sharingLink, setSharingLink] = useState(false);
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
   const recordSupported = useMemo(() => isReelRecordingSupported(), []);
   const controllerRef = useRef<ReelRecordingController | null>(null);
   const recordingRef = useRef(false);
@@ -465,6 +471,47 @@ export default function HighlightReelStudio({
   }, [persistReel]);
 
   const [openingRoom, setOpeningRoom] = useState(false);
+  const handleCopyWatchLink = useCallback(async () => {
+    if (moments.length === 0) {
+      setShareMessage("Add at least one segment first.");
+      return;
+    }
+    setSharingLink(true);
+    setShareMessage(null);
+    try {
+      const id = editingId && !dirty ? editingId : await persistReel();
+      if (!id) return;
+      const payload = buildHighlightReelSharePayload({
+        reelName: name,
+        game,
+        team,
+        previewSteps,
+        sources: playableSources,
+      });
+      const shareId = await ensureHighlightReelSharing(gameId, id, payload);
+      const url = highlightReelWatchUrl(shareId);
+      await navigator.clipboard.writeText(url);
+      setShareMessage("Watch link copied — anyone with the link can play this reel.");
+    } catch (e) {
+      setShareMessage(
+        e instanceof Error ? e.message : "Could not create a watch link.",
+      );
+    } finally {
+      setSharingLink(false);
+    }
+  }, [
+    moments.length,
+    editingId,
+    dirty,
+    persistReel,
+    name,
+    game,
+    team,
+    previewSteps,
+    playableSources,
+    gameId,
+  ]);
+
   const handlePlayInRoom = useCallback(async () => {
     setOpeningRoom(true);
     try {
@@ -501,7 +548,6 @@ export default function HighlightReelStudio({
     controllerRef.current = null;
     recordingRef.current = false;
     setRecording(false);
-    setRecordFocus(false);
     playerRef.current?.stop();
     if (!controller) return;
     const rec = await controller.stop();
@@ -523,7 +569,6 @@ export default function HighlightReelStudio({
       return;
     }
     setRecordMessage(null);
-    setRecordFocus(true);
     try {
       await new Promise<void>((resolve) => {
         window.requestAnimationFrame(() => {
@@ -541,7 +586,6 @@ export default function HighlightReelStudio({
         onAutoStop: () => {
           recordingRef.current = false;
           setRecording(false);
-          setRecordFocus(false);
           playerRef.current?.stop();
           setRecordMessage("Recording stopped.");
         },
@@ -551,7 +595,6 @@ export default function HighlightReelStudio({
       setRecording(true);
       window.setTimeout(() => playerRef.current?.play(), 450);
     } catch (e) {
-      setRecordFocus(false);
       setRecording(false);
       setRecordMessage(
         e instanceof Error && e.name === "NotAllowedError"
@@ -584,7 +627,6 @@ export default function HighlightReelStudio({
 
   return (
     <div className="space-y-4">
-      {!recordFocus ? (
       <div className={panel}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -592,9 +634,8 @@ export default function HighlightReelStudio({
               Highlight Reel Studio
             </p>
             <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-              Any team member can build a single cut from every angle. Pick a
-              moment, choose a preset, fine-tune each segment&apos;s angle,
-              speed, and repeats, then record the preview video.
+              Build a highlight reel from every angle, then share a watch link
+              with parents and players — no screen recording needed.
             </p>
           </div>
           <button type="button" onClick={startNewReel} className={ghostBtn}>
@@ -633,35 +674,26 @@ export default function HighlightReelStudio({
           </div>
         ) : null}
       </div>
-      ) : null}
 
-      <div className={recordFocus ? "" : "grid gap-4 lg:grid-cols-2"}>
-        {/* Preview + record */}
-        <div
-          className={
-            recordFocus
-              ? "fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black p-4 sm:p-8"
-              : panel
-          }
-        >
-          {!recordFocus ? (
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
-                Preview
-              </p>
-              <span className="text-[10px] text-zinc-500">
-                ~{formatTimelineSeconds(totalDuration)} total
-              </span>
-            </div>
-          ) : (
-            <p className="mb-3 text-center text-xs font-medium text-zinc-300">
-              Recording at 1080p — choose{" "}
-              <span className="text-white">This Tab</span> when your browser asks
-              what to share.
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Preview + share */}
+        <div className={panel}>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Preview
             </p>
-          )}
+            <span className="text-[10px] text-zinc-500">
+              ~{formatTimelineSeconds(totalDuration)} total
+            </span>
+          </div>
 
-          <div className={recordFocus ? "w-full max-w-[1920px]" : undefined}>
+          {recording ? (
+            <p className="mb-2 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-100">
+              Recording — choose <span className="font-semibold">This Tab</span>{" "}
+              when prompted, then let the reel play through.
+            </p>
+          ) : null}
+
           <HighlightReelPlayer
             ref={playerRef}
             captureRef={captureRef}
@@ -671,57 +703,83 @@ export default function HighlightReelStudio({
             labelForSource={labelForSource}
             onEnded={handleReelEnded}
           />
-          </div>
 
-          <div
-            className={`flex flex-wrap items-center gap-2 ${recordFocus ? "mt-4 w-full max-w-5xl justify-center" : "mt-3"}`}
-          >
-            {recordSupported ? (
-              <button
-                type="button"
-                onClick={() => (recording ? void stopRecording() : void startRecording())}
-                disabled={steps.length === 0}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  recording
-                    ? "border-red-500/50 bg-red-950/50 text-red-100 hover:bg-red-900/60"
-                    : "border-white/12 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
-                }`}
-              >
-                {recording ? "■ Stop & save recording" : "● Record reel video"}
-              </button>
-            ) : (
-              <p className="text-[10px] text-zinc-500">
-                Recording isn&apos;t supported in this browser — use your
-                device&apos;s screen recorder while the reel plays.
-              </p>
-            )}
-            {recording ? (
-              <span className="text-[10px] text-red-300">
-                Recording 1080p preview — not the whole screen.
-              </span>
-            ) : null}
-            {!recordFocus ? (
-              <button
-                type="button"
-                onClick={() => void handlePlayInRoom()}
-                disabled={moments.length === 0 || openingRoom || recording}
-                className={ghostBtn}
-                title="Open the synced room so everyone watching sees this reel"
-              >
-                {openingRoom ? "Opening room…" : "Play in room (shared)"}
-              </button>
-            ) : null}
-          </div>
-          {recordMessage ? (
-            <p
-              className={`text-[10px] text-zinc-400 ${recordFocus ? "mt-3 text-center" : "mt-2"}`}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCopyWatchLink()}
+              disabled={moments.length === 0 || sharingLink || recording}
+              className={primaryBtn}
             >
-              {recordMessage}
+              {sharingLink ? "Creating link…" : "Copy watch link"}
+            </button>
+            <button
+              type="button"
+              onClick={() => playerRef.current?.play()}
+              disabled={steps.length === 0 || recording}
+              className={ghostBtn}
+            >
+              ▶ Play preview
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePlayInRoom()}
+              disabled={moments.length === 0 || openingRoom || recording}
+              className={ghostBtn}
+              title="Open the synced room so everyone watching sees this reel live"
+            >
+              {openingRoom ? "Opening room…" : "Play in room"}
+            </button>
+          </div>
+          {shareMessage ? (
+            <p
+              className={`mt-2 text-[10px] ${
+                shareMessage.startsWith("Watch link")
+                  ? "text-emerald-300/90"
+                  : "text-rose-200/90"
+              }`}
+            >
+              {shareMessage}
             </p>
           ) : null}
+
+          <details className="mt-4 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+            <summary className="cursor-pointer text-[11px] font-medium text-zinc-400">
+              Optional: download an MP4 (screen recording)
+            </summary>
+            <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+              Only needed if you want a file for social media. Sharing the watch
+              link above is easier — viewers play the reel in their browser with
+              no sign-in.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {recordSupported ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    recording ? void stopRecording() : void startRecording()
+                  }
+                  disabled={steps.length === 0 || sharingLink}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    recording
+                      ? "border-red-500/50 bg-red-950/50 text-red-100 hover:bg-red-900/60"
+                      : "border-white/12 bg-white/[0.04] text-zinc-200 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  {recording ? "■ Stop & save" : "● Record download"}
+                </button>
+              ) : (
+                <p className="text-[10px] text-zinc-500">
+                  Not supported in this browser — use the watch link instead.
+                </p>
+              )}
+            </div>
+            {recordMessage ? (
+              <p className="mt-2 text-[10px] text-zinc-400">{recordMessage}</p>
+            ) : null}
+          </details>
         </div>
 
-        {!recordFocus ? (
         <div className={panel}>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">
             Build from a moment
@@ -930,10 +988,8 @@ export default function HighlightReelStudio({
             ) : null}
           </div>
         </div>
-        ) : null}
       </div>
 
-      {!recordFocus ? (
       <div className={panel}>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
@@ -1187,7 +1243,6 @@ export default function HighlightReelStudio({
           <p className="mt-2 text-[11px] text-zinc-400">{message}</p>
         ) : null}
       </div>
-      ) : null}
     </div>
   );
 }
