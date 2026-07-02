@@ -164,11 +164,15 @@ describe("highlight presets", () => {
     assert.equal(out[0]!.speed, 1);
   });
 
-  it("replay → live then slow-mo on the same angle", () => {
+  it("replay → live then slow-mo on the same angle with matching clip window", () => {
     const out = generatePresetMoments("replay", base, angles);
     assert.equal(out.length, 2);
+    assert.equal(out[0]!.startOffsetSec, -5);
+    assert.equal(out[0]!.endOffsetSec, 10);
     assert.equal(out[1]!.speed, 0.5);
     assert.equal(out[1]!.activeSourceId, "s1");
+    assert.equal(out[1]!.startOffsetSec, -5);
+    assert.equal(out[1]!.endOffsetSec, 10);
   });
 
   it("every_angle → one segment per camera, primary first", () => {

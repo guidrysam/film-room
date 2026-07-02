@@ -107,8 +107,8 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
       {
         gameTime: base.gameTime,
         activeSourceId: base.primarySourceId,
-        startOffsetSec: KEY_WINDOW.start,
-        endOffsetSec: KEY_WINDOW.end,
+        startOffsetSec: base.startOffsetSec,
+        endOffsetSec: base.endOffsetSec,
         speed: 0.5,
         repeat: 1,
         label: "Slow-mo replay",
