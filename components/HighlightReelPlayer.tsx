@@ -77,10 +77,13 @@ const HighlightReelPlayer = forwardRef<
   const [ready, setReady] = useState(false);
   const [fadeOpaque, setFadeOpaque] = useState(false);
   const [playerOverlay, setPlayerOverlay] = useState<string | null>(null);
+  /** Covers YouTube's large center play/pause glyph until playback is running. */
+  const [coverCenterChrome, setCoverCenterChrome] = useState(true);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
   const overlayTimerRef = useRef<number | null>(null);
+  const centerRevealTimerRef = useRef<number | null>(null);
   const stepsRef = useRef(steps);
   useEffect(() => {
     stepsRef.current = steps;
@@ -156,6 +159,58 @@ const HighlightReelPlayer = forwardRef<
   );
 
   useEffect(() => () => clearPlayerOverlay(), [clearPlayerOverlay]);
+
+  const clearCenterRevealTimer = useCallback(() => {
+    if (centerRevealTimerRef.current != null) {
+      window.clearTimeout(centerRevealTimerRef.current);
+      centerRevealTimerRef.current = null;
+    }
+  }, []);
+
+  const hideCenterChrome = useCallback(() => {
+    clearCenterRevealTimer();
+    setCoverCenterChrome(true);
+  }, [clearCenterRevealTimer]);
+
+  const scheduleCenterChromeReveal = useCallback(() => {
+    clearCenterRevealTimer();
+    centerRevealTimerRef.current = window.setTimeout(() => {
+      centerRevealTimerRef.current = null;
+      if (!playingRef.current) return;
+      try {
+        const state = playerRef.current?.getPlayerState?.();
+        if (state === YT_PLAYING) setCoverCenterChrome(false);
+      } catch {
+        /* ignore */
+      }
+    }, 360);
+  }, [clearCenterRevealTimer]);
+
+  const handleYoutubeChromeState = useCallback(
+    (state: number) => {
+      if (state === YT_PLAYING && playingRef.current) {
+        scheduleCenterChromeReveal();
+        return;
+      }
+      if (
+        state === YT_PAUSED ||
+        state === YT_CUED ||
+        state === YT_UNSTARTED ||
+        state === YT_BUFFERING ||
+        state === YT_ENDED
+      ) {
+        hideCenterChrome();
+      }
+    },
+    [hideCenterChrome, scheduleCenterChromeReveal],
+  );
+
+  useEffect(
+    () => () => {
+      clearCenterRevealTimer();
+    },
+    [clearCenterRevealTimer],
+  );
 
   const kickPlayback = useCallback((player: YouTubePlayer, reason: string) => {
     const now = Date.now();
@@ -255,6 +310,7 @@ const HighlightReelPlayer = forwardRef<
       setStepIndex(index);
       setRepeatPass(pass);
       showPlayerOverlay(step);
+      hideCenterChrome();
       seekSettledAtRef.current = Date.now() + SEEK_SETTLE_MS;
       lastObservedTimeRef.current = Math.max(0, step.sourceStartTime);
       lastTimeAdvanceAtRef.current = Date.now();
@@ -284,7 +340,7 @@ const HighlightReelPlayer = forwardRef<
         /* player not ready */
       }
     },
-    [videoIdForSource, showPlayerOverlay, kickPlayback],
+    [videoIdForSource, showPlayerOverlay, kickPlayback, hideCenterChrome],
   );
 
   const stop = useCallback(() => {
@@ -293,6 +349,7 @@ const HighlightReelPlayer = forwardRef<
     transitioningRef.current = false;
     setFadeOpaque(false);
     clearPlayerOverlay();
+    hideCenterChrome();
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
     setStepIndex(-1);
@@ -302,7 +359,7 @@ const HighlightReelPlayer = forwardRef<
     } catch {
       /* ignore */
     }
-  }, [setPlayingState, clearPlayerOverlay]);
+  }, [setPlayingState, clearPlayerOverlay, hideCenterChrome]);
 
   const advanceToStep = useCallback(
     (index: number, pass: number, withFade: boolean) => {
@@ -326,13 +383,14 @@ const HighlightReelPlayer = forwardRef<
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
+    hideCenterChrome();
     setPlayingState(true);
     if (!playerRef.current || !ready) {
       pendingPlayRef.current = true;
       return;
     }
     loadStep(0, 0);
-  }, [loadStep, ready, setPlayingState]);
+  }, [loadStep, ready, setPlayingState, hideCenterChrome]);
 
   useImperativeHandle(ref, () => ({ play, stop }), [play, stop]);
 
@@ -409,6 +467,7 @@ const HighlightReelPlayer = forwardRef<
 
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
+      handleYoutubeChromeState(event.data);
       if (!playingRef.current) return;
       const state = event.data;
       if (
@@ -435,7 +494,7 @@ const HighlightReelPlayer = forwardRef<
         advanceToStep(nextIndex, 0, true);
       }
     },
-    [advanceToStep, kickPlayback, onEnded, stop],
+    [advanceToStep, kickPlayback, onEnded, stop, handleYoutubeChromeState],
   );
 
   return (
@@ -450,13 +509,14 @@ const HighlightReelPlayer = forwardRef<
             <YouTube
               key={firstVideoId}
               videoId={firstVideoId}
-              className="h-[118%] w-[118%] -translate-x-[9%] -translate-y-[9%]"
+              className="h-[126%] w-[126%] -translate-x-[13%] -translate-y-[13%]"
               iframeClassName="h-full w-full pointer-events-none"
               opts={youtubeOpts}
               onReady={(e) => {
                 playerRef.current = e.target;
                 loadedVideoIdRef.current = firstVideoId;
                 setReady(true);
+                hideCenterChrome();
                 if (pendingPlayRef.current) {
                   pendingPlayRef.current = false;
                   loadStep(0, 0);
@@ -468,10 +528,16 @@ const HighlightReelPlayer = forwardRef<
             />
             <div className="pointer-events-none absolute inset-0 z-10" aria-hidden />
             {/* Mask YouTube chrome that flashes on seek / loadVideoById. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-[25] h-[11%] bg-black" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] h-[14%] bg-black" />
-            <div className="pointer-events-none absolute inset-y-0 left-0 z-[25] w-[4%] bg-black" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-[4%] bg-black" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-[25] h-[16%] bg-black" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[25] h-[16%] bg-black" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 z-[25] w-[5%] bg-black" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-[5%] bg-black" />
+            {/* Safari / mobile can flash a pause badge in the top-left corner. */}
+            <div className="pointer-events-none absolute left-0 top-0 z-[26] h-[14%] w-[16%] bg-black" />
+            <div
+              className={`pointer-events-none absolute left-1/2 top-1/2 z-[26] aspect-square w-[22%] min-w-[4.75rem] max-w-[9rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-black transition-opacity duration-300 ${coverCenterChrome ? "opacity-100" : "opacity-0"}`}
+              aria-hidden
+            />
           </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
