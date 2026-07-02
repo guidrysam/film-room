@@ -27,6 +27,7 @@ import {
   REEL_FADE_OUT_MS,
   REEL_FADE_POST_READY_MS,
   REEL_SEGMENT_PREROLL_MS,
+  REEL_USE_BLACK_TRANSITIONS,
   delayMs,
   reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
@@ -419,6 +420,13 @@ const HighlightReelPlayer = forwardRef<
     const seq = ++playSeqRef.current;
     setPlayingState(true);
 
+    if (!REEL_USE_BLACK_TRANSITIONS) {
+      setInterstitial(null);
+      setFadeOpaque(false);
+      loadStep(0, 0);
+      return;
+    }
+
     const title = titleCardRef.current;
     let segmentStarted = false;
     if (title) {
@@ -435,7 +443,26 @@ const HighlightReelPlayer = forwardRef<
       alreadyBlack: !!title,
       segmentStarted,
     });
-  }, [ensureSegmentPlaying, presentSegmentUnderBlack, setPlayingState]);
+  }, [ensureSegmentPlaying, loadStep, presentSegmentUnderBlack, setPlayingState]);
+
+  const transitionToNextStep = useCallback(
+    (fromIndex: number, nextIndex: number, pass: number) => {
+      if (!REEL_USE_BLACK_TRANSITIONS) {
+        loadStep(nextIndex, pass);
+        return;
+      }
+      const cur = stepsRef.current[fromIndex];
+      const next = stepsRef.current[nextIndex];
+      const kind = reelStepTransitionKind(cur, next);
+      void runPreRollTransition(
+        fromIndex,
+        nextIndex,
+        pass,
+        kind === "beat" ? "beat" : "event",
+      );
+    },
+    [loadStep, runPreRollTransition],
+  );
 
   const stop = useCallback(() => {
     playSeqRef.current += 1;
@@ -520,6 +547,7 @@ const HighlightReelPlayer = forwardRef<
       const hasNextStep = nextIndex < stepsRef.current.length;
 
       if (
+        REEL_USE_BLACK_TRANSITIONS &&
         !transitioningRef.current &&
         !preTransitionArmRef.current &&
         pass + 1 >= step.repeat &&
@@ -527,15 +555,7 @@ const HighlightReelPlayer = forwardRef<
       ) {
         const leadSec = reelTransitionLeadSec(step);
         if (leadSec > 0 && current >= step.sourceEndTime - leadSec) {
-          const cur = stepsRef.current[stepIndexRef.current];
-          const next = stepsRef.current[nextIndex];
-          const kind = reelStepTransitionKind(cur, next);
-          void runPreRollTransition(
-            stepIndexRef.current,
-            nextIndex,
-            0,
-            kind === "beat" ? "beat" : "event",
-          );
+          transitionToNextStep(stepIndexRef.current, nextIndex, 0);
           return;
         }
       }
@@ -550,21 +570,17 @@ const HighlightReelPlayer = forwardRef<
           onEnded?.();
           return;
         }
-        if (!transitioningRef.current && !preTransitionArmRef.current) {
-          const cur = stepsRef.current[stepIndexRef.current];
-          const next = stepsRef.current[nextIndex];
-          const kind = reelStepTransitionKind(cur, next);
-          void runPreRollTransition(
-            stepIndexRef.current,
-            nextIndex,
-            0,
-            kind === "beat" ? "beat" : "event",
-          );
+        if (REEL_USE_BLACK_TRANSITIONS) {
+          if (!transitioningRef.current && !preTransitionArmRef.current) {
+            transitionToNextStep(stepIndexRef.current, nextIndex, 0);
+          }
+        } else {
+          loadStep(nextIndex, 0);
         }
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, loadStep, runPreRollTransition, stop, onEnded, kickPlayback]);
+  }, [playing, loadStep, transitionToNextStep, stop, onEnded, kickPlayback]);
 
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
@@ -592,18 +608,10 @@ const HighlightReelPlayer = forwardRef<
           onEnded?.();
           return;
         }
-        const cur = stepsRef.current[stepIndexRef.current];
-        const next = stepsRef.current[nextIndex];
-        const kind = reelStepTransitionKind(cur, next);
-        void runPreRollTransition(
-          stepIndexRef.current,
-          nextIndex,
-          0,
-          kind === "beat" ? "beat" : "event",
-        );
+        transitionToNextStep(stepIndexRef.current, nextIndex, 0);
       }
     },
-    [kickPlayback, loadStep, onEnded, runPreRollTransition, stop],
+    [kickPlayback, loadStep, onEnded, stop, transitionToNextStep],
   );
 
   return (
@@ -642,20 +650,22 @@ const HighlightReelPlayer = forwardRef<
           </div>
         )}
 
-        {interstitial && fadeOpaque ? (
+        {REEL_USE_BLACK_TRANSITIONS && interstitial && fadeOpaque ? (
           <div className="pointer-events-none absolute inset-0 z-[45] bg-black">
             <ReelInterstitial card={interstitial} />
           </div>
         ) : null}
 
-        <div
-          className="pointer-events-none absolute inset-0 z-40 bg-black transition-opacity ease-in-out"
-          style={{
-            opacity: fadeOpaque ? 1 : 0,
-            transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
-          }}
-          aria-hidden
-        />
+        {REEL_USE_BLACK_TRANSITIONS ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-40 bg-black transition-opacity ease-in-out"
+            style={{
+              opacity: fadeOpaque ? 1 : 0,
+              transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
+            }}
+            aria-hidden
+          />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2 border-t border-white/[0.06] bg-zinc-950/60 px-3 py-2">
@@ -673,6 +683,7 @@ const HighlightReelPlayer = forwardRef<
         </button>
         <span className="text-[10px] text-zinc-500">
           {steps.length} segment{steps.length === 1 ? "" : "s"}
+          {!REEL_USE_BLACK_TRANSITIONS ? " · direct cuts (no black)" : ""}
         </span>
       </div>
     </div>

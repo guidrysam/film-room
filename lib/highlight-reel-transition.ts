@@ -1,3 +1,6 @@
+/** When false, segments play back-to-back with no black (overlay diagnostics). */
+export const REEL_USE_BLACK_TRANSITIONS = false;
+
 /** Fade-to-black between highlight reel segments (hides YouTube load/buffer). */
 export const REEL_FADE_IN_MS = 450;
 export const REEL_FADE_HOLD_MS = 650;
