@@ -26,6 +26,10 @@ export type HighlightMoment = {
   timelineEventId?: string;
   /** Players tagged on this moment (optional). */
   playerIds?: string[];
+  /** Goal scorer(s) when this moment is a goal or goal+assist clip. */
+  goalPlayerIds?: string[];
+  /** Assisting player(s) when this moment is an assist or goal+assist clip. */
+  assistPlayerIds?: string[];
   /** Playback rate for this segment (0.25–2). Default 1. */
   speed?: number;
   /** How many times to play this segment (1–10). Default 1. */
@@ -74,6 +78,8 @@ export type AddHighlightMomentInput = {
   label?: string;
   timelineEventId?: string;
   playerIds?: string[];
+  goalPlayerIds?: string[];
+  assistPlayerIds?: string[];
   speed?: number;
   repeat?: number;
 };
@@ -96,6 +102,12 @@ function momentFromInput(input: AddHighlightMomentInput): HighlightMoment {
     ...(input.label?.trim() ? { label: input.label.trim() } : {}),
     ...(input.timelineEventId ? { timelineEventId: input.timelineEventId } : {}),
     ...(playerIds.length > 0 ? { playerIds } : {}),
+    ...(parsePlayerIds(input.goalPlayerIds).length > 0
+      ? { goalPlayerIds: parsePlayerIds(input.goalPlayerIds) }
+      : {}),
+    ...(parsePlayerIds(input.assistPlayerIds).length > 0
+      ? { assistPlayerIds: parsePlayerIds(input.assistPlayerIds) }
+      : {}),
     ...(speed !== 1 ? { speed } : {}),
     ...(repeat !== 1 ? { repeat } : {}),
   };
@@ -161,6 +173,12 @@ export function parseHighlightDraftMeta(
           : {}),
         ...(parsePlayerIds(m.playerIds).length > 0
           ? { playerIds: parsePlayerIds(m.playerIds) }
+          : {}),
+        ...(parsePlayerIds(m.goalPlayerIds).length > 0
+          ? { goalPlayerIds: parsePlayerIds(m.goalPlayerIds) }
+          : {}),
+        ...(parsePlayerIds(m.assistPlayerIds).length > 0
+          ? { assistPlayerIds: parsePlayerIds(m.assistPlayerIds) }
           : {}),
         ...(m.speed !== undefined && normalizeHighlightSpeed(m.speed) !== 1
           ? { speed: normalizeHighlightSpeed(m.speed) }
@@ -540,6 +558,10 @@ export type ReelStep = {
   speed: number;
   repeat: number;
   label?: string;
+  /** On-screen player name text (goal / assist). */
+  playerOverlay?: string;
+  /** How long to show {@link playerOverlay} after each segment starts. */
+  playerOverlaySec?: number;
 };
 
 /**

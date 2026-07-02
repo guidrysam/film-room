@@ -37,6 +37,8 @@ import {
   highlightMomentsFromGameMarks,
   isHighlightMarkEvent,
 } from "@/lib/highlight-from-marks";
+import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
+import { listTeamPlayers, type Player } from "@/lib/teams";
 import {
   downloadRecording,
   isReelRecordingSupported,
@@ -76,6 +78,12 @@ function inputToMoment(input: AddHighlightMomentInput): HighlightMoment {
     endOffsetSec: input.endOffsetSec ?? 10,
     activeSourceId: input.activeSourceId,
     ...(input.label?.trim() ? { label: input.label.trim() } : {}),
+    ...(input.timelineEventId ? { timelineEventId: input.timelineEventId } : {}),
+    ...(input.playerIds?.length ? { playerIds: input.playerIds } : {}),
+    ...(input.goalPlayerIds?.length ? { goalPlayerIds: input.goalPlayerIds } : {}),
+    ...(input.assistPlayerIds?.length
+      ? { assistPlayerIds: input.assistPlayerIds }
+      : {}),
     ...(input.speed !== undefined && input.speed !== 1 ? { speed: input.speed } : {}),
     ...(repeat !== 1 ? { repeat } : {}),
   };
@@ -88,6 +96,10 @@ function momentToInput(m: HighlightMoment): AddHighlightMomentInput {
     startOffsetSec: m.startOffsetSec,
     endOffsetSec: m.endOffsetSec,
     ...(m.label ? { label: m.label } : {}),
+    ...(m.timelineEventId ? { timelineEventId: m.timelineEventId } : {}),
+    ...(m.playerIds?.length ? { playerIds: m.playerIds } : {}),
+    ...(m.goalPlayerIds?.length ? { goalPlayerIds: m.goalPlayerIds } : {}),
+    ...(m.assistPlayerIds?.length ? { assistPlayerIds: m.assistPlayerIds } : {}),
     ...(m.speed !== undefined ? { speed: m.speed } : {}),
     ...(m.repeat !== undefined ? { repeat: m.repeat } : {}),
   };
@@ -141,6 +153,7 @@ export default function HighlightReelStudio({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [rosterPlayers, setRosterPlayers] = useState<Player[]>([]);
 
   // Preset + segment-add controls.
   const [baseTimeStr, setBaseTimeStr] = useState("0");
@@ -164,7 +177,34 @@ export default function HighlightReelStudio({
     () => buildReelSteps(moments, sourceOffsets),
     [moments, sourceOffsets],
   );
+  const playerNameForId = useCallback(
+    (playerId: string) => rosterPlayers.find((p) => p.id === playerId)?.name,
+    [rosterPlayers],
+  );
+  const previewSteps = useMemo(
+    () => enrichReelStepsWithPlayerOverlays(steps, moments, playerNameForId),
+    [steps, moments, playerNameForId],
+  );
   const totalDuration = useMemo(() => reelDurationSec(steps), [steps]);
+
+  useEffect(() => {
+    const teamId = game.teamId?.trim();
+    if (!teamId) {
+      setRosterPlayers([]);
+      return;
+    }
+    let cancelled = false;
+    void listTeamPlayers(teamId)
+      .then((players) => {
+        if (!cancelled) setRosterPlayers(players);
+      })
+      .catch(() => {
+        if (!cancelled) setRosterPlayers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [game.teamId]);
 
   useEffect(() => {
     if (!basePrimary && playableSources[0]) setBasePrimary(playableSources[0].id);
@@ -517,7 +557,7 @@ export default function HighlightReelStudio({
 
           <HighlightReelPlayer
             ref={playerRef}
-            steps={steps}
+            steps={previewSteps}
             videoIdForSource={videoIdForSource}
             labelForSource={labelForSource}
             onEnded={handleReelEnded}

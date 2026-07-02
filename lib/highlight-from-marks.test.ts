@@ -159,6 +159,8 @@ describe("highlightMomentsFromGameMarks", () => {
     assert.equal(moments.length, 2);
     assert.equal(moments[0]!.label, "Goal + Assist");
     assert.equal(moments[0]!.gameTime, 374);
+    assert.deepEqual(moments[0]!.goalPlayerIds, ["p1"]);
+    assert.deepEqual(moments[0]!.assistPlayerIds, ["p2"]);
     assert.equal(moments[1]!.label, "Shot");
   });
 });

@@ -23,6 +23,8 @@ export type PresetBaseMoment = {
   primarySourceId: string;
   label?: string;
   playerIds?: string[];
+  goalPlayerIds?: string[];
+  assistPlayerIds?: string[];
 };
 
 export type HighlightPreset = {
@@ -55,6 +57,19 @@ function baseLabel(base: PresetBaseMoment, fallback: string): string {
   return base.label?.trim() || fallback;
 }
 
+function presetPlayerFields(
+  base: PresetBaseMoment,
+): Pick<
+  AddHighlightMomentInput,
+  "playerIds" | "goalPlayerIds" | "assistPlayerIds"
+> {
+  return {
+    ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+    ...(base.goalPlayerIds ? { goalPlayerIds: base.goalPlayerIds } : {}),
+    ...(base.assistPlayerIds ? { assistPlayerIds: base.assistPlayerIds } : {}),
+  };
+}
+
 export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
   single: {
     id: "single",
@@ -69,7 +84,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         speed: 1,
         repeat: 1,
         label: baseLabel(base, "Highlight"),
-        ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+        ...(presetPlayerFields(base)),
       },
     ],
   },
@@ -87,7 +102,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         speed: 1,
         repeat: 1,
         label: baseLabel(base, "Live"),
-        ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+        ...(presetPlayerFields(base)),
       },
       {
         gameTime: base.gameTime,
@@ -97,7 +112,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         speed: 0.5,
         repeat: 1,
         label: "Slow-mo replay",
-        ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+        ...(presetPlayerFields(base)),
       },
     ],
   },
@@ -115,7 +130,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         speed: 1,
         repeat: 1,
         label: i === 0 ? baseLabel(base, "Highlight") : `Angle ${i + 1}`,
-        ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+        ...(presetPlayerFields(base)),
       })),
   },
 
@@ -135,7 +150,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
           speed: 1,
           repeat: 1,
           label: baseLabel(base, "Highlight"),
-          ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+          ...(presetPlayerFields(base)),
         },
       ];
       const others = ordered.slice(1);
@@ -149,7 +164,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
           speed: 0.5,
           repeat: 1,
           label: others.length > 0 ? `Slow-mo · angle ${i + 2}` : "Slow-mo",
-          ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+          ...(presetPlayerFields(base)),
         });
       });
       return segments;
@@ -169,7 +184,7 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         speed: 1,
         repeat: 3,
         label: baseLabel(base, "Highlight"),
-        ...(base.playerIds ? { playerIds: base.playerIds } : {}),
+        ...(presetPlayerFields(base)),
       },
     ],
   },

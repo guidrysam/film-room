@@ -16,6 +16,7 @@ import {
   REEL_FADE_OUT_MS,
   runReelSegmentTransition,
 } from "@/lib/highlight-reel-transition";
+import { REEL_PLAYER_OVERLAY_SEC } from "@/lib/highlight-player-overlay";
 
 const POLL_MS = 150;
 
@@ -49,7 +50,7 @@ const HighlightReelPlayer = forwardRef<
   HighlightReelPlayerHandle,
   HighlightReelPlayerProps
 >(function HighlightReelPlayer(
-  { steps, videoIdForSource, labelForSource, onEnded, onPlayingChange },
+  { steps, videoIdForSource, onEnded, onPlayingChange },
   ref,
 ) {
   const [playing, setPlaying] = useState(false);
@@ -57,9 +58,11 @@ const HighlightReelPlayer = forwardRef<
   const [repeatPass, setRepeatPass] = useState(0);
   const [ready, setReady] = useState(false);
   const [fadeOpaque, setFadeOpaque] = useState(false);
+  const [playerOverlay, setPlayerOverlay] = useState<string | null>(null);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
+  const overlayTimerRef = useRef<number | null>(null);
   const stepsRef = useRef(steps);
   useEffect(() => {
     stepsRef.current = steps;
@@ -83,7 +86,7 @@ const HighlightReelPlayer = forwardRef<
     ? videoIdForSource(steps[0].sourceId)
     : undefined;
 
-  /** Match Game Review / room embed params — hidden controls trigger YouTube sign-in walls. */
+  /** Hidden chrome + JS API origin (required to avoid YouTube sign-in walls). */
   const youtubeOpts = useMemo(
     () => ({
       width: "100%",
@@ -94,6 +97,11 @@ const HighlightReelPlayer = forwardRef<
         modestbranding: 1,
         rel: 0,
         playsinline: 1,
+        controls: 0,
+        disablekb: 1,
+        fs: 0,
+        iv_load_policy: 3,
+        cc_load_policy: 0,
         ...(typeof window !== "undefined"
           ? { origin: window.location.origin }
           : {}),
@@ -101,6 +109,31 @@ const HighlightReelPlayer = forwardRef<
     }),
     [],
   );
+
+  const clearPlayerOverlay = useCallback(() => {
+    if (overlayTimerRef.current != null) {
+      window.clearTimeout(overlayTimerRef.current);
+      overlayTimerRef.current = null;
+    }
+    setPlayerOverlay(null);
+  }, []);
+
+  const showPlayerOverlay = useCallback(
+    (step: ReelStep) => {
+      clearPlayerOverlay();
+      const text = step.playerOverlay?.trim();
+      if (!text) return;
+      setPlayerOverlay(text);
+      const sec = step.playerOverlaySec ?? REEL_PLAYER_OVERLAY_SEC;
+      overlayTimerRef.current = window.setTimeout(() => {
+        overlayTimerRef.current = null;
+        setPlayerOverlay(null);
+      }, sec * 1000);
+    },
+    [clearPlayerOverlay],
+  );
+
+  useEffect(() => () => clearPlayerOverlay(), [clearPlayerOverlay]);
 
   /** Load (or seek within) the source for a given step + repeat pass. */
   const loadStep = useCallback(
@@ -115,6 +148,7 @@ const HighlightReelPlayer = forwardRef<
       repeatPassRef.current = pass;
       setStepIndex(index);
       setRepeatPass(pass);
+      showPlayerOverlay(step);
 
       const start = Math.max(0, step.sourceStartTime);
       try {
@@ -145,7 +179,7 @@ const HighlightReelPlayer = forwardRef<
         /* player not ready */
       }
     },
-    [videoIdForSource],
+    [videoIdForSource, showPlayerOverlay],
   );
 
   const stop = useCallback(() => {
@@ -153,6 +187,7 @@ const HighlightReelPlayer = forwardRef<
     pendingPlayRef.current = false;
     transitioningRef.current = false;
     setFadeOpaque(false);
+    clearPlayerOverlay();
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
     setStepIndex(-1);
@@ -162,7 +197,7 @@ const HighlightReelPlayer = forwardRef<
     } catch {
       /* ignore */
     }
-  }, [setPlayingState]);
+  }, [setPlayingState, clearPlayerOverlay]);
 
   const advanceToStep = useCallback(
     (index: number, pass: number, withFade: boolean) => {
@@ -233,48 +268,41 @@ const HighlightReelPlayer = forwardRef<
   }, [playing, advanceToStep, stop, onEnded]);
 
   const activeStep = stepIndex >= 0 ? steps[stepIndex] : null;
-  const activeLabel = activeStep
-    ? activeStep.label ||
-      labelForSource?.(activeStep.sourceId) ||
-      "Segment"
-    : null;
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black">
-      <div className="relative aspect-video w-full">
+      <div className="relative aspect-video w-full overflow-hidden">
         {firstVideoId ? (
-          <YouTube
-            key={firstVideoId}
-            videoId={firstVideoId}
-            className="h-full w-full"
-            iframeClassName="h-full w-full"
-            opts={youtubeOpts}
-            onReady={(e) => {
-              playerRef.current = e.target;
-              loadedVideoIdRef.current = firstVideoId;
-              setReady(true);
-              if (pendingPlayRef.current) {
-                pendingPlayRef.current = false;
-                loadStep(0, 0);
-              }
-            }}
-          />
+          <div className="absolute inset-0 overflow-hidden">
+            <YouTube
+              key={firstVideoId}
+              videoId={firstVideoId}
+              className="h-[108%] w-[108%] -translate-x-[4%] -translate-y-[4%]"
+              iframeClassName="h-full w-full pointer-events-none"
+              opts={youtubeOpts}
+              onReady={(e) => {
+                playerRef.current = e.target;
+                loadedVideoIdRef.current = firstVideoId;
+                setReady(true);
+                if (pendingPlayRef.current) {
+                  pendingPlayRef.current = false;
+                  loadStep(0, 0);
+                }
+              }}
+            />
+            <div className="absolute inset-0 z-10" aria-hidden />
+          </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
             Add a segment to preview the reel.
           </div>
         )}
 
-        {activeStep ? (
-          <div className="pointer-events-none absolute left-0 right-0 top-0 flex items-center justify-between gap-2 bg-gradient-to-b from-black/70 to-transparent px-3 py-2 text-[11px] font-medium text-white">
-            <span className="truncate">{activeLabel}</span>
-            <span className="shrink-0 font-mono text-[10px] text-zinc-200">
-              {stepIndex + 1}/{steps.length}
-              {activeStep.repeat > 1
-                ? ` · loop ${repeatPass + 1}/${activeStep.repeat}`
-                : ""}
-              {activeStep.speed !== 1 ? ` · ${activeStep.speed}×` : ""}
-            </span>
+        {playerOverlay ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[12%] z-30 flex justify-center px-4">
+            <p className="max-w-[90%] rounded-lg bg-black/80 px-4 py-2 text-center text-sm font-semibold tracking-wide text-white shadow-lg ring-1 ring-white/10">
+              {playerOverlay}
+            </p>
           </div>
         ) : null}
 

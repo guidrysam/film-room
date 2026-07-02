@@ -17,6 +17,39 @@ const DEFAULT_START_OFFSET = -5;
 const DEFAULT_END_OFFSET = 10;
 /** Goal and assist on the same play are usually marked within one second. */
 const GOAL_ASSIST_MERGE_WINDOW_SEC = 1;
+export const HIGHLIGHT_GOAL_PLAYER_IDS_KEY = "highlightGoalPlayerIds";
+export const HIGHLIGHT_ASSIST_PLAYER_IDS_KEY = "highlightAssistPlayerIds";
+
+function parseIdList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (id): id is string => typeof id === "string" && id.trim() !== "",
+  );
+}
+
+function highlightPlayerIdsFromMark(event: GameTimelineEvent): {
+  goalPlayerIds?: string[];
+  assistPlayerIds?: string[];
+} {
+  const payload = event.payload;
+  const goalFromPayload = parseIdList(payload?.[HIGHLIGHT_GOAL_PLAYER_IDS_KEY]);
+  const assistFromPayload = parseIdList(
+    payload?.[HIGHLIGHT_ASSIST_PLAYER_IDS_KEY],
+  );
+  if (goalFromPayload.length > 0 || assistFromPayload.length > 0) {
+    return {
+      ...(goalFromPayload.length > 0 ? { goalPlayerIds: goalFromPayload } : {}),
+      ...(assistFromPayload.length > 0
+        ? { assistPlayerIds: assistFromPayload }
+        : {}),
+    };
+  }
+  const kind = statTypeKey(event);
+  const ids = getEventPlayerIds(event);
+  if (kind === "goal" && ids.length > 0) return { goalPlayerIds: ids };
+  if (kind === "assist" && ids.length > 0) return { assistPlayerIds: ids };
+  return {};
+}
 
 function statTypeKey(event: GameTimelineEvent): string | null {
   if (event.type !== "stat") return null;
@@ -64,11 +97,10 @@ export function mergeGoalAssistMarks(
     consumed.add(partner.id);
     const goal = kind === "goal" ? event : partner;
     const assist = kind === "assist" ? event : partner;
+    const goalPlayerIds = getEventPlayerIds(goal);
+    const assistPlayerIds = getEventPlayerIds(assist);
     const playerIds = [
-      ...new Set([
-        ...getEventPlayerIds(goal),
-        ...getEventPlayerIds(assist),
-      ]),
+      ...new Set([...goalPlayerIds, ...assistPlayerIds]),
     ];
     merged.push({
       ...goal,
@@ -80,6 +112,8 @@ export function mergeGoalAssistMarks(
           ...(goal.payload ?? {}),
           mergedAssistEventId: assist.id,
           mergedGoalEventId: goal.id,
+          [HIGHLIGHT_GOAL_PLAYER_IDS_KEY]: goalPlayerIds,
+          [HIGHLIGHT_ASSIST_PLAYER_IDS_KEY]: assistPlayerIds,
         },
         playerIds,
       ),
@@ -164,6 +198,7 @@ export function highlightMomentsFromGameMarks(
 
     const label = formatHighlightMarkLabel(event);
     const playerIds = getEventPlayerIds(event);
+    const { goalPlayerIds, assistPlayerIds } = highlightPlayerIdsFromMark(event);
     const generated = generatePresetMoments(
       presetId,
       {
@@ -173,6 +208,8 @@ export function highlightMomentsFromGameMarks(
         primarySourceId,
         label,
         ...(playerIds.length > 0 ? { playerIds } : {}),
+        ...(goalPlayerIds ? { goalPlayerIds } : {}),
+        ...(assistPlayerIds ? { assistPlayerIds } : {}),
       },
       opts.playableSourceIds,
     );
@@ -181,6 +218,8 @@ export function highlightMomentsFromGameMarks(
       out.push({
         ...moment,
         timelineEventId: event.id,
+        ...(goalPlayerIds ? { goalPlayerIds } : {}),
+        ...(assistPlayerIds ? { assistPlayerIds } : {}),
       });
     }
   }
