@@ -75,6 +75,30 @@ function isGoalAssistMoment(
   return label.includes("goal") || label.includes("assist");
 }
 
+function shouldAttachStatInterstitial(
+  moment: HighlightMoment,
+  index: number,
+  moments: HighlightMoment[],
+  nameForId: (playerId: string) => string | undefined,
+  seenTimelineEventIds: Set<string>,
+): boolean {
+  const eventId = moment.timelineEventId?.trim();
+  if (eventId) {
+    if (seenTimelineEventIds.has(eventId)) return false;
+    seenTimelineEventIds.add(eventId);
+    return true;
+  }
+  if (index > 0) {
+    const prev = moments[index - 1];
+    if (prev && isGoalAssistMoment(prev)) {
+      const overlay = formatReelPlayerOverlay(moment, nameForId);
+      const prevOverlay = formatReelPlayerOverlay(prev, nameForId);
+      if (overlay && overlay === prevOverlay) return false;
+    }
+  }
+  return true;
+}
+
 export function enrichReelStepsWithPlayerOverlays<
   T extends {
     momentId: string;
@@ -90,9 +114,19 @@ export function enrichReelStepsWithPlayerOverlays<
   moments: HighlightMoment[],
   nameForId: (playerId: string) => string | undefined,
 ): Array<T & { playerOverlay?: string; playerOverlaySec?: number }> {
+  const seenTimelineEventIds = new Set<string>();
   return steps.map((step, index) => {
     const moment = moments[index];
     if (!moment || !isGoalAssistMoment(moment)) return step;
+    if (!shouldAttachStatInterstitial(
+      moment,
+      index,
+      moments,
+      nameForId,
+      seenTimelineEventIds,
+    )) {
+      return step;
+    }
     const overlay = formatReelPlayerOverlay(moment, nameForId);
     if (!overlay) return step;
     return {
