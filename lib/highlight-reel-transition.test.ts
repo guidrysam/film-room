@@ -2,20 +2,22 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   REEL_PRE_TRANSITION_SEC,
+  REEL_SEGMENT_PREROLL_MS,
   reelTransitionLeadSec,
 } from "./highlight-reel-transition";
 
 describe("reelTransitionLeadSec", () => {
-  it("uses up to two and a half seconds of lead time on normal clips", () => {
+  it("uses a quarter-second lead on normal clips", () => {
     assert.equal(
       reelTransitionLeadSec({ sourceStartTime: 10, sourceEndTime: 25 }),
       REEL_PRE_TRANSITION_SEC,
     );
+    assert.equal(REEL_PRE_TRANSITION_SEC, 0.25);
+    assert.equal(REEL_SEGMENT_PREROLL_MS, 3000);
   });
 
-  it("shortens lead time for very short clips", () => {
-    const lead = reelTransitionLeadSec({ sourceStartTime: 10, sourceEndTime: 11 });
-    assert.ok(lead > 0);
-    assert.ok(lead < REEL_PRE_TRANSITION_SEC);
+  it("skips end black on clips too short to trim", () => {
+    const lead = reelTransitionLeadSec({ sourceStartTime: 10, sourceEndTime: 10.35 });
+    assert.equal(lead, 0);
   });
 });
