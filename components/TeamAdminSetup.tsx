@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import TeamLogoUpload from "@/components/TeamLogoUpload";
 import ParentInviteTargets from "@/components/ParentInviteTargets";
 import BackfillEventPersons from "@/components/BackfillEventPersons";
 import RosterImportResultSummary from "@/components/RosterImportResultSummary";
@@ -68,6 +69,14 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
           description="Your roster and parent contacts are ready. Invite parents below to upload video and build highlights."
         />
       ) : null}
+
+      <section className={panelClass}>
+        <h2 className="mb-1 text-sm font-semibold text-white">Branding</h2>
+        <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+          Team logo appears on highlight reel title screens.
+        </p>
+        <TeamLogoUpload team={team} />
+      </section>
 
       <section
         className={`${panelClass} ring-2 ring-blue-500/20`}

@@ -67,6 +67,8 @@ export type Team = {
   importBatchLabel?: string;
   /** Program name from CSV before event suffix (e.g. "CMFC U12 Girls"). */
   programName?: string;
+  /** Public URL for highlight reel title cards (Firebase Storage). */
+  logoUrl?: string;
   ownerId: string;
   /** uid -> role. Creator is always admin. */
   members: Record<string, TeamMemberRole>;
@@ -183,6 +185,7 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
     ...(trimOrUndef(raw.programName)
       ? { programName: (raw.programName as string).trim() }
       : {}),
+    ...(trimOrUndef(raw.logoUrl) ? { logoUrl: (raw.logoUrl as string).trim() } : {}),
     ...(youtube && Object.keys(youtube).length > 0 ? { youtube } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
@@ -362,7 +365,7 @@ export async function listMyTeams(uid: string): Promise<Team[]> {
 
 export async function updateTeam(
   teamId: string,
-  patch: Partial<CreateTeamInput & { youtube?: TeamYouTubeConfig }>,
+  patch: Partial<CreateTeamInput & { youtube?: TeamYouTubeConfig; logoUrl?: string | null }>,
 ): Promise<void> {
   await updateDoc(doc(teamsCol(), teamId), {
     updatedAt: serverTimestamp(),
@@ -371,6 +374,10 @@ export async function updateTeam(
     ...(patch.season !== undefined ? { season: patch.season.trim() } : {}),
     ...(patch.clubId !== undefined ? { clubId: patch.clubId.trim() } : {}),
     ...(patch.youtube !== undefined ? { youtube: patch.youtube } : {}),
+    ...(patch.logoUrl === null ? { logoUrl: deleteField() } : {}),
+    ...(typeof patch.logoUrl === "string" && patch.logoUrl.trim()
+      ? { logoUrl: patch.logoUrl.trim() }
+      : {}),
   });
 }
 

@@ -42,7 +42,8 @@ import {
   resolveHighlightMarkSourceId,
 } from "@/lib/highlight-from-marks";
 import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
-import { listTeamPlayers, type Player } from "@/lib/teams";
+import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
+import { getTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 import {
   downloadRecording,
   isReelRecordingSupported,
@@ -163,6 +164,7 @@ export default function HighlightReelStudio({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [rosterPlayers, setRosterPlayers] = useState<Player[]>([]);
+  const [team, setTeam] = useState<Team | null>(null);
 
   // Preset + segment-add controls.
   const [baseTimeStr, setBaseTimeStr] = useState("0");
@@ -196,15 +198,27 @@ export default function HighlightReelStudio({
     () => enrichReelStepsWithPlayerOverlays(steps, moments, playerNameForId),
     [steps, moments, playerNameForId],
   );
+  const titleCard = useMemo(
+    () => buildReelTitleCard(game, team, name),
+    [game, team, name],
+  );
   const totalDuration = useMemo(() => reelDurationSec(steps), [steps]);
 
   useEffect(() => {
     const teamId = game.teamId?.trim();
     if (!teamId) {
+      setTeam(null);
       setRosterPlayers([]);
       return;
     }
     let cancelled = false;
+    void getTeam(teamId)
+      .then((loaded) => {
+        if (!cancelled) setTeam(loaded);
+      })
+      .catch(() => {
+        if (!cancelled) setTeam(null);
+      });
     void listTeamPlayers(teamId)
       .then((players) => {
         if (!cancelled) setRosterPlayers(players);
@@ -623,14 +637,15 @@ export default function HighlightReelStudio({
           )}
 
           <div className={recordFocus ? "w-full max-w-5xl" : undefined}>
-            <HighlightReelPlayer
-              ref={playerRef}
-              captureRef={captureRef}
-              steps={previewSteps}
-              videoIdForSource={videoIdForSource}
-              labelForSource={labelForSource}
-              onEnded={handleReelEnded}
-            />
+          <HighlightReelPlayer
+            ref={playerRef}
+            captureRef={captureRef}
+            steps={previewSteps}
+            titleCard={titleCard}
+            videoIdForSource={videoIdForSource}
+            labelForSource={labelForSource}
+            onEnded={handleReelEnded}
+          />
           </div>
 
           <div
