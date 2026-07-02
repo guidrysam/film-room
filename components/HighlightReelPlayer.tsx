@@ -14,7 +14,6 @@ import YouTube, { type YouTubePlayer } from "react-youtube";
 import ReelInterstitial from "@/components/ReelInterstitial";
 import type { ReelStep } from "@/lib/highlight-draft";
 import {
-  REEL_STAT_HOLD_MS,
   REEL_TITLE_HOLD_MS,
   statInterstitialFromStep,
   type ReelInterstitial as ReelInterstitialCard,
@@ -22,10 +21,8 @@ import {
 } from "@/lib/highlight-reel-cards";
 import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
-  REEL_FADE_HOLD_MS,
   REEL_FADE_IN_MS,
   REEL_FADE_OUT_MS,
-  REEL_FADE_POST_READY_MS,
   REEL_SEGMENT_PREROLL_MS,
   REEL_USE_BLACK_TRANSITIONS,
   delayMs,
@@ -339,7 +336,6 @@ const HighlightReelPlayer = forwardRef<
       if (!alreadyBlack) {
         setFadeOpaque(true);
         if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
-        await delayMs(REEL_FADE_IN_MS);
         if (seq !== playSeqRef.current || !playingRef.current) return;
       } else if (segmentStarted) {
         ensureSegmentPlaying(index, pass, true);
@@ -350,9 +346,7 @@ const HighlightReelPlayer = forwardRef<
       await waitForSegmentPlaying(index);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
-      await delayMs(stat ? REEL_STAT_HOLD_MS : REEL_FADE_HOLD_MS);
       await delayMs(REEL_SEGMENT_PREROLL_MS);
-      await delayMs(REEL_FADE_POST_READY_MS);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
       setInterstitial(null);
@@ -388,7 +382,6 @@ const HighlightReelPlayer = forwardRef<
           setInterstitial(null);
         }
         setFadeOpaque(true);
-        await delayMs(REEL_FADE_IN_MS);
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
         await waitUntilSourceTime(fromStep.sourceEndTime, seq);
@@ -398,11 +391,7 @@ const HighlightReelPlayer = forwardRef<
         await waitForSegmentPlaying(toIndex);
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
-        const stat = kind === "event" ? statInterstitialFromStep(toStep) : null;
-        if (stat) await delayMs(REEL_STAT_HOLD_MS);
-
         await delayMs(REEL_SEGMENT_PREROLL_MS);
-        await delayMs(REEL_FADE_POST_READY_MS);
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
         setInterstitial(null);

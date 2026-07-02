@@ -1,24 +1,22 @@
 /** When false, segments play back-to-back with no black (overlay diagnostics). */
-export const REEL_USE_BLACK_TRANSITIONS = false;
+export const REEL_USE_BLACK_TRANSITIONS = true;
 
 /** Fade-to-black between highlight reel segments (hides YouTube load/buffer). */
 export const REEL_FADE_IN_MS = 450;
 export const REEL_FADE_HOLD_MS = 650;
 export const REEL_FADE_OUT_MS = 500;
-/** Extra black hold after playback resumes (YouTube chrome can linger briefly). */
-export const REEL_FADE_POST_READY_MS = 400;
 
-/** Start fading to black this many seconds before a clip ends. */
-export const REEL_PRE_TRANSITION_SEC = 2.5;
-/** Play the incoming clip under black for this long after the previous clip ends. */
-export const REEL_SEGMENT_PREROLL_MS = 2500;
+/** Black over the tail of the outgoing clip before the cut. */
+export const REEL_PRE_TRANSITION_SEC = 0.25;
+/** Incoming clip plays under black this long before it is revealed. */
+export const REEL_SEGMENT_PREROLL_MS = 3000;
 
 export function reelTransitionLeadSec(step: {
   sourceStartTime: number;
   sourceEndTime: number;
 }): number {
   const duration = Math.max(0, step.sourceEndTime - step.sourceStartTime);
-  if (duration <= 0.6) return 0;
+  if (duration <= REEL_PRE_TRANSITION_SEC + 0.15) return 0;
   return Math.min(REEL_PRE_TRANSITION_SEC, duration * 0.45);
 }
 
@@ -38,7 +36,6 @@ export async function runReelSegmentTransition(
   applyStep();
   await waitUntilPresentable?.();
   await delayMs(holdMs ?? REEL_FADE_HOLD_MS);
-  await delayMs(REEL_FADE_POST_READY_MS);
   setFadeOpaque(false);
   await delayMs(REEL_FADE_OUT_MS);
 }
