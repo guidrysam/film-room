@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -81,6 +82,25 @@ const HighlightReelPlayer = forwardRef<
   const firstVideoId = steps[0]
     ? videoIdForSource(steps[0].sourceId)
     : undefined;
+
+  /** Match Game Review / room embed params — hidden controls trigger YouTube sign-in walls. */
+  const youtubeOpts = useMemo(
+    () => ({
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        autoplay: 0,
+        enablejsapi: 1,
+        modestbranding: 1,
+        rel: 0,
+        playsinline: 1,
+        ...(typeof window !== "undefined"
+          ? { origin: window.location.origin }
+          : {}),
+      },
+    }),
+    [],
+  );
 
   /** Load (or seek within) the source for a given step + repeat pass. */
   const loadStep = useCallback(
@@ -224,21 +244,11 @@ const HighlightReelPlayer = forwardRef<
       <div className="relative aspect-video w-full">
         {firstVideoId ? (
           <YouTube
+            key={firstVideoId}
             videoId={firstVideoId}
             className="h-full w-full"
             iframeClassName="h-full w-full"
-            opts={{
-              width: "100%",
-              height: "100%",
-              playerVars: {
-                autoplay: 0,
-                controls: 0,
-                modestbranding: 1,
-                rel: 0,
-                playsinline: 1,
-                disablekb: 1,
-              },
-            }}
+            opts={youtubeOpts}
             onReady={(e) => {
               playerRef.current = e.target;
               loadedVideoIdRef.current = firstVideoId;
