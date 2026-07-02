@@ -59,14 +59,20 @@ export type ReelRecordingController = {
   readonly cropMode: "region" | "canvas" | "none";
 };
 
+/** Target output for saved reel recordings (1080p). */
+export const REEL_RECORD_OUTPUT = { width: 1920, height: 1080 } as const;
+
 export type StartReelRecordingOptions = {
   /** Preview video frame to record (16:9 surface, not the whole page). */
   cropElement: HTMLElement;
   onAutoStop?: () => void;
+  /** Output resolution for canvas-crop fallback (defaults to 1080p). */
+  outputSize?: { width: number; height: number };
 };
 
 async function prepareCroppedStream(
   cropElement: HTMLElement,
+  outputSize: { width: number; height: number },
 ): Promise<{
   stream: MediaStream;
   cropMode: ReelRecordingController["cropMode"];
@@ -74,7 +80,9 @@ async function prepareCroppedStream(
 }> {
   const displayStream = await navigator.mediaDevices.getDisplayMedia({
     video: {
-      frameRate: 30,
+      width: { ideal: outputSize.width, max: 3840 },
+      height: { ideal: outputSize.height, max: 2160 },
+      frameRate: { ideal: 30 },
     } as MediaTrackConstraints,
     audio: true,
     ...(typeof window !== "undefined" &&
@@ -82,6 +90,19 @@ async function prepareCroppedStream(
       ? { preferCurrentTab: true }
       : {}),
   } as DisplayMediaStreamOptions);
+
+  const videoTrack = displayStream.getVideoTracks()[0];
+  if (videoTrack) {
+    try {
+      await videoTrack.applyConstraints({
+        width: { ideal: outputSize.width },
+        height: { ideal: outputSize.height },
+        frameRate: { ideal: 30 },
+      });
+    } catch {
+      /* browser may ignore ideal constraints */
+    }
+  }
 
   let canvasSession: CanvasCropSession | null = null;
   const stopDisplayTracks = () => {
@@ -98,7 +119,12 @@ async function prepareCroppedStream(
   }
 
   try {
-    canvasSession = startCanvasCropSession(displayStream, cropElement, 30);
+    canvasSession = startCanvasCropSession(
+      displayStream,
+      cropElement,
+      30,
+      outputSize,
+    );
     return {
       stream: canvasSession.stream,
       cropMode: "canvas",
@@ -127,14 +153,20 @@ export async function startReelRecording(
     throw new Error("Reel preview is not ready to record.");
   }
 
+  const outputSize = opts.outputSize ?? REEL_RECORD_OUTPUT;
+
   const { stream, cropMode, cleanup } = await prepareCroppedStream(
     opts.cropElement,
+    outputSize,
   );
 
   const mimeType = pickMimeType();
   const recorder = new MediaRecorder(
     stream,
-    mimeType ? { mimeType } : undefined,
+    {
+      ...(mimeType ? { mimeType } : {}),
+      videoBitsPerSecond: 8_000_000,
+    },
   );
   const chunks: Blob[] = [];
   recorder.addEventListener("dataavailable", (e) => {

@@ -26,7 +26,9 @@ import {
   REEL_FADE_IN_MS,
   REEL_FADE_OUT_MS,
   REEL_FADE_POST_READY_MS,
+  REEL_SEGMENT_PREROLL_MS,
   delayMs,
+  reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
 
 const POLL_MS = 150;
@@ -98,6 +100,7 @@ const HighlightReelPlayer = forwardRef<
   const repeatPassRef = useRef(0);
   const pendingPlayRef = useRef(false);
   const transitioningRef = useRef(false);
+  const preTransitionArmRef = useRef(false);
   const playSeqRef = useRef(0);
   const seekSettledAtRef = useRef(0);
   const lastPlayKickAtRef = useRef(0);
@@ -227,6 +230,38 @@ const HighlightReelPlayer = forwardRef<
     [kickPlayback],
   );
 
+  const waitUntilSourceTime = useCallback(
+    (targetTime: number, seq: number): Promise<void> => {
+      return new Promise((resolve) => {
+        const deadline = Date.now() + 8000;
+        const check = () => {
+          if (seq !== playSeqRef.current || !playingRef.current) {
+            resolve();
+            return;
+          }
+          const player = playerRef.current;
+          if (!player) {
+            resolve();
+            return;
+          }
+          try {
+            const current = player.getCurrentTime?.() ?? 0;
+            if (current >= targetTime - 0.05 || Date.now() >= deadline) {
+              resolve();
+              return;
+            }
+          } catch {
+            resolve();
+            return;
+          }
+          window.setTimeout(check, 50);
+        };
+        check();
+      });
+    },
+    [],
+  );
+
   const loadStep = useCallback(
     (index: number, pass: number) => {
       const player = playerRef.current;
@@ -315,6 +350,7 @@ const HighlightReelPlayer = forwardRef<
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
       await delayMs(stat ? REEL_STAT_HOLD_MS : REEL_FADE_HOLD_MS);
+      await delayMs(REEL_SEGMENT_PREROLL_MS);
       await delayMs(REEL_FADE_POST_READY_MS);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
@@ -325,26 +361,58 @@ const HighlightReelPlayer = forwardRef<
     [ensureSegmentPlaying, waitForSegmentPlaying],
   );
 
-  /** Black-only cut between beats of the same event (live → replay). */
-  const presentEventBeatUnderBlack = useCallback(
-    async (index: number, pass: number, seq: number) => {
-      setInterstitial(null);
-      setFadeOpaque(true);
-      ensureSegmentPlaying(index, pass, false);
-      await delayMs(REEL_FADE_IN_MS);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
+  const runPreRollTransition = useCallback(
+    async (
+      fromIndex: number,
+      toIndex: number,
+      toPass: number,
+      kind: "event" | "beat",
+    ) => {
+      if (transitioningRef.current) return;
+      transitioningRef.current = true;
+      preTransitionArmRef.current = true;
+      const seq = playSeqRef.current;
+      const fromStep = stepsRef.current[fromIndex];
+      const toStep = stepsRef.current[toIndex];
+      if (!fromStep || !toStep) {
+        transitioningRef.current = false;
+        preTransitionArmRef.current = false;
+        return;
+      }
 
-      await waitForSegmentPlaying(index);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
+      try {
+        if (kind === "event") {
+          setInterstitial(statInterstitialFromStep(toStep));
+        } else {
+          setInterstitial(null);
+        }
+        setFadeOpaque(true);
+        await delayMs(REEL_FADE_IN_MS);
+        if (seq !== playSeqRef.current || !playingRef.current) return;
 
-      await delayMs(REEL_FADE_HOLD_MS);
-      await delayMs(REEL_FADE_POST_READY_MS);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
+        await waitUntilSourceTime(fromStep.sourceEndTime, seq);
+        if (seq !== playSeqRef.current || !playingRef.current) return;
 
-      setFadeOpaque(false);
-      await delayMs(REEL_FADE_OUT_MS);
+        ensureSegmentPlaying(toIndex, toPass, false);
+        await waitForSegmentPlaying(toIndex);
+        if (seq !== playSeqRef.current || !playingRef.current) return;
+
+        const stat = kind === "event" ? statInterstitialFromStep(toStep) : null;
+        if (stat) await delayMs(REEL_STAT_HOLD_MS);
+
+        await delayMs(REEL_SEGMENT_PREROLL_MS);
+        await delayMs(REEL_FADE_POST_READY_MS);
+        if (seq !== playSeqRef.current || !playingRef.current) return;
+
+        setInterstitial(null);
+        setFadeOpaque(false);
+        await delayMs(REEL_FADE_OUT_MS);
+      } finally {
+        transitioningRef.current = false;
+        preTransitionArmRef.current = false;
+      }
     },
-    [ensureSegmentPlaying, waitForSegmentPlaying],
+    [ensureSegmentPlaying, waitForSegmentPlaying, waitUntilSourceTime],
   );
 
   const beginPlayback = useCallback(async () => {
@@ -374,6 +442,7 @@ const HighlightReelPlayer = forwardRef<
     setPlayingState(false);
     pendingPlayRef.current = false;
     transitioningRef.current = false;
+    preTransitionArmRef.current = false;
     setFadeOpaque(false);
     setInterstitial(null);
     stepIndexRef.current = -1;
@@ -384,53 +453,6 @@ const HighlightReelPlayer = forwardRef<
       /* ignore */
     }
   }, [setPlayingState]);
-
-  const transitionToEventBeat = useCallback(
-    async (index: number, pass: number) => {
-      if (transitioningRef.current) return;
-      transitioningRef.current = true;
-      const seq = playSeqRef.current;
-      try {
-        await presentEventBeatUnderBlack(index, pass, seq);
-      } finally {
-        transitioningRef.current = false;
-      }
-    },
-    [presentEventBeatUnderBlack],
-  );
-
-  const transitionToSegment = useCallback(
-    async (index: number, pass: number) => {
-      if (transitioningRef.current) return;
-      transitioningRef.current = true;
-      const seq = playSeqRef.current;
-      try {
-        await presentSegmentUnderBlack(index, pass, seq);
-      } finally {
-        transitioningRef.current = false;
-      }
-    },
-    [presentSegmentUnderBlack],
-  );
-
-  const advanceToStep = useCallback(
-    (
-      index: number,
-      pass: number,
-      transition: ReturnType<typeof reelStepTransitionKind> | "none",
-    ) => {
-      if (transition === "none") {
-        loadStep(index, pass);
-        return;
-      }
-      if (transition === "beat") {
-        void transitionToEventBeat(index, pass);
-        return;
-      }
-      void transitionToSegment(index, pass);
-    },
-    [loadStep, transitionToEventBeat, transitionToSegment],
-  );
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
@@ -493,25 +515,56 @@ const HighlightReelPlayer = forwardRef<
       } catch {
         /* ignore */
       }
-      if (current >= step.sourceEndTime - 0.05) {
-        const pass = repeatPassRef.current;
-        if (pass + 1 < step.repeat) {
-          advanceToStep(stepIndexRef.current, pass + 1, "none");
+      const pass = repeatPassRef.current;
+      const nextIndex = stepIndexRef.current + 1;
+      const hasNextStep = nextIndex < stepsRef.current.length;
+
+      if (
+        !transitioningRef.current &&
+        !preTransitionArmRef.current &&
+        pass + 1 >= step.repeat &&
+        hasNextStep
+      ) {
+        const leadSec = reelTransitionLeadSec(step);
+        if (leadSec > 0 && current >= step.sourceEndTime - leadSec) {
+          const cur = stepsRef.current[stepIndexRef.current];
+          const next = stepsRef.current[nextIndex];
+          const kind = reelStepTransitionKind(cur, next);
+          void runPreRollTransition(
+            stepIndexRef.current,
+            nextIndex,
+            0,
+            kind === "beat" ? "beat" : "event",
+          );
           return;
         }
-        const nextIndex = stepIndexRef.current + 1;
-        if (nextIndex >= stepsRef.current.length) {
+      }
+
+      if (current >= step.sourceEndTime - 0.05) {
+        if (pass + 1 < step.repeat) {
+          loadStep(stepIndexRef.current, pass + 1);
+          return;
+        }
+        if (!hasNextStep) {
           stop();
           onEnded?.();
           return;
         }
-        const cur = stepsRef.current[stepIndexRef.current];
-        const next = stepsRef.current[nextIndex];
-        advanceToStep(nextIndex, 0, reelStepTransitionKind(cur, next));
+        if (!transitioningRef.current && !preTransitionArmRef.current) {
+          const cur = stepsRef.current[stepIndexRef.current];
+          const next = stepsRef.current[nextIndex];
+          const kind = reelStepTransitionKind(cur, next);
+          void runPreRollTransition(
+            stepIndexRef.current,
+            nextIndex,
+            0,
+            kind === "beat" ? "beat" : "event",
+          );
+        }
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, advanceToStep, stop, onEnded, kickPlayback]);
+  }, [playing, loadStep, runPreRollTransition, stop, onEnded, kickPlayback]);
 
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
@@ -525,11 +578,12 @@ const HighlightReelPlayer = forwardRef<
         kickPlayback(event.target);
       }
       if (state === YT_ENDED) {
+        if (transitioningRef.current || preTransitionArmRef.current) return;
         const pass = repeatPassRef.current;
         const step = stepsRef.current[stepIndexRef.current];
         if (!step) return;
         if (pass + 1 < step.repeat) {
-          advanceToStep(stepIndexRef.current, pass + 1, "none");
+          loadStep(stepIndexRef.current, pass + 1);
           return;
         }
         const nextIndex = stepIndexRef.current + 1;
@@ -540,10 +594,16 @@ const HighlightReelPlayer = forwardRef<
         }
         const cur = stepsRef.current[stepIndexRef.current];
         const next = stepsRef.current[nextIndex];
-        advanceToStep(nextIndex, 0, reelStepTransitionKind(cur, next));
+        const kind = reelStepTransitionKind(cur, next);
+        void runPreRollTransition(
+          stepIndexRef.current,
+          nextIndex,
+          0,
+          kind === "beat" ? "beat" : "event",
+        );
       }
     },
-    [advanceToStep, kickPlayback, onEnded, stop],
+    [kickPlayback, loadStep, onEnded, runPreRollTransition, stop],
   );
 
   return (

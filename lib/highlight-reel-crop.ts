@@ -59,14 +59,22 @@ export type CanvasCropSession = {
   stop: () => void;
 };
 
+export type CanvasCropOutputSize = {
+  width: number;
+  height: number;
+};
+
+const DEFAULT_OUTPUT: CanvasCropOutputSize = { width: 1920, height: 1080 };
+
 /**
  * Fallback for browsers without Region Capture (e.g. Safari): paint only the
- * capture element's viewport bounds into a canvas stream.
+ * capture element's viewport bounds into a canvas stream at {@link outputSize}.
  */
 export function startCanvasCropSession(
   displayStream: MediaStream,
   element: HTMLElement,
   fps = 30,
+  outputSize: CanvasCropOutputSize = DEFAULT_OUTPUT,
 ): CanvasCropSession {
   const video = document.createElement("video");
   video.muted = true;
@@ -84,9 +92,8 @@ export function startCanvasCropSession(
   let rafId = 0;
 
   const resizeCanvas = () => {
-    const rect = element.getBoundingClientRect();
-    const w = Math.max(2, Math.round(rect.width));
-    const h = Math.max(2, Math.round(rect.height));
+    const w = Math.max(2, Math.round(outputSize.width));
+    const h = Math.max(2, Math.round(outputSize.height));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;

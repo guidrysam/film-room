@@ -58,6 +58,7 @@ import { getTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 import {
   downloadRecording,
   isReelRecordingSupported,
+  REEL_RECORD_OUTPUT,
   startReelRecording,
   type ReelRecordingController,
 } from "@/lib/highlight-reel-record";
@@ -528,13 +529,14 @@ export default function HighlightReelStudio({
           window.requestAnimationFrame(() => resolve());
         });
       });
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 220));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 450));
       const cropElement = captureRef.current;
       if (!cropElement) {
         throw new Error("Reel preview is not ready to record.");
       }
       const controller = await startReelRecording({
         cropElement,
+        outputSize: REEL_RECORD_OUTPUT,
         onAutoStop: () => {
           recordingRef.current = false;
           setRecording(false);
@@ -652,12 +654,13 @@ export default function HighlightReelStudio({
             </div>
           ) : (
             <p className="mb-3 text-center text-xs font-medium text-zinc-300">
-              Recording preview — choose <span className="text-white">This Tab</span>{" "}
-              when your browser asks what to share.
+              Recording at 1080p — choose{" "}
+              <span className="text-white">This Tab</span> when your browser asks
+              what to share.
             </p>
           )}
 
-          <div className={recordFocus ? "w-full max-w-5xl" : undefined}>
+          <div className={recordFocus ? "w-full max-w-[1920px]" : undefined}>
           <HighlightReelPlayer
             ref={playerRef}
             captureRef={captureRef}
@@ -693,7 +696,7 @@ export default function HighlightReelStudio({
             )}
             {recording ? (
               <span className="text-[10px] text-red-300">
-                Recording the preview video only — not the whole screen.
+                Recording 1080p preview — not the whole screen.
               </span>
             ) : null}
             {!recordFocus ? (
