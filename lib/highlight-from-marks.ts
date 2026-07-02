@@ -5,7 +5,7 @@ import {
   generatePresetMoments,
   type HighlightPresetId,
 } from "@/lib/highlight-presets";
-import { getEventPlayerIds } from "@/lib/timeline-players";
+import { getEventPlayerIds, withEventPlayerIds } from "@/lib/timeline-players";
 
 export const HIGHLIGHT_MARK_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
   "coach_mark",
@@ -15,6 +15,79 @@ export const HIGHLIGHT_MARK_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
 
 const DEFAULT_START_OFFSET = -5;
 const DEFAULT_END_OFFSET = 10;
+/** Goal and assist on the same play are usually marked within one second. */
+const GOAL_ASSIST_MERGE_WINDOW_SEC = 1;
+
+function statTypeKey(event: GameTimelineEvent): string | null {
+  if (event.type !== "stat") return null;
+  const stat = parseGameStat(event);
+  if (!stat) return null;
+  return stat.statType.trim().toLowerCase();
+}
+
+/**
+ * Merge goal + assist marks on the same play into one highlight moment.
+ */
+export function mergeGoalAssistMarks(
+  events: GameTimelineEvent[],
+): GameTimelineEvent[] {
+  const marks = events.filter(isHighlightMarkEvent).sort((a, b) => a.t - b.t);
+  const consumed = new Set<string>();
+  const merged: GameTimelineEvent[] = [];
+
+  for (const event of marks) {
+    if (consumed.has(event.id)) continue;
+    const kind = statTypeKey(event);
+    if (kind !== "goal" && kind !== "assist") {
+      merged.push(event);
+      continue;
+    }
+
+    const partner = marks.find((other) => {
+      if (other.id === event.id || consumed.has(other.id)) return false;
+      if (Math.abs(other.t - event.t) > GOAL_ASSIST_MERGE_WINDOW_SEC) {
+        return false;
+      }
+      const otherKind = statTypeKey(other);
+      return (
+        (kind === "goal" && otherKind === "assist") ||
+        (kind === "assist" && otherKind === "goal")
+      );
+    });
+
+    if (!partner) {
+      merged.push(event);
+      continue;
+    }
+
+    consumed.add(event.id);
+    consumed.add(partner.id);
+    const goal = kind === "goal" ? event : partner;
+    const assist = kind === "assist" ? event : partner;
+    const playerIds = [
+      ...new Set([
+        ...getEventPlayerIds(goal),
+        ...getEventPlayerIds(assist),
+      ]),
+    ];
+    merged.push({
+      ...goal,
+      t: goal.t,
+      label: "Goal + Assist",
+      sourceId: goal.sourceId ?? assist.sourceId,
+      payload: withEventPlayerIds(
+        {
+          ...(goal.payload ?? {}),
+          mergedAssistEventId: assist.id,
+          mergedGoalEventId: goal.id,
+        },
+        playerIds,
+      ),
+    });
+  }
+
+  return merged;
+}
 
 export function isHighlightMarkEvent(event: GameTimelineEvent): boolean {
   return HIGHLIGHT_MARK_EVENT_TYPES.has(event.type) && Number.isFinite(event.t);
@@ -78,7 +151,7 @@ export function highlightMomentsFromGameMarks(
   const presetId = opts.presetId ?? "single";
   const playable = new Set(opts.playableSourceIds);
 
-  const marks = events.filter(isHighlightMarkEvent).sort((a, b) => a.t - b.t);
+  const marks = mergeGoalAssistMarks(events);
   const out: AddHighlightMomentInput[] = [];
 
   for (const event of marks) {

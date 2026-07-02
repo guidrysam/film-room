@@ -5,6 +5,7 @@ import {
   formatHighlightMarkLabel,
   highlightMomentsFromGameMarks,
   isHighlightMarkEvent,
+  mergeGoalAssistMarks,
   resolveHighlightMarkSourceId,
 } from "./highlight-from-marks";
 
@@ -111,5 +112,53 @@ describe("highlightMomentsFromGameMarks", () => {
     assert.equal(moments.length, 2);
     assert.equal(moments[0]!.label, "Goal");
     assert.equal(moments[1]!.label, "Slow-mo replay");
+  });
+
+  it("merges goal and assist at the same time into one highlight", () => {
+    const merged = mergeGoalAssistMarks([
+      mark({
+        id: "goal1",
+        type: "stat",
+        t: 374,
+        sourceId: "cam-a",
+        payload: { statType: "goal", playerIds: ["p1"] },
+      }),
+      mark({
+        id: "ast1",
+        type: "stat",
+        t: 374,
+        sourceId: "cam-a",
+        payload: { statType: "assist", playerIds: ["p2"] },
+      }),
+    ]);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]!.label, "Goal + Assist");
+
+    const moments = highlightMomentsFromGameMarks(
+      [
+        mark({
+          id: "goal1",
+          type: "stat",
+          t: 374,
+          payload: { statType: "goal", playerIds: ["p1"] },
+        }),
+        mark({
+          id: "ast1",
+          type: "stat",
+          t: 374,
+          payload: { statType: "assist", playerIds: ["p2"] },
+        }),
+        mark({ id: "shot1", type: "stat", t: 400, payload: { statType: "shot" } }),
+      ],
+      {
+        primarySourceId: "cam-a",
+        playableSourceIds: ["cam-a"],
+        presetId: "single",
+      },
+    );
+    assert.equal(moments.length, 2);
+    assert.equal(moments[0]!.label, "Goal + Assist");
+    assert.equal(moments[0]!.gameTime, 374);
+    assert.equal(moments[1]!.label, "Shot");
   });
 });

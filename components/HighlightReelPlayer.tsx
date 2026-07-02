@@ -10,6 +10,11 @@ import {
 } from "react";
 import YouTube, { type YouTubePlayer } from "react-youtube";
 import type { ReelStep } from "@/lib/highlight-draft";
+import {
+  REEL_FADE_IN_MS,
+  REEL_FADE_OUT_MS,
+  runReelSegmentTransition,
+} from "@/lib/highlight-reel-transition";
 
 const POLL_MS = 150;
 
@@ -50,6 +55,7 @@ const HighlightReelPlayer = forwardRef<
   const [stepIndex, setStepIndex] = useState(-1);
   const [repeatPass, setRepeatPass] = useState(0);
   const [ready, setReady] = useState(false);
+  const [fadeOpaque, setFadeOpaque] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
@@ -61,6 +67,7 @@ const HighlightReelPlayer = forwardRef<
   const stepIndexRef = useRef(-1);
   const repeatPassRef = useRef(0);
   const pendingPlayRef = useRef(false);
+  const transitioningRef = useRef(false);
 
   const setPlayingState = useCallback(
     (next: boolean) => {
@@ -124,6 +131,8 @@ const HighlightReelPlayer = forwardRef<
   const stop = useCallback(() => {
     setPlayingState(false);
     pendingPlayRef.current = false;
+    transitioningRef.current = false;
+    setFadeOpaque(false);
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
     setStepIndex(-1);
@@ -134,6 +143,22 @@ const HighlightReelPlayer = forwardRef<
       /* ignore */
     }
   }, [setPlayingState]);
+
+  const advanceToStep = useCallback(
+    (index: number, pass: number, withFade: boolean) => {
+      if (transitioningRef.current) return;
+      const run = () => loadStep(index, pass);
+      if (!withFade) {
+        run();
+        return;
+      }
+      transitioningRef.current = true;
+      void runReelSegmentTransition(run, setFadeOpaque).finally(() => {
+        transitioningRef.current = false;
+      });
+    },
+    [loadStep],
+  );
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
@@ -172,7 +197,7 @@ const HighlightReelPlayer = forwardRef<
       if (current >= step.sourceEndTime - 0.05) {
         const pass = repeatPassRef.current;
         if (pass + 1 < step.repeat) {
-          loadStep(stepIndexRef.current, pass + 1);
+          advanceToStep(stepIndexRef.current, pass + 1, false);
           return;
         }
         const nextIndex = stepIndexRef.current + 1;
@@ -181,11 +206,11 @@ const HighlightReelPlayer = forwardRef<
           onEnded?.();
           return;
         }
-        loadStep(nextIndex, 0);
+        advanceToStep(nextIndex, 0, true);
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, loadStep, stop, onEnded]);
+  }, [playing, advanceToStep, stop, onEnded]);
 
   const activeStep = stepIndex >= 0 ? steps[stepIndex] : null;
   const activeLabel = activeStep
@@ -242,6 +267,15 @@ const HighlightReelPlayer = forwardRef<
             </span>
           </div>
         ) : null}
+
+        <div
+          className="pointer-events-none absolute inset-0 z-20 bg-black transition-opacity ease-in-out"
+          style={{
+            opacity: fadeOpaque ? 1 : 0,
+            transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
+          }}
+          aria-hidden
+        />
       </div>
 
       <div className="flex items-center gap-2 border-t border-white/[0.06] bg-zinc-950/60 px-3 py-2">

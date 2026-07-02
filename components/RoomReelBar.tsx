@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReelStep } from "@/lib/highlight-draft";
+import {
+  REEL_FADE_IN_MS,
+  REEL_FADE_OUT_MS,
+  runReelSegmentTransition,
+} from "@/lib/highlight-reel-transition";
 
 const POLL_MS = 200;
 /** Ignore end-of-segment detection briefly after a seek so we don't skip. */
@@ -39,11 +44,13 @@ export default function RoomReelBar({
   const [playing, setPlaying] = useState(false);
   const [stepIndex, setStepIndex] = useState(-1);
   const [repeatPass, setRepeatPass] = useState(0);
+  const [fadeOpaque, setFadeOpaque] = useState(false);
 
   const playingRef = useRef(false);
   const stepIndexRef = useRef(-1);
   const repeatPassRef = useRef(0);
   const settleUntilRef = useRef(0);
+  const transitioningRef = useRef(false);
   const stepsRef = useRef(steps);
   const applyStepRef = useRef(applyStep);
   const getTimeRef = useRef(getActiveTime);
@@ -68,6 +75,8 @@ export default function RoomReelBar({
 
   const stop = useCallback(() => {
     playingRef.current = false;
+    transitioningRef.current = false;
+    setFadeOpaque(false);
     setPlaying(false);
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
@@ -75,6 +84,22 @@ export default function RoomReelBar({
     setRepeatPass(0);
     onStopRef.current();
   }, []);
+
+  const advanceToStep = useCallback(
+    (index: number, pass: number, withFade: boolean) => {
+      if (transitioningRef.current) return;
+      const run = () => goToStep(index, pass);
+      if (!withFade) {
+        run();
+        return;
+      }
+      transitioningRef.current = true;
+      void runReelSegmentTransition(run, setFadeOpaque).finally(() => {
+        transitioningRef.current = false;
+      });
+    },
+    [goToStep],
+  );
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
@@ -101,7 +126,7 @@ export default function RoomReelBar({
         if (t < step.sourceEndTime - 0.1) return;
         const pass = repeatPassRef.current;
         if (pass + 1 < step.repeat) {
-          goToStep(stepIndexRef.current, pass + 1);
+          advanceToStep(stepIndexRef.current, pass + 1, false);
           return;
         }
         const next = stepIndexRef.current + 1;
@@ -109,11 +134,11 @@ export default function RoomReelBar({
           stop();
           return;
         }
-        goToStep(next, 0);
+        advanceToStep(next, 0, true);
       })();
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, goToStep, stop]);
+  }, [playing, advanceToStep, stop]);
 
   if (steps.length === 0) return null;
 
@@ -123,6 +148,7 @@ export default function RoomReelBar({
     : null;
 
   return (
+    <>
     <div className="rounded-lg border border-fuchsia-500/25 bg-fuchsia-950/20 p-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
@@ -156,5 +182,14 @@ export default function RoomReelBar({
         </p>
       ) : null}
     </div>
+    <div
+      className="pointer-events-none fixed inset-0 z-[100] bg-black transition-opacity ease-in-out"
+      style={{
+        opacity: fadeOpaque ? 1 : 0,
+        transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
+      }}
+      aria-hidden
+    />
+  </>
   );
 }
