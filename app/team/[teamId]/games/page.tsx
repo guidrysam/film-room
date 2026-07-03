@@ -51,7 +51,7 @@ export default function TeamGamesPage() {
         <>
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-zinc-400">
-              Open a game or add video to start a new one.
+              Open a game or add one from a YouTube link below.
             </p>
             <Link
               href="/schedule-import"

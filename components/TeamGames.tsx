@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import TeamAddStreamGames from "@/components/TeamAddStreamGames";
 import { canCoachTeam, listTeamGames, type Team } from "@/lib/teams";
 import type { Game } from "@/lib/games";
 import { gameCapUrl } from "@/lib/team-routes";
@@ -49,13 +50,19 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
           <button type="button" onClick={() => void refresh()} className={ghostBtn}>
             Refresh
           </button>
-          {canCreate ? (
-            <Link href={gameCapUrl({ teamId: team.id })} className={ghostBtn}>
-              + Add Video / New game
-            </Link>
-          ) : null}
         </div>
       </div>
+
+      {canCreate ? (
+        <div className="mb-4">
+          <TeamAddStreamGames
+            team={team}
+            currentUid={currentUid}
+            onCreated={() => void refresh()}
+          />
+        </div>
+      ) : null}
+
       {loading ? (
         <p className="text-sm text-zinc-400">Loading games…</p>
       ) : games.length === 0 ? (
