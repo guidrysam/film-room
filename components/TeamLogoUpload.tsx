@@ -53,9 +53,9 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
                   setMessage("Logo saved.");
                 })
                 .catch((err) => {
-                  setMessage(
-                    err instanceof Error ? err.message : "Could not upload logo.",
-                  );
+                  const text =
+                    err instanceof Error ? err.message : "Could not upload logo.";
+                  setMessage(text);
                 })
                 .finally(() => setUploading(false));
             }}

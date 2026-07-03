@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Team logos and other uploaded assets.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function teamData(teamId) {
+      return firestore.get(/databases/(default)/documents/teams/$(teamId)).data;
+    }
+
+    function isTeamAdmin(teamId) {
+      return request.auth != null && (
+        teamData(teamId).ownerId == request.auth.uid ||
+        teamData(teamId).members[request.auth.uid] == 'admin'
+      );
+    }
+
+    match /teams/{teamId}/logo.{extension} {
+      allow read: if true;
+      allow write: if isTeamAdmin(teamId)
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(png|jpeg|webp|gif)');
+    }
+  }
+}
