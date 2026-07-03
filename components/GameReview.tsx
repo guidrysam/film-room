@@ -50,6 +50,8 @@ import { gameSourceToVideoAngle } from "@/lib/video-angle";
 import { gameCapUrl, teamFilmRoomUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
 import VideoTransport from "@/components/VideoTransport";
+import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
+import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 import ImportTagPlays from "@/components/ImportTagPlays";
 
 export type GameReviewProps = {
@@ -1057,11 +1059,11 @@ export default function GameReview({
                 )}
 
                 {selectedSource?.videoId ? (
-                  <div
+                  <YoutubeChromelessStage
                     className={
                       isFullscreen
-                        ? "relative min-h-0 flex-1 overflow-hidden bg-black"
-                        : "aspect-video w-full min-h-[240px] overflow-hidden rounded-lg border border-white/[0.08] bg-black lg:min-h-[420px]"
+                        ? "min-h-0 flex-1 bg-black"
+                        : "aspect-video w-full min-h-[240px] rounded-lg border border-white/[0.08] bg-black lg:min-h-[420px]"
                     }
                   >
                     <YouTube
@@ -1073,8 +1075,7 @@ export default function GameReview({
                         height: "100%",
                         playerVars: {
                           autoplay: 0,
-                          modestbranding: 1,
-                          rel: 0,
+                          ...YOUTUBE_CHROMELESS_PLAYER_VARS,
                         },
                       }}
                       onReady={(e) => {
@@ -1094,7 +1095,7 @@ export default function GameReview({
                         }
                       }}
                     />
-                  </div>
+                  </YoutubeChromelessStage>
                 ) : null}
 
                 {selectedSource?.videoId ? (

@@ -8,6 +8,8 @@ import {
   syncStatusBadgeClass,
   syncStatusLabel,
 } from "@/lib/game-timeline";
+import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
+import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import {
   updateGameSourceSync,
   type Game,
@@ -51,6 +53,45 @@ async function readPlayerTime(player: YouTubePlayer | null): Promise<number> {
   }
 }
 
+async function readPlayerDuration(player: YouTubePlayer | null): Promise<number> {
+  if (!player) return 0;
+  try {
+    const d = await player.getDuration();
+    return typeof d === "number" && Number.isFinite(d) && d > 0 ? d : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function SyncPlayerScrub({
+  ready,
+  time,
+  duration,
+  onTimeChange,
+}: {
+  ready: boolean;
+  time: number;
+  duration: number;
+  onTimeChange: (next: number) => void;
+}) {
+  const max = duration > 0 ? duration : Math.max(time, 1);
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5">
+      <input
+        type="range"
+        min={0}
+        max={max}
+        step={0.1}
+        value={Math.min(time, max)}
+        disabled={!ready}
+        onChange={(e) => onTimeChange(Number(e.target.value))}
+        className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-white/15 accent-blue-500 disabled:opacity-40"
+        aria-label="Scrub video"
+      />
+    </div>
+  );
+}
+
 /**
  * "Match to another angle" — line up a clip that has no timestamp by matching a
  * shared moment to an already-aligned reference angle. Scrub both players to the
@@ -67,9 +108,13 @@ export default function AngleMatchSync({
   const [targetId, setTargetId] = useState<string | null>(null);
   const [refTime, setRefTime] = useState(0);
   const [targetTime, setTargetTime] = useState(0);
+  const [refDuration, setRefDuration] = useState(0);
+  const [targetDuration, setTargetDuration] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedOffset, setSavedOffset] = useState<number | null>(null);
+  const [refReady, setRefReady] = useState(false);
+  const [targetReady, setTargetReady] = useState(false);
 
   const refPlayer = useRef<YouTubePlayer | null>(null);
   const targetPlayer = useRef<YouTubePlayer | null>(null);
@@ -116,12 +161,22 @@ export default function AngleMatchSync({
     });
   }, [expanded, playable, referenceId]);
 
+  useEffect(() => {
+    setRefReady(false);
+  }, [referenceId]);
+
+  useEffect(() => {
+    setTargetReady(false);
+  }, [targetId]);
+
   // Poll both players for a live time readout while open.
   useEffect(() => {
     if (!expanded) return;
     const id = window.setInterval(() => {
       void readPlayerTime(refPlayer.current).then(setRefTime);
       void readPlayerTime(targetPlayer.current).then(setTargetTime);
+      void readPlayerDuration(refPlayer.current).then(setRefDuration);
+      void readPlayerDuration(targetPlayer.current).then(setTargetDuration);
     }, 250);
     return () => window.clearInterval(id);
   }, [expanded, referenceId, targetId]);
@@ -135,6 +190,29 @@ export default function AngleMatchSync({
     if (referenceGameTime == null) return null;
     return Math.round((targetTime - referenceGameTime) * 100) / 100;
   }, [referenceGameTime, targetTime]);
+
+  const seekRefPlayer = useCallback((sec: number) => {
+    const clamped = Math.max(0, refDuration > 0 ? Math.min(sec, refDuration) : sec);
+    setRefTime(clamped);
+    try {
+      refPlayer.current?.seekTo(clamped, true);
+    } catch {
+      /* not ready */
+    }
+  }, [refDuration]);
+
+  const seekTargetPlayer = useCallback((sec: number) => {
+    const clamped = Math.max(
+      0,
+      targetDuration > 0 ? Math.min(sec, targetDuration) : sec,
+    );
+    setTargetTime(clamped);
+    try {
+      targetPlayer.current?.seekTo(clamped, true);
+    } catch {
+      /* not ready */
+    }
+  }, [targetDuration]);
 
   const handleApply = useCallback(async () => {
     if (!target || referenceGameTime == null || computedOffset == null) return;
@@ -266,7 +344,7 @@ export default function AngleMatchSync({
                   ) : null}
                 </div>
                 {refAngle ? (
-                  <div className="aspect-video w-full overflow-hidden rounded">
+                  <YoutubeChromelessStage className="aspect-video w-full rounded">
                     <YouTube
                       key={refAngle.videoId}
                       videoId={refAngle.videoId}
@@ -275,14 +353,21 @@ export default function AngleMatchSync({
                       opts={{
                         width: "100%",
                         height: "100%",
-                        playerVars: { rel: 0, playsinline: 1 },
+                        playerVars: YOUTUBE_CHROMELESS_PLAYER_VARS,
                       }}
                       onReady={(e) => {
                         refPlayer.current = e.target;
+                        setRefReady(true);
                       }}
                     />
-                  </div>
+                  </YoutubeChromelessStage>
                 ) : null}
+                <SyncPlayerScrub
+                  ready={refReady}
+                  time={refTime}
+                  duration={refDuration}
+                  onTimeChange={seekRefPlayer}
+                />
                 <p className="mt-1 text-[10px] text-zinc-500">
                   Video {formatTimelineSeconds(refTime)} →{" "}
                   <span className="text-zinc-300">
@@ -309,7 +394,7 @@ export default function AngleMatchSync({
                   ) : null}
                 </div>
                 {targetAngle ? (
-                  <div className="aspect-video w-full overflow-hidden rounded">
+                  <YoutubeChromelessStage className="aspect-video w-full rounded">
                     <YouTube
                       key={targetAngle.videoId}
                       videoId={targetAngle.videoId}
@@ -318,14 +403,21 @@ export default function AngleMatchSync({
                       opts={{
                         width: "100%",
                         height: "100%",
-                        playerVars: { rel: 0, playsinline: 1 },
+                        playerVars: YOUTUBE_CHROMELESS_PLAYER_VARS,
                       }}
                       onReady={(e) => {
                         targetPlayer.current = e.target;
+                        setTargetReady(true);
                       }}
                     />
-                  </div>
+                  </YoutubeChromelessStage>
                 ) : null}
+                <SyncPlayerScrub
+                  ready={targetReady}
+                  time={targetTime}
+                  duration={targetDuration}
+                  onTimeChange={seekTargetPlayer}
+                />
                 <p className="mt-1 text-[10px] text-zinc-500">
                   Video {formatTimelineSeconds(targetTime)}
                 </p>
