@@ -203,3 +203,9 @@ export function generatePresetMoments(
   if (!preset) return [];
   return preset.generate(base, angleIds);
 }
+
+/** UI label for a preset id (replay uses the friendlier “Live + replay” name). */
+export function highlightPresetLabel(presetId: HighlightPresetId): string {
+  if (presetId === "replay") return "Live + replay";
+  return HIGHLIGHT_PRESETS[presetId]?.name ?? presetId;
+}

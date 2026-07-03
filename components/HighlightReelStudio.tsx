@@ -32,6 +32,7 @@ import {
 import {
   generatePresetMoments,
   HIGHLIGHT_PRESET_LIST,
+  highlightPresetLabel,
   type HighlightPresetId,
 } from "@/lib/highlight-presets";
 import {
@@ -47,12 +48,14 @@ import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
 import {
   countReelEventGroups,
   groupHighlightMoments,
+  inferReelGroupPresetId,
   isMultiBeatReelGroup,
   moveReelMomentGroup,
   patchReelMomentGroup,
+  regenerateReelGroupPresetInputs,
   reelGroupDisplayLabel,
-  reelGroupStyleLabel,
   removeReelMomentGroup,
+  replaceReelMomentGroup,
   type ReelMomentGroup,
 } from "@/lib/highlight-reel-groups";
 import { getTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
@@ -382,12 +385,9 @@ export default function HighlightReelStudio({
         return;
       }
       mutateMoments([...moments, ...generated.map(inputToMoment)]);
-      const presetName =
-        markPresetId === "replay"
-          ? "Live + replay"
-          : (HIGHLIGHT_PRESET_LIST.find((p) => p.id === markPresetId)?.name ??
-            "clip");
-      setMessage(`Added ${formatHighlightMarkLabel(event)} (${presetName}).`);
+      setMessage(
+        `Added ${formatHighlightMarkLabel(event)} (${highlightPresetLabel(markPresetId)}).`,
+      );
     },
     [basePrimary, playableSources, moments, mutateMoments],
   );
@@ -420,6 +420,33 @@ export default function HighlightReelStudio({
       mutateMoments(patchReelMomentGroup(moments, group, patch));
     },
     [moments, mutateMoments],
+  );
+
+  const changeGroupPreset = useCallback(
+    (group: ReelMomentGroup, presetId: HighlightPresetId) => {
+      if (presetId === inferReelGroupPresetId(group)) return;
+      const event = group.timelineEventId
+        ? (events.find((e) => e.id === group.timelineEventId) ?? null)
+        : null;
+      const inputs = regenerateReelGroupPresetInputs(group, presetId, {
+        playableSourceIds: playableSources.map((s) => s.id),
+        primarySourceId: basePrimary,
+        event,
+      });
+      if (inputs.length === 0) {
+        setMessage("Could not apply that preset for this event.");
+        return;
+      }
+      mutateMoments(
+        replaceReelMomentGroup(
+          moments,
+          group,
+          inputs.map(inputToMoment),
+        ),
+      );
+      setMessage(`Updated to ${highlightPresetLabel(presetId)}.`);
+    },
+    [events, playableSources, basePrimary, moments, mutateMoments],
   );
 
   const persistReel = useCallback(async (): Promise<string | null> => {
@@ -1092,8 +1119,8 @@ export default function HighlightReelStudio({
           <ul className="space-y-2">
             {reelGroups.map((group, groupIndex) => {
               const primary = group.moments[0]!;
-              const styleLabel = reelGroupStyleLabel(group);
               const multiBeat = isMultiBeatReelGroup(group);
+              const groupPresetId = inferReelGroupPresetId(group);
               return (
                 <li
                   key={group.moments.map((m) => m.id).join("-")}
@@ -1113,11 +1140,24 @@ export default function HighlightReelStudio({
                         })
                       }
                     />
-                    {styleLabel ? (
-                      <span className="rounded-full border border-blue-500/30 bg-blue-950/35 px-2 py-0.5 text-[10px] font-semibold text-blue-100">
-                        {styleLabel}
-                      </span>
-                    ) : null}
+                    <select
+                      className={inputClass}
+                      value={groupPresetId}
+                      onChange={(e) =>
+                        changeGroupPreset(
+                          group,
+                          e.target.value as HighlightPresetId,
+                        )
+                      }
+                      aria-label="Highlight style"
+                      title="Regenerate this event with a different preset"
+                    >
+                      {HIGHLIGHT_PRESET_LIST.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {highlightPresetLabel(p.id)}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       className={inputClass}
                       value={primary.activeSourceId}

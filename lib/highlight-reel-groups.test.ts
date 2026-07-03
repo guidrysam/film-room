@@ -4,9 +4,12 @@ import type { HighlightMoment } from "./highlight-draft";
 import {
   countReelEventGroups,
   groupHighlightMoments,
+  inferReelGroupPresetId,
   moveReelMomentGroup,
+  regenerateReelGroupPresetInputs,
   reelGroupStyleLabel,
   removeReelMomentGroup,
+  replaceReelMomentGroup,
 } from "./highlight-reel-groups";
 
 function moment(
@@ -74,5 +77,41 @@ describe("groupHighlightMoments", () => {
       removed.map((m) => m.id),
       ["b1"],
     );
+  });
+
+  it("infers preset id and can regenerate a coach-mark group", () => {
+    const moments = [
+      moment("m1", { label: "Goal", timelineEventId: "evt-1", speed: 1 }),
+      moment("m2", {
+        label: "Slow-mo replay",
+        timelineEventId: "evt-1",
+        speed: 0.5,
+      }),
+    ];
+    const group = groupHighlightMoments(moments)[0]!;
+    assert.equal(inferReelGroupPresetId(group), "replay");
+
+    const singleInputs = regenerateReelGroupPresetInputs(group, "single", {
+      playableSourceIds: ["s1"],
+      primarySourceId: "s1",
+      event: {
+        id: "evt-1",
+        type: "coach_mark",
+        t: 100,
+        label: "Goal",
+      },
+    });
+    assert.equal(singleInputs.length, 1);
+    assert.equal(singleInputs[0]!.label, "Goal");
+
+    const replaced = replaceReelMomentGroup(moments, group, [
+      moment("new-1", {
+        label: "Goal",
+        timelineEventId: "evt-1",
+        speed: 1,
+      }),
+    ]);
+    assert.equal(replaced.length, 1);
+    assert.equal(replaced[0]!.label, "Goal");
   });
 });
