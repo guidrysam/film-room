@@ -2,9 +2,12 @@
   "firestore": {
     "rules": "firestore.rules"
   },
-  "storage": {
-    "rules": "storage.rules"
-  },
+  "storage": [
+    {
+      "bucket": "film-room-b7780.firebasestorage.app",
+      "rules": "storage.rules"
+    }
+  ],
   "emulators": {
     "firestore": {
       "port": 8080

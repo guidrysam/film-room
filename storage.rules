@@ -14,9 +14,10 @@ service firebase.storage {
       );
     }
 
-    match /teams/{teamId}/logo.{extension} {
+    match /teams/{teamId}/{logoFile} {
       allow read: if true;
       allow write: if isTeamAdmin(teamId)
+        && logoFile.matches('logo\\.(png|jpg|jpeg|webp|gif)')
         && request.resource.size < 2 * 1024 * 1024
         && request.resource.contentType.matches('image/(png|jpeg|webp|gif)');
     }
