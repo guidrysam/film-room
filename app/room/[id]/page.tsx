@@ -56,6 +56,7 @@ import {
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
 import { addGameEvent, getDirectorTrack } from "@/lib/games";
+import { persistRoomManualSyncPairToGame } from "@/lib/persist-room-game-sync";
 import { roomGameMarkToTimelineEvent } from "@/lib/game-events";
 import {
   buildReelSteps,
@@ -4038,6 +4039,23 @@ function RoomContent() {
         return;
       }
 
+      const linkedGameId = gameIdFromUrl?.trim() ?? "";
+      if (linkedGameId) {
+        try {
+          await persistRoomManualSyncPairToGame(
+            linkedGameId,
+            activeAngle.id,
+            secondaryAngle.id,
+            offsetFromGameTime,
+            { markReferenceSynced: true },
+          );
+        } catch {
+          showHostNotice(
+            "Angles synced in the room, but could not save to Game Review. Try again from review.",
+          );
+        }
+      }
+
       // Seek once to the aligned positions and pause (should be no-ops if user already positioned).
       const primaryTarget = syncAnchorTime;
       const secondaryTarget = Math.max(0, syncAnchorTime + offsetFromGameTime);
@@ -4054,7 +4072,11 @@ function RoomContent() {
         /* YouTube API */
       }
 
-      showHostNotice(`Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`);
+      showHostNotice(
+        linkedGameId
+          ? `Angles synced (offset ${offsetFromGameTime.toFixed(1)}s) — saved for review.`
+          : `Angles synced (offset ${offsetFromGameTime.toFixed(1)}s).`,
+      );
       setIsManualSyncMode(false);
       window.setTimeout(() => {
         const snap = roomStateRef.current;
@@ -4069,6 +4091,7 @@ function RoomContent() {
     isManualSyncMode,
     showHostNotice,
     roomId,
+    gameIdFromUrl,
     applySyncStateToAnglePlayer,
   ]);
 
@@ -6704,8 +6727,23 @@ function RoomContent() {
           : { ...a },
       );
 
+      const nextSecondaryOffset =
+        nextAngles.find((a) => a.id === sec.id)?.offsetFromGameTime ?? 0;
+
       void update(rr, { angles: nextAngles, updatedAt: serverTimestamp() })
         .then(() => {
+          const linkedGameId = gameIdFromUrl?.trim() ?? "";
+          if (linkedGameId) {
+            void persistRoomManualSyncPairToGame(
+              linkedGameId,
+              active.id,
+              sec.id,
+              nextSecondaryOffset,
+              { markReferenceSynced: true },
+            ).catch(() => {
+              /* review save — room sync still applied */
+            });
+          }
           void (async () => {
             const primary = getPlayer();
             if (!primary) return;
@@ -6724,7 +6762,7 @@ function RoomContent() {
           /* RTDB */
         });
     },
-    [isHost, roomId, applyHostMultiViewSecondaryDirect],
+    [isHost, roomId, gameIdFromUrl, applyHostMultiViewSecondaryDirect],
   );
 
   const handlePlayerReady = useCallback(() => {

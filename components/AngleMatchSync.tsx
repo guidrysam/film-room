@@ -79,6 +79,10 @@ export default function AngleMatchSync({
     [sources],
   );
   const anchored = useMemo(() => playable.filter(isAnchored), [playable]);
+  const referenceOptions = useMemo(
+    () => (anchored.length > 0 ? anchored : playable),
+    [anchored, playable],
+  );
 
   const reference = useMemo(
     () => playable.find((s) => s.id === referenceId) ?? null,
@@ -89,16 +93,15 @@ export default function AngleMatchSync({
     [playable, targetId],
   );
 
-  // Sensible defaults: reference = first anchored angle, target = first
-  // un-anchored angle that isn't the reference.
+  // Sensible defaults: reference = first aligned angle, or first playable when none yet.
   useEffect(() => {
     if (!expanded) return;
     setReferenceId((prev) =>
-      prev && anchored.some((s) => s.id === prev)
+      prev && referenceOptions.some((s) => s.id === prev)
         ? prev
-        : (anchored[0]?.id ?? null),
+        : (referenceOptions[0]?.id ?? null),
     );
-  }, [expanded, anchored]);
+  }, [expanded, referenceOptions]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -147,6 +150,12 @@ export default function AngleMatchSync({
         syncStatus: "manually_synced",
         syncConfidence: "high",
       });
+      if (reference && !isAnchored(reference)) {
+        await updateGameSourceSync(game.id, reference.id, {
+          syncStatus: "manually_synced",
+          syncConfidence: "high",
+        });
+      }
       setSavedOffset(computedOffset);
       onSaved?.();
     } catch (e) {
@@ -154,7 +163,7 @@ export default function AngleMatchSync({
     } finally {
       setSaving(false);
     }
-  }, [target, referenceId, referenceGameTime, computedOffset, game.id, onSaved]);
+  }, [target, reference, referenceId, referenceGameTime, computedOffset, game.id, onSaved]);
 
   if (!canEdit || playable.length < 2) return null;
 
@@ -170,11 +179,11 @@ export default function AngleMatchSync({
       >
         <span>
           <span className="block text-xs font-semibold uppercase tracking-wide text-zinc-300">
-            Line up an angle (match to another)
+            Sync angles
           </span>
           <span className="mt-0.5 block text-[11px] text-zinc-500">
-            Anchor a clip with no timestamp by matching a shared moment to an
-            angle that&apos;s already lined up.
+            Line up two clips on the same moment — saved for review and
+            highlights.
           </span>
         </span>
         <span className="shrink-0 text-zinc-400" aria-hidden>
@@ -183,35 +192,35 @@ export default function AngleMatchSync({
       </button>
 
       {expanded ? (
-        anchored.length === 0 ? (
-          <p className="mt-3 rounded-md border border-amber-500/25 bg-amber-950/15 px-3 py-2.5 text-[11px] leading-relaxed text-amber-100">
-            No angle is lined up yet. Line up one angle first — auto from a live
-            stream (Sync from YouTube), or by setting its recording time — then
-            you can match the others to it here.
-          </p>
-        ) : (
-          <div className="mt-4 space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                  Reference (already lined up)
-                </span>
-                <select
-                  value={referenceId ?? ""}
-                  onChange={(e) => setReferenceId(e.target.value || null)}
-                  className={selectClass}
-                >
-                  {anchored.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label} · {syncStatusLabel(s.syncStatus)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                  Angle to line up
-                </span>
+        <div className="mt-4 space-y-3">
+          {anchored.length === 0 ? (
+            <p className="rounded-md border border-amber-500/25 bg-amber-950/15 px-3 py-2.5 text-[11px] leading-relaxed text-amber-100">
+              No angle is marked lined up yet. Pick a reference angle below —
+              its current video time becomes game time — then match the other
+              clip to the same moment.
+            </p>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                Reference angle
+              </span>
+              <select
+                value={referenceId ?? ""}
+                onChange={(e) => setReferenceId(e.target.value || null)}
+                className={selectClass}
+              >
+                {referenceOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label} · {syncStatusLabel(s.syncStatus)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                Angle to line up
+              </span>
                 <select
                   value={targetId ?? ""}
                   onChange={(e) => {
@@ -350,8 +359,7 @@ export default function AngleMatchSync({
             {error ? (
               <p className="text-[11px] leading-snug text-rose-300">{error}</p>
             ) : null}
-          </div>
-        )
+        </div>
       ) : null}
     </section>
   );
