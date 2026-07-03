@@ -117,6 +117,7 @@ function inputToMoment(input: AddHighlightMomentInput): HighlightMoment {
       : {}),
     ...(input.speed !== undefined && input.speed !== 1 ? { speed: input.speed } : {}),
     ...(repeat !== 1 ? { repeat } : {}),
+    ...(input.kenBurns ? { kenBurns: true } : {}),
   };
 }
 
@@ -133,6 +134,7 @@ function momentToInput(m: HighlightMoment): AddHighlightMomentInput {
     ...(m.assistPlayerIds?.length ? { assistPlayerIds: m.assistPlayerIds } : {}),
     ...(m.speed !== undefined ? { speed: m.speed } : {}),
     ...(m.repeat !== undefined ? { repeat: m.repeat } : {}),
+    ...(m.kenBurns ? { kenBurns: true } : {}),
   };
 }
 

@@ -145,6 +145,23 @@ describe("buildReelSteps", () => {
     assert.equal(steps[0]!.timelineEventId, "evt-1");
     assert.equal(steps[1]!.timelineEventId, "evt-1");
   });
+
+  it("carries kenBurns onto playable steps", () => {
+    const steps = buildReelSteps(
+      [
+        {
+          id: "m1",
+          gameTime: 50,
+          startOffsetSec: -5,
+          endOffsetSec: 10,
+          activeSourceId: "s1",
+          kenBurns: true,
+        },
+      ],
+      {},
+    );
+    assert.equal(steps[0]!.kenBurns, true);
+  });
 });
 
 describe("highlight presets", () => {
@@ -195,6 +212,13 @@ describe("highlight presets", () => {
     const out = generatePresetMoments("loop", base, angles);
     assert.equal(out.length, 1);
     assert.equal(out[0]!.repeat, 3);
+  });
+
+  it("ken_burns → one segment with slow push-in flag", () => {
+    const out = generatePresetMoments("ken_burns", base, angles);
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.kenBurns, true);
+    assert.equal(out[0]!.speed, 1);
   });
 
   it("presets degrade gracefully with a single angle", () => {

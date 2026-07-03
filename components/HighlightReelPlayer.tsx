@@ -29,6 +29,7 @@ import {
   reelPrerollWallMs,
   reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
+import { computeKenBurnsScale } from "@/lib/highlight-ken-burns";
 
 const POLL_MS = 150;
 const SEEK_SETTLE_MS = 900;
@@ -82,6 +83,7 @@ const HighlightReelPlayer = forwardRef<
   const [interstitial, setInterstitial] = useState<ReelInterstitialCard | null>(
     null,
   );
+  const [kenBurnsScale, setKenBurnsScale] = useState(1);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
@@ -502,6 +504,49 @@ const HighlightReelPlayer = forwardRef<
   }, [steps, ready, cueIdlePreview]);
 
   useEffect(() => {
+    if (!playing) {
+      setKenBurnsScale(1);
+      return;
+    }
+    let raf = 0;
+    const tick = () => {
+      if (!playingRef.current) {
+        setKenBurnsScale(1);
+        raf = window.requestAnimationFrame(tick);
+        return;
+      }
+      const step = stepsRef.current[stepIndexRef.current];
+      const player = playerRef.current;
+      if (
+        !step?.kenBurns ||
+        !player ||
+        transitioningRef.current ||
+        Date.now() < seekSettledAtRef.current
+      ) {
+        setKenBurnsScale(1);
+      } else {
+        try {
+          const current = player.getCurrentTime?.() ?? step.sourceStartTime;
+          const span = Math.max(
+            0.001,
+            step.sourceEndTime - step.sourceStartTime,
+          );
+          const progress = Math.min(
+            1,
+            Math.max(0, (current - step.sourceStartTime) / span),
+          );
+          setKenBurnsScale(computeKenBurnsScale(progress));
+        } catch {
+          setKenBurnsScale(1);
+        }
+      }
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [playing]);
+
+  useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
       const player = playerRef.current;
@@ -623,25 +668,36 @@ const HighlightReelPlayer = forwardRef<
       >
         {firstVideoId ? (
           <div className="absolute inset-0 overflow-hidden">
-            <YouTube
-              key={firstVideoId}
-              videoId={firstVideoId}
+            <div
               className="h-full w-full"
-              iframeClassName="h-full w-full pointer-events-none"
-              opts={youtubeOpts}
-              onReady={(e) => {
-                playerRef.current = e.target;
-                loadedVideoIdRef.current = firstVideoId;
-                setReady(true);
-                if (pendingPlayRef.current) {
-                  pendingPlayRef.current = false;
-                  void beginPlayback();
-                  return;
-                }
-                cueIdlePreview(e.target);
+              style={{
+                transform:
+                  kenBurnsScale !== 1
+                    ? `scale(${kenBurnsScale})`
+                    : undefined,
+                transformOrigin: "center center",
               }}
-              onStateChange={handleYoutubeStateChange}
-            />
+            >
+              <YouTube
+                key={firstVideoId}
+                videoId={firstVideoId}
+                className="h-full w-full"
+                iframeClassName="h-full w-full pointer-events-none"
+                opts={youtubeOpts}
+                onReady={(e) => {
+                  playerRef.current = e.target;
+                  loadedVideoIdRef.current = firstVideoId;
+                  setReady(true);
+                  if (pendingPlayRef.current) {
+                    pendingPlayRef.current = false;
+                    void beginPlayback();
+                    return;
+                  }
+                  cueIdlePreview(e.target);
+                }}
+                onStateChange={handleYoutubeStateChange}
+              />
+            </div>
             <div className="pointer-events-none absolute inset-0 z-10" aria-hidden />
           </div>
         ) : (

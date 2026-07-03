@@ -34,6 +34,8 @@ export type HighlightMoment = {
   speed?: number;
   /** How many times to play this segment (1–10). Default 1. */
   repeat?: number;
+  /** Slow push-in zoom over the clip (Ken Burns). */
+  kenBurns?: boolean;
 };
 
 /** Allowed playback speeds offered in the reel UI. */
@@ -82,6 +84,7 @@ export type AddHighlightMomentInput = {
   assistPlayerIds?: string[];
   speed?: number;
   repeat?: number;
+  kenBurns?: boolean;
 };
 
 function randomMomentId(): string {
@@ -110,6 +113,7 @@ function momentFromInput(input: AddHighlightMomentInput): HighlightMoment {
       : {}),
     ...(speed !== 1 ? { speed } : {}),
     ...(repeat !== 1 ? { repeat } : {}),
+    ...(input.kenBurns ? { kenBurns: true } : {}),
   };
 }
 
@@ -186,6 +190,7 @@ export function parseHighlightDraftMeta(
         ...(m.repeat !== undefined && normalizeHighlightRepeat(m.repeat) !== 1
           ? { repeat: normalizeHighlightRepeat(m.repeat) }
           : {}),
+        ...(m.kenBurns === true ? { kenBurns: true } : {}),
       });
     }
     const draftPlayerIds = parsePlayerIds(raw.playerIds);
@@ -564,6 +569,8 @@ export type ReelStep = {
   playerOverlay?: string;
   /** How long to show {@link playerOverlay} after each segment starts. */
   playerOverlaySec?: number;
+  /** Ken Burns slow zoom on this segment. */
+  kenBurns?: boolean;
 };
 
 /**
@@ -591,6 +598,7 @@ export function buildReelSteps(
       repeat: normalizeHighlightRepeat(m.repeat),
       ...(m.label ? { label: m.label } : {}),
       ...(m.timelineEventId ? { timelineEventId: m.timelineEventId } : {}),
+      ...(m.kenBurns ? { kenBurns: true } : {}),
     });
   }
   return steps;

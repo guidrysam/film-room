@@ -106,6 +106,7 @@ export function inferReelGroupPresetId(group: ReelMomentGroup): HighlightPresetI
   const beats = group.moments;
   if (beats.length === 1) {
     const m = beats[0]!;
+    if (m.kenBurns) return "ken_burns";
     if ((m.repeat ?? 1) >= 3) return "loop";
     return "single";
   }

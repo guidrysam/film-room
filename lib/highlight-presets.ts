@@ -12,7 +12,8 @@ export type HighlightPresetId =
   | "replay"
   | "every_angle"
   | "showcase"
-  | "loop";
+  | "loop"
+  | "ken_burns";
 
 /** The key moment a preset styles around. */
 export type PresetBaseMoment = {
@@ -183,6 +184,26 @@ export const HIGHLIGHT_PRESETS: Record<HighlightPresetId, HighlightPreset> = {
         endOffsetSec: KEY_WINDOW.end,
         speed: 1,
         repeat: 3,
+        label: baseLabel(base, "Highlight"),
+        ...(presetPlayerFields(base)),
+      },
+    ],
+  },
+
+  ken_burns: {
+    id: "ken_burns",
+    name: "Ken Burns zoom",
+    description:
+      "One angle with a slow 50% push-in over the clip — cinematic focus on the moment.",
+    generate: (base) => [
+      {
+        gameTime: base.gameTime,
+        activeSourceId: base.primarySourceId,
+        startOffsetSec: base.startOffsetSec,
+        endOffsetSec: base.endOffsetSec,
+        speed: 1,
+        repeat: 1,
+        kenBurns: true,
         label: baseLabel(base, "Highlight"),
         ...(presetPlayerFields(base)),
       },
