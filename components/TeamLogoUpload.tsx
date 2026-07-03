@@ -52,8 +52,8 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
                 setUploadStage(
                   stage === "auth"
                     ? "Preparing…"
-                    : stage === "upload"
-                      ? "Uploading file…"
+                    : stage === "prepare"
+                      ? "Optimizing image…"
                       : "Saving to team…",
                 );
               })

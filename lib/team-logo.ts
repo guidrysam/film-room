@@ -1,9 +1,10 @@
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { auth, storage } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
 import { updateTeam } from "@/lib/teams";
 
-const MAX_LOGO_BYTES = 2 * 1024 * 1024;
-const UPLOAD_TIMEOUT_MS = 45_000;
+const MAX_INPUT_BYTES = 2 * 1024 * 1024;
+/** Keep under Firestore field limits and share-payload size. */
+const MAX_LOGO_DATA_URL_CHARS = 180_000;
+const LOGO_MAX_PX = 512;
 
 export type ResolvedLogoFile = {
   contentType: string;
@@ -31,20 +32,14 @@ export function resolveLogoFile(file: Pick<File, "name" | "type">): ResolvedLogo
   throw new Error("Logo must be PNG, JPG, WebP, or GIF.");
 }
 
-function storageErrorMessage(err: unknown, fallback: string): string {
+function firestoreErrorMessage(err: unknown, fallback: string): string {
   if (err && typeof err === "object") {
     const o = err as { message?: unknown; code?: unknown };
     const code = typeof o.code === "string" ? o.code : "";
-    if (code === "storage/unauthorized") {
-      return "Storage permission denied. Sign out and back in, then try again.";
-    }
-    if (code === "storage/canceled") {
-      return "Upload was canceled.";
-    }
-    if (code === "storage/retry-limit-exceeded") {
-      return "Upload timed out — check your connection and try a smaller image.";
-    }
     const msg = typeof o.message === "string" ? o.message.trim() : "";
+    if (code === "permission-denied") {
+      return "Permission denied — only team admins can save the logo.";
+    }
     if (msg && code) return `${msg} (${code})`;
     if (msg) return msg;
   }
@@ -52,35 +47,72 @@ function storageErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
+async function loadImageFromFile(file: File): Promise<CanvasImageSource> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      /* fall through to HTMLImageElement */
+    }
+  }
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error(message)), ms);
-    promise
-      .then((value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((err) => {
-        window.clearTimeout(timer);
-        reject(err);
-      });
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not read image file."));
+    };
+    img.src = url;
   });
 }
 
-export type LogoUploadStage = "auth" | "upload" | "save";
+/** Resize and compress a logo for storage on the team Firestore doc. */
+export async function resizeLogoToDataUrl(file: File): Promise<string> {
+  resolveLogoFile(file);
+  const source = await loadImageFromFile(file);
+  const srcW =
+    "width" in source && typeof source.width === "number" ? source.width : 1;
+  const srcH =
+    "height" in source && typeof source.height === "number" ? source.height : 1;
+  const scale = Math.min(1, LOGO_MAX_PX / Math.max(srcW, srcH, 1));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
 
-/** Upload a team logo and persist its download URL on the team doc. */
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare logo image.");
+  ctx.drawImage(source, 0, 0, w, h);
+  if ("close" in source && typeof source.close === "function") {
+    source.close();
+  }
+
+  let quality = 0.88;
+  let dataUrl = canvas.toDataURL("image/jpeg", quality);
+  while (dataUrl.length > MAX_LOGO_DATA_URL_CHARS && quality > 0.45) {
+    quality -= 0.08;
+    dataUrl = canvas.toDataURL("image/jpeg", quality);
+  }
+  if (dataUrl.length > MAX_LOGO_DATA_URL_CHARS) {
+    throw new Error("Logo is too detailed — try a simpler square image.");
+  }
+  return dataUrl;
+}
+
+export type LogoUploadStage = "auth" | "prepare" | "save";
+
+/** Save a team logo on the team doc (resized client-side, no Storage upload). */
 export async function uploadTeamLogo(
   teamId: string,
   file: File,
   onStage?: (stage: LogoUploadStage) => void,
 ): Promise<string> {
-  const resolved = resolveLogoFile(file);
-  if (file.size > MAX_LOGO_BYTES) {
+  if (file.size > MAX_INPUT_BYTES) {
     throw new Error("Logo must be 2 MB or smaller.");
   }
 
@@ -91,31 +123,13 @@ export async function uploadTeamLogo(
   }
   await user.getIdToken(true);
 
-  const path = `teams/${teamId}/logo.${resolved.ext}`;
-  const storageRef = ref(storage, path);
-
   try {
-    onStage?.("upload");
-    await withTimeout(
-      uploadBytes(storageRef, file, { contentType: resolved.contentType }),
-      UPLOAD_TIMEOUT_MS,
-      "Upload timed out — try a smaller PNG or JPG under 2 MB.",
-    );
-
-    const url = await withTimeout(
-      getDownloadURL(storageRef),
-      10_000,
-      "Could not get the logo URL after upload.",
-    );
-
+    onStage?.("prepare");
+    const dataUrl = await resizeLogoToDataUrl(file);
     onStage?.("save");
-    await withTimeout(
-      updateTeam(teamId, { logoUrl: url }),
-      15_000,
-      "Logo uploaded but saving to the team failed — try again.",
-    );
-    return url;
+    await updateTeam(teamId, { logoUrl: dataUrl });
+    return dataUrl;
   } catch (err) {
-    throw new Error(storageErrorMessage(err, "Could not upload logo."));
+    throw new Error(firestoreErrorMessage(err, "Could not upload logo."));
   }
 }
