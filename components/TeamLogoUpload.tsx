@@ -13,6 +13,7 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const [logoUrl, setLogoUrl] = useState(team.logoUrl ?? "");
   const [uploading, setUploading] = useState(false);
+  const [uploadStage, setUploadStage] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   return (
@@ -45,8 +46,17 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
               e.target.value = "";
               if (!file) return;
               setUploading(true);
+              setUploadStage("Preparing…");
               setMessage(null);
-              void uploadTeamLogo(team.id, file)
+              void uploadTeamLogo(team.id, file, (stage) => {
+                setUploadStage(
+                  stage === "auth"
+                    ? "Preparing…"
+                    : stage === "upload"
+                      ? "Uploading file…"
+                      : "Saving to team…",
+                );
+              })
                 .then((url) => {
                   setLogoUrl(url);
                   onUpdated?.(url);
@@ -57,7 +67,10 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
                     err instanceof Error ? err.message : "Could not upload logo.";
                   setMessage(text);
                 })
-                .finally(() => setUploading(false));
+                .finally(() => {
+                  setUploading(false);
+                  setUploadStage(null);
+                });
             }}
           />
           <button
@@ -66,12 +79,18 @@ export default function TeamLogoUpload({ team, onUpdated }: TeamLogoUploadProps)
             onClick={() => inputRef.current?.click()}
             className="rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
           >
-            {uploading ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
+            {uploading ? uploadStage ?? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
           </button>
         </div>
       </div>
       {message ? (
-        <p className="mt-2 text-[10px] text-zinc-400">{message}</p>
+        <p
+          className={`mt-2 text-[10px] ${
+            message === "Logo saved." ? "text-emerald-300/90" : "text-rose-200/90"
+          }`}
+        >
+          {message}
+        </p>
       ) : null}
     </div>
   );
