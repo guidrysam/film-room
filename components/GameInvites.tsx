@@ -9,6 +9,7 @@ import {
   type GameInvite,
   type GameInviteRole,
 } from "@/lib/game-invites";
+import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
 import { canManageGame, type Game } from "@/lib/games";
 
 export type GameInvitesProps = {
@@ -43,8 +44,16 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const [label, setLabel] = useState("");
+  const [inviteExpiryDays, setInviteExpiryDays] = useState<number | null>(null);
 
   const isOwner = canManageGame(game, currentUid);
+
+  useEffect(() => {
+    if (!currentUid) return;
+    void loadUserPrivacySettings(currentUid).then((s) => {
+      setInviteExpiryDays(s.gameInviteExpiresDays);
+    });
+  }, [currentUid]);
 
   useEffect(() => {
     if (typeof window !== "undefined") setOrigin(window.location.origin);
@@ -80,6 +89,7 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
         await createGameInvite(game, currentUid, role, {
           label:
             trimmed || (role === "editor" ? "Editor link" : "Viewer link"),
+          expiresInDays: inviteExpiryDays ?? undefined,
         });
         setLabel("");
         await refresh();
@@ -89,7 +99,7 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
         setCreating(null);
       }
     },
-    [game, currentUid, label, refresh],
+    [game, currentUid, label, refresh, inviteExpiryDays],
   );
 
   const handleToggle = useCallback(
@@ -198,6 +208,17 @@ export default function GameInvites({ game, currentUid }: GameInvitesProps) {
         Anyone with an active link can join. Deactivating a link only prevents
         future joins — anyone who already joined keeps their role (remove them
         in Contributors below).
+        {inviteExpiryDays != null ? (
+          <span className="mt-1 block text-zinc-400">
+            New links use your{" "}
+            <a href="/app/privacy" className="text-blue-300 underline-offset-2 hover:underline">
+              privacy settings
+            </a>
+            {inviteExpiryDays > 0
+              ? ` (${inviteExpiryDays}-day expiry).`
+              : " (no expiry — consider setting one)."}
+          </span>
+        ) : null}
       </p>
 
       {loading ? (

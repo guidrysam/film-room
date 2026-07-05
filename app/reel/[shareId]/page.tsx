@@ -46,6 +46,11 @@ export default function SharedHighlightReelPage() {
         if (result.ok) {
           setPayload(result.payload);
           setCreatedByName(result.createdByName ?? null);
+        } else if (result.kind === "expired") {
+          setNotFound(true);
+          setQueryError(
+            "This highlight link has expired. Ask the coach for a new watch link.",
+          );
         } else if (result.kind === "not_found") {
           setNotFound(true);
         } else {

@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import GameSourceDetail from "@/components/GameSourceDetail";
+import YouTubePlaybackIssuePanel from "@/components/YouTubePlaybackIssuePanel";
+import { getYouTubeOAuthAccessToken } from "@/lib/auth-google";
 import {
   addYouTubeSourceToGame,
   canContributeGameSources,
@@ -24,10 +26,20 @@ import {
 } from "@/lib/youtube-clock-sync";
 import { gameSourcesToAngles } from "@/lib/open-game-room";
 import { teamFilmRoomRoute } from "@/lib/team-film-room";
+import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import { setYouTubeVideoEmbeddable } from "@/lib/youtube-embeddable";
+import {
+  diagnoseFromGameSource,
+  diagnoseFromYouTubeMeta,
+  diagnosePasteInput,
+  playbackIssueBadgeClass,
+  playbackIssueBadgeLabel,
+} from "@/lib/youtube-playback-issue";
 import {
   fetchYouTubeVideoMeta,
   fetchYouTubeVideoMetaWithRetry,
   metaToSourcePatch,
+  type YouTubeVideoMeta,
 } from "@/lib/youtube-video-meta-client";
 
 export type GameSourcesProps = {
@@ -125,6 +137,17 @@ export default function GameSources({
   const [opening, setOpening] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pasteMeta, setPasteMeta] = useState<YouTubeVideoMeta | null>(null);
+  const [pasteChecking, setPasteChecking] = useState(false);
+  const [repairingSourceId, setRepairingSourceId] = useState<string | null>(
+    null,
+  );
+  const [repairErrorBySource, setRepairErrorBySource] = useState<
+    Record<string, string>
+  >({});
+  const [repairFixedSourceIds, setRepairFixedSourceIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -159,6 +182,36 @@ export default function GameSources({
   }, [sources]);
 
   const isTeamPool = Boolean(game.teamId);
+
+  const pasteDiagnosis = useMemo(() => {
+    if (!urlOrId.trim()) return null;
+    return diagnosePasteInput(urlOrId, pasteMeta);
+  }, [urlOrId, pasteMeta]);
+
+  useEffect(() => {
+    const videoId = extractYouTubeVideoId(urlOrId.trim());
+    if (!videoId) {
+      setPasteMeta(null);
+      setPasteChecking(false);
+      return;
+    }
+    setPasteChecking(true);
+    const timer = window.setTimeout(() => {
+      void fetchYouTubeVideoMeta(videoId)
+        .then((meta) => setPasteMeta(meta))
+        .catch(() => setPasteMeta(null))
+        .finally(() => setPasteChecking(false));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [urlOrId]);
+
+  const unplayableSources = useMemo(
+    () =>
+      sources
+        .map((s) => ({ source: s, diagnosis: diagnoseFromGameSource(s) }))
+        .filter((row) => row.diagnosis != null),
+    [sources],
+  );
 
   /**
    * Best-effort: line up a linked YouTube source from its metadata (live
@@ -197,11 +250,21 @@ export default function GameSources({
     setError(null);
     try {
       const off = offset.trim() === "" ? 0 : Number(offset);
+      const videoId = extractYouTubeVideoId(urlOrId.trim());
       const sourceId = await addYouTubeSourceToGame(game.id, currentUid, {
         urlOrId,
         label,
         offsetFromGameTime: Number.isFinite(off) ? off : 0,
       }, { game, teamRole });
+      if (videoId) {
+        const meta = await fetchYouTubeVideoMeta(videoId);
+        if (meta) {
+          const patch = metaToSourcePatch(meta);
+          if (Object.keys(patch).length > 0) {
+            await updateGameSourceYouTubeMetadata(game.id, sourceId, patch);
+          }
+        }
+      }
       console.info("[GameSources] source attached", {
         gameId: game.id,
         sourceId,
@@ -311,6 +374,93 @@ export default function GameSources({
     [game.id, game.scheduledStartAt, refresh, onChanged],
   );
 
+  const handleAutoFixSource = useCallback(
+    async (source: GameVideoSource) => {
+      if (!source.videoId) return;
+      setRepairingSourceId(source.id);
+      setRepairErrorBySource((prev) => {
+        const next = { ...prev };
+        delete next[source.id];
+        return next;
+      });
+      try {
+        const { accessToken } = await getYouTubeOAuthAccessToken();
+        const updated = await setYouTubeVideoEmbeddable({
+          accessToken,
+          videoId: source.videoId,
+          privacyStatus: source.youtubePrivacyStatus ?? "unlisted",
+        });
+        let confirmed = updated.embeddable;
+        if (confirmed !== true) {
+          const meta = await fetchYouTubeVideoMeta(source.videoId);
+          if (typeof meta?.embeddable === "boolean") confirmed = meta.embeddable;
+        }
+        const nowEmbeddable = confirmed === true;
+        await updateGameSourceYouTubeMetadata(game.id, source.id, {
+          youtubeEmbeddable: nowEmbeddable,
+        });
+        if (nowEmbeddable) {
+          setRepairFixedSourceIds((prev) => new Set(prev).add(source.id));
+          await refresh();
+          onChanged?.();
+        } else {
+          setRepairErrorBySource((prev) => ({
+            ...prev,
+            [source.id]:
+              "Still blocked — your channel may be set to Made for Kids. Fix in YouTube Studio, then Re-check.",
+          }));
+        }
+      } catch (e) {
+        setRepairErrorBySource((prev) => ({
+          ...prev,
+          [source.id]:
+            e instanceof Error
+              ? e.message
+              : "Couldn't update the embed setting.",
+        }));
+      } finally {
+        setRepairingSourceId(null);
+      }
+    },
+    [game.id, refresh, onChanged],
+  );
+
+  const handleRecheckSource = useCallback(
+    async (source: GameVideoSource) => {
+      if (!source.videoId) return;
+      setRepairingSourceId(source.id);
+      setRepairErrorBySource((prev) => {
+        const next = { ...prev };
+        delete next[source.id];
+        return next;
+      });
+      try {
+        const meta = await fetchYouTubeVideoMeta(source.videoId);
+        if (meta) {
+          await updateGameSourceYouTubeMetadata(
+            game.id,
+            source.id,
+            metaToSourcePatch(meta),
+          );
+          if (meta.embeddable === true) {
+            setRepairFixedSourceIds((prev) => new Set(prev).add(source.id));
+          } else {
+            setRepairFixedSourceIds((prev) => {
+              const next = new Set(prev);
+              next.delete(source.id);
+              return next;
+            });
+          }
+        }
+        await refresh();
+        onChanged?.();
+      } finally {
+        setRepairingSourceId(null);
+      }
+    },
+    [game.id, refresh, onChanged],
+  );
+
   const pasteForm =
     canEdit && showPasteForm ? (
       <div className="mt-2.5 rounded-md border border-white/[0.07] bg-white/[0.02] p-2">
@@ -354,6 +504,18 @@ export default function GameSources({
             className="w-20 rounded-md border border-white/10 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500/50"
           />
         </div>
+        {pasteChecking ? (
+          <p className="mb-1.5 text-[10px] text-zinc-500">Checking YouTube…</p>
+        ) : null}
+        {pasteDiagnosis && pasteDiagnosis.code !== "ok" ? (
+          <div className="mb-1.5">
+            <YouTubePlaybackIssuePanel diagnosis={pasteDiagnosis} compact />
+          </div>
+        ) : pasteDiagnosis?.code === "ok" ? (
+          <p className="mb-1.5 text-[10px] text-emerald-200/80">
+            {pasteDiagnosis.headline}
+          </p>
+        ) : null}
         <button
           type="button"
           onClick={() => void handleAdd()}
@@ -362,6 +524,10 @@ export default function GameSources({
         >
           {adding ? "Adding…" : "Add source"}
         </button>
+        <p className="mt-1.5 text-[10px] leading-snug text-zinc-500">
+          Unlisted + embeddable works best. Upload via Game Cap if you need help
+          setting permissions.
+        </p>
       </div>
     ) : null;
 
@@ -427,6 +593,28 @@ export default function GameSources({
 
       {pasteFormPlacement === "top" ? pasteForm : null}
 
+      {sources.length > 0 && playableCount === 0 ? (
+        <div className="mb-2">
+          <YouTubePlaybackIssuePanel
+            diagnosis={{
+              code: "not_embeddable",
+              severity: "warning",
+              headline: "No playable angles yet",
+              detail:
+                unplayableSources.length > 0
+                  ? "Sources are attached but YouTube is blocking playback in Film Room. Fix each angle below."
+                  : "Attach a YouTube source with Unlisted visibility and embedding allowed.",
+              steps: [
+                "Set each video to Unlisted (not Private) in YouTube Studio.",
+                "Enable embedding and turn off Made for Kids audience where appropriate.",
+                "Use Game Cap upload if you want Film Room to set permissions for you.",
+              ],
+              canAutoFix: false,
+            }}
+          />
+        </div>
+      ) : null}
+
       {loading ? (
         <p className="text-[11px] text-zinc-500">Loading sources…</p>
       ) : sources.length === 0 ? (
@@ -443,6 +631,22 @@ export default function GameSources({
           {sources.map((s) => {
             const duration = formatDuration(s.durationSec);
             const open = selectedId === s.id;
+            const storedIssue = diagnoseFromGameSource(s);
+            const issueLabel = storedIssue
+              ? playbackIssueBadgeLabel(storedIssue.code)
+              : null;
+            const autoFixFailed = Boolean(repairErrorBySource[s.id]);
+            const liveDiagnosis =
+              storedIssue && s.videoId
+                ? diagnoseFromYouTubeMeta(
+                    {
+                      videoId: s.videoId,
+                      privacyStatus: s.youtubePrivacyStatus,
+                      embeddable: s.youtubeEmbeddable,
+                    },
+                    { videoId: s.videoId, autoFixFailed },
+                  )
+                : storedIssue;
             return (
             <li
               key={s.id}
@@ -466,6 +670,13 @@ export default function GameSources({
                     <span className="rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-semibold text-zinc-300">
                       {kindLabel(s.kind)}
                     </span>
+                    {issueLabel && liveDiagnosis ? (
+                      <span
+                        className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${playbackIssueBadgeClass(liveDiagnosis.code)}`}
+                      >
+                        {issueLabel}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
@@ -499,6 +710,36 @@ export default function GameSources({
                   </span>
                 </div>
               </button>
+              {liveDiagnosis && liveDiagnosis.code !== "ok" ? (
+                <div className="mt-2">
+                  <YouTubePlaybackIssuePanel
+                    diagnosis={
+                      repairFixedSourceIds.has(s.id)
+                        ? {
+                            ...liveDiagnosis,
+                            code: "ok",
+                            severity: "ok",
+                            headline: "Fixed — plays inside Film Room",
+                            steps: [],
+                            canAutoFix: false,
+                          }
+                        : liveDiagnosis
+                    }
+                    compact
+                    onAutoFix={
+                      canEdit && liveDiagnosis.canAutoFix
+                        ? () => void handleAutoFixSource(s)
+                        : undefined
+                    }
+                    onRecheck={
+                      canEdit ? () => void handleRecheckSource(s) : undefined
+                    }
+                    repairing={repairingSourceId === s.id}
+                    repairError={repairErrorBySource[s.id] ?? null}
+                    repairFixed={repairFixedSourceIds.has(s.id)}
+                  />
+                </div>
+              ) : null}
               {open ? (
                 <GameSourceDetail
                   game={game}

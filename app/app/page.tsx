@@ -191,6 +191,9 @@ export default function DashboardPage() {
             <Link href={playersListUrl()} className={ghostBtn}>
               Your players
             </Link>
+            <Link href="/app/privacy" className={ghostBtn}>
+              Privacy
+            </Link>
             <Link href="/library" className={ghostBtn}>
               Library
             </Link>

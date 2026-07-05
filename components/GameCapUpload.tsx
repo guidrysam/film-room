@@ -17,6 +17,8 @@ import {
   type CaptureTimeResult,
 } from "@/lib/video-capture-time";
 import { setYouTubeVideoEmbeddable } from "@/lib/youtube-embeddable";
+import { diagnoseFromYouTubeMeta } from "@/lib/youtube-playback-issue";
+import YouTubePlaybackIssuePanel from "@/components/YouTubePlaybackIssuePanel";
 import {
   buildYouTubeUploadDescription,
   buildYouTubeUploadTitle,
@@ -350,6 +352,29 @@ export default function GameCapUpload({
     phase === "processing";
   const repairing = repairPhase === "fixing";
 
+  const uploadDiagnosis = useMemo(() => {
+    if (!resultVideoId || phase !== "complete") return null;
+    return diagnoseFromYouTubeMeta(
+      {
+        videoId: resultVideoId,
+        privacyStatus: resultPrivacy,
+        embeddable: embeddable ?? undefined,
+        uploadStatus: youtubeStillProcessing ? "uploaded" : "processed",
+      },
+      {
+        videoId: resultVideoId,
+        autoFixFailed: repairPhase === "failed",
+      },
+    );
+  }, [
+    resultVideoId,
+    phase,
+    resultPrivacy,
+    embeddable,
+    youtubeStillProcessing,
+    repairPhase,
+  ]);
+
   return (
     <div className="rounded-md border border-white/[0.07] bg-white/[0.02] p-2.5">
       <YouTubeOnboarding currentUid={currentUid} />
@@ -454,100 +479,48 @@ export default function GameCapUpload({
         </div>
       ) : null}
 
-      {phase === "complete" && resultVideoId ? (
-        <div
-          className={`mb-2 rounded-md border px-2.5 py-2 ${
-            embeddable === false
-              ? "border-amber-500/40 bg-amber-950/25"
-              : "border-emerald-500/35 bg-emerald-950/30"
-          }`}
-        >
-          <p
-            className={`text-[11px] font-medium ${
-              embeddable === false ? "text-amber-100" : "text-emerald-100"
-            }`}
-          >
-            {youtubeStillProcessing
-              ? "Uploaded. YouTube is still processing."
-              : embeddable === false
-                ? "Uploaded — but it won't play inside Film Room yet"
-                : embeddable === true
-                  ? "Upload complete — plays inside Film Room ✓"
-                  : "Upload complete — source attached"}
-          </p>
-          <p className="mt-0.5 font-mono text-[10px] text-zinc-300/80">
-            {resultVideoId}
-          </p>
-
-          {embeddable === false ? (
-            <div className="mt-1.5 space-y-1.5">
-              <p className="text-[10px] leading-snug text-amber-200/90">
-                YouTube is blocking embedding for this video. The usual cause is
-                the &ldquo;Made for Kids&rdquo; audience setting, which disables
-                embeds.
-              </p>
-              {repairPhase === "fixed" ? (
-                <p className="text-[10px] font-medium text-emerald-200">
-                  Fixed — it now plays inside Film Room.
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void handleAutoFixEmbedding()}
-                      disabled={repairing}
-                      className="rounded-md border border-amber-400/50 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-100 transition hover:bg-amber-500/25 disabled:opacity-50"
-                    >
-                      {repairing ? "Fixing…" : "Try auto-fix"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleRecheckEmbedding()}
-                      disabled={repairing}
-                      className="rounded-md border border-white/15 bg-white/[0.04] px-2 py-1 text-[10px] font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-50"
-                    >
-                      Re-check
-                    </button>
-                  </div>
-                  {repairError ? (
-                    <p className="text-[10px] leading-snug text-amber-200/90">
-                      {repairError}
-                    </p>
-                  ) : null}
-                  <p className="text-[10px] leading-snug text-zinc-400">
-                    Manual fix: YouTube Studio → Content → this video → Audience
-                    → &ldquo;No, it&rsquo;s not made for kids&rdquo;.
-                  </p>
-                </>
-              )}
-              <a
-                href={`https://www.youtube.com/watch?v=${resultVideoId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block text-[10px] font-semibold text-blue-300 underline-offset-2 hover:underline"
-              >
-                Open on YouTube
-              </a>
-            </div>
-          ) : (
-            <>
-              <p className="mt-1 text-[10px] text-emerald-200/70">
-                {youtubeStillProcessing
-                  ? "Source attached — we'll confirm embedding once YouTube finishes processing."
-                  : embeddable === true
-                    ? "Unlisted on your channel and confirmed embeddable. Open in Film Room below."
-                    : "Unlisted on your YouTube channel. Open in Film Room below."}
-              </p>
-              <p className="mt-1 text-[10px] text-sky-200/80">
-                {autoAligned
-                  ? "Auto-aligned to the game timeline from the clip's recording time. Fine-tune in Sources if needed."
-                  : "Add a sync point in Sources to line this clip up with the others."}
-              </p>
-            </>
-          )}
-
-          {embeddable === null && !youtubeStillProcessing ? (
+      {phase === "complete" && resultVideoId && uploadDiagnosis ? (
+        <div className="mb-2">
+          <p className="mb-1 font-mono text-[10px] text-zinc-400">{resultVideoId}</p>
+          <YouTubePlaybackIssuePanel
+            diagnosis={
+              repairPhase === "fixed"
+                ? {
+                    ...uploadDiagnosis,
+                    code: "ok",
+                    severity: "ok",
+                    headline: "Upload complete — plays inside Film Room",
+                    steps: [],
+                    canAutoFix: false,
+                  }
+                : uploadDiagnosis.code === "ok"
+                  ? {
+                      ...uploadDiagnosis,
+                      headline: youtubeStillProcessing
+                        ? "Uploaded — YouTube is still processing"
+                        : "Upload complete — plays inside Film Room",
+                    }
+                  : uploadDiagnosis
+            }
+            onAutoFix={
+              uploadDiagnosis.canAutoFix
+                ? () => void handleAutoFixEmbedding()
+                : undefined
+            }
+            onRecheck={() => void handleRecheckEmbedding()}
+            repairing={repairing}
+            repairError={repairError}
+            repairFixed={repairPhase === "fixed"}
+          />
+          {(uploadDiagnosis.code === "ok" || repairPhase === "fixed") &&
+          !youtubeStillProcessing ? (
+            <p className="mt-1.5 text-[10px] text-sky-200/80">
+              {autoAligned
+                ? "Auto-aligned to the game timeline from the clip's recording time. Fine-tune in Sources if needed."
+                : "Add a sync point in Sources to line this clip up with the others."}
+            </p>
+          ) : null}
+          {embeddable === null && !youtubeStillProcessing && repairPhase !== "fixed" ? (
             <button
               type="button"
               onClick={() => void handleRecheckEmbedding()}

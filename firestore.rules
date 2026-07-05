@@ -474,7 +474,9 @@ service cloud.firestore {
 
     // Public highlight reel watch links (anonymous read by share id).
     match /highlightReelShares/{shareId} {
-      allow read: if true;
+      allow read: if !('expiresAt' in resource.data) ||
+                     resource.data.expiresAt == null ||
+                     resource.data.expiresAt > request.time;
       allow create, update: if request.auth != null &&
                                request.resource.data.shareId == shareId &&
                                request.resource.data.gameId is string &&

@@ -72,6 +72,11 @@ import {
   highlightReelWatchUrl,
 } from "@/lib/highlight-reel-share";
 import { copyTextToClipboard } from "@/lib/copy-text";
+import {
+  formatExpiresDaysLabel,
+  loadUserPrivacySettings,
+  type UserPrivacySettings,
+} from "@/lib/user-privacy-settings";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 
 export type HighlightReelStudioProps = {
@@ -202,6 +207,8 @@ export default function HighlightReelStudio({
   const [sharingLink, setSharingLink] = useState(false);
   const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [watchUrl, setWatchUrl] = useState<string | null>(null);
+  const [privacySettings, setPrivacySettings] =
+    useState<UserPrivacySettings | null>(null);
   const recordSupported = useMemo(() => isReelRecordingSupported(), []);
   const controllerRef = useRef<ReelRecordingController | null>(null);
   const recordingRef = useRef(false);
@@ -258,6 +265,10 @@ export default function HighlightReelStudio({
       cancelled = true;
     };
   }, [game.teamId]);
+
+  useEffect(() => {
+    void loadUserPrivacySettings(currentUid).then(setPrivacySettings);
+  }, [currentUid]);
 
   useEffect(() => {
     if (!basePrimary && playableSources[0]) setBasePrimary(playableSources[0].id);
@@ -396,11 +407,12 @@ export default function HighlightReelStudio({
 
   const updateMoment = useCallback(
     (id: string, patch: Partial<HighlightMoment>) => {
-      mutateMoments(
-        moments.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+      setMoments((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, ...patch } : m)),
       );
+      setDirty(true);
     },
-    [moments, mutateMoments],
+    [],
   );
 
   const removeGroup = useCallback(
@@ -507,6 +519,18 @@ export default function HighlightReelStudio({
       setShareMessage("Add at least one segment first.");
       return;
     }
+    const reelShareDays = privacySettings?.reelShareExpiresDays ?? 7;
+    const needsConfirm = privacySettings?.confirmBeforeReelShare !== false;
+    if (needsConfirm) {
+      const expiryNote =
+        reelShareDays > 0
+          ? ` The link stops working after ${formatExpiresDaysLabel(reelShareDays).toLowerCase()}.`
+          : " The link does not expire automatically.";
+      const ok = window.confirm(
+        `Create a public watch link? Anyone with the URL can play this reel — they do not need a Film Room account.${expiryNote}\n\nChange defaults in Privacy settings.`,
+      );
+      if (!ok) return;
+    }
     setSharingLink(true);
     setShareMessage(null);
     try {
@@ -524,13 +548,16 @@ export default function HighlightReelStudio({
         id,
         payload,
         currentUid,
+        { expiresInDays: reelShareDays },
       );
       const url = highlightReelWatchUrl(shareId);
       setWatchUrl(url);
       const copied = await copyTextToClipboard(url);
       setShareMessage(
         copied
-          ? "Watch link copied — anyone with the link can play this reel."
+          ? reelShareDays > 0
+            ? `Watch link copied — expires in ${formatExpiresDaysLabel(reelShareDays).toLowerCase()}.`
+            : "Watch link copied — anyone with the link can play this reel."
           : "Watch link ready — tap Copy below or select the link.",
       );
     } catch (e) {
@@ -542,6 +569,7 @@ export default function HighlightReelStudio({
     }
   }, [
     moments.length,
+    privacySettings,
     editingId,
     dirty,
     persistReel,

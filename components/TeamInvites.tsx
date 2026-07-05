@@ -9,6 +9,7 @@ import {
   type TeamInvite,
   type TeamInviteRole,
 } from "@/lib/team-invites";
+import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
 import { canManageTeam, type Team } from "@/lib/teams";
 
 export type TeamInvitesProps = {
@@ -42,8 +43,16 @@ export default function TeamInvites({ team, currentUid }: TeamInvitesProps) {
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const [label, setLabel] = useState("");
+  const [inviteExpiryDays, setInviteExpiryDays] = useState<number | null>(null);
 
   const isAdmin = canManageTeam(team, currentUid);
+
+  useEffect(() => {
+    if (!currentUid) return;
+    void loadUserPrivacySettings(currentUid).then((s) => {
+      setInviteExpiryDays(s.teamInviteExpiresDays);
+    });
+  }, [currentUid]);
 
   useEffect(() => {
     if (typeof window !== "undefined") setOrigin(window.location.origin);
@@ -78,6 +87,7 @@ export default function TeamInvites({ team, currentUid }: TeamInvitesProps) {
         const trimmed = label.trim();
         await createTeamInvite(team, currentUid, role, {
           label: trimmed || `${ROLE_LABELS[role]} link`,
+          expiresInDays: inviteExpiryDays ?? undefined,
         });
         setLabel("");
         await refresh();
@@ -87,7 +97,7 @@ export default function TeamInvites({ team, currentUid }: TeamInvitesProps) {
         setCreating(null);
       }
     },
-    [team, currentUid, label, refresh],
+    [team, currentUid, label, refresh, inviteExpiryDays],
   );
 
   const handleToggle = useCallback(
@@ -140,6 +150,17 @@ export default function TeamInvites({ team, currentUid }: TeamInvitesProps) {
       <p className="mb-3 text-[10px] leading-snug text-zinc-500">
         Share role-specific links so coaches, parents, players, and viewers can
         join {team.name}. Admin access cannot be granted via invite.
+        {inviteExpiryDays != null ? (
+          <span className="mt-1 block text-zinc-400">
+            New links expire per your{" "}
+            <a href="/app/privacy" className="text-blue-300 underline-offset-2 hover:underline">
+              privacy settings
+            </a>
+            {inviteExpiryDays > 0
+              ? ` (${inviteExpiryDays} day${inviteExpiryDays === 1 ? "" : "s"}).`
+              : " (never — consider setting an expiry)."}
+          </span>
+        ) : null}
       </p>
 
       <label className="mb-1 block text-[10px] font-medium text-zinc-400">

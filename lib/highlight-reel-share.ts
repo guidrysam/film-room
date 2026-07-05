@@ -3,6 +3,7 @@ import {
   getDoc,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
 } from "firebase/firestore";
 import type { ReelStep } from "@/lib/highlight-draft";
@@ -11,6 +12,10 @@ import { firestore } from "@/lib/firebase";
 import type { ReelTitleCard } from "@/lib/highlight-reel-cards";
 import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
 import type { Team } from "@/lib/teams";
+import {
+  expiresTimestampFromDays,
+  isPastExpiry,
+} from "@/lib/user-privacy-settings";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 
 export const HIGHLIGHT_REEL_SHARE_SCHEMA = "highlight_reel_share_v1" as const;
@@ -39,6 +44,7 @@ export type SharedHighlightReelLookupResult =
       createdByName?: string;
     }
   | { ok: false; kind: "not_found" }
+  | { ok: false; kind: "expired" }
   | { ok: false; kind: "query_failed"; message: string; code?: string };
 
 function generateShareId(): string {
@@ -208,6 +214,7 @@ export async function ensureHighlightReelSharing(
   cutId: string,
   payload: HighlightReelSharePayload,
   sharerUid: string,
+  opts?: { expiresInDays?: number },
 ): Promise<string> {
   const uid = sharerUid.trim();
   if (!uid) {
@@ -237,6 +244,10 @@ export async function ensureHighlightReelSharing(
       ? raw.shareId.trim()
       : generateShareId();
 
+  const expiresInDays =
+    typeof opts?.expiresInDays === "number" ? opts.expiresInDays : 0;
+  const shareExpiresAt = expiresTimestampFromDays(expiresInDays);
+
   const shareRecord = {
     shareId: existingShareId,
     gameId,
@@ -244,6 +255,7 @@ export async function ensureHighlightReelSharing(
     createdBy: uid,
     payload: firestoreJson(payload) as HighlightReelSharePayload,
     updatedAt: serverTimestamp(),
+    ...(shareExpiresAt ? { expiresAt: shareExpiresAt } : {}),
     ...(typeof raw.createdByName === "string" && raw.createdByName.trim()
       ? { createdByName: raw.createdByName.trim() }
       : {}),
@@ -277,7 +289,15 @@ export async function getHighlightReelByShareId(
     if (!snap.exists()) {
       return { ok: false, kind: "not_found" };
     }
-    const parsed = parseShareDoc(trimmed, snap.data() as Record<string, unknown>);
+    const raw = snap.data() as Record<string, unknown>;
+    if (
+      isPastExpiry(
+        raw.expiresAt instanceof Timestamp ? raw.expiresAt : undefined,
+      )
+    ) {
+      return { ok: false, kind: "expired" };
+    }
+    const parsed = parseShareDoc(trimmed, raw);
     if (!parsed) return { ok: false, kind: "not_found" };
     return parsed;
   } catch (err) {

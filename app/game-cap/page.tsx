@@ -22,6 +22,7 @@ import {
   type Team,
 } from "@/lib/teams";
 import { gameCapUrl, teamSetupUrl } from "@/lib/team-routes";
+import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
 
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
@@ -69,6 +70,16 @@ function GameCapPageInner() {
   const [sourcesKey, setSourcesKey] = useState(0);
   const [queryResolvedGame, setQueryResolvedGame] = useState<Game | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [defaultGameVisibility, setDefaultGameVisibility] = useState<
+    "private" | "link"
+  >("private");
+
+  useEffect(() => {
+    if (!user) return;
+    void loadUserPrivacySettings(user.uid).then((s) => {
+      setDefaultGameVisibility(s.defaultGameVisibility);
+    });
+  }, [user]);
 
   const teamRole = useMemo(() => {
     if (!selectedTeam || !user) return null;
@@ -156,6 +167,7 @@ function GameCapPageInner() {
     try {
       const id = await createTeamGame(user.uid, selectedTeamId, {
         title,
+        visibility: defaultGameVisibility,
         ...(sport.trim() ? { sport } : {}),
         ...(date.trim() ? { date } : {}),
         ...(opponent.trim() ? { opponent, awayTeam: opponent } : {}),
@@ -186,6 +198,7 @@ function GameCapPageInner() {
     opponent,
     season,
     scheduledStartAt,
+    defaultGameVisibility,
     refreshGames,
     router,
   ]);

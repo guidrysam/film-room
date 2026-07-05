@@ -47,6 +47,8 @@ export type CreateGameInviteOptions = {
   label?: string;
   /** Optional expiry as epoch ms or Date. */
   expiresAt?: number | Date;
+  /** Shorthand: expire N days from now (overrides expiresAt when set). */
+  expiresInDays?: number;
 };
 
 function invitesCol() {
@@ -120,7 +122,13 @@ export async function createGameInvite(
   const code = generateInviteCode();
   const ref = doc(invitesCol(), code);
   let expiresAt: Timestamp | undefined;
-  if (options?.expiresAt != null) {
+  if (typeof options?.expiresInDays === "number") {
+    const ms =
+      options.expiresInDays > 0
+        ? Date.now() + options.expiresInDays * 86_400_000
+        : null;
+    if (ms != null) expiresAt = Timestamp.fromMillis(ms);
+  } else if (options?.expiresAt != null) {
     const d =
       options.expiresAt instanceof Date
         ? options.expiresAt
