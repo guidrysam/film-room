@@ -72,6 +72,7 @@ export default function ReelClipTrimBar({
 
       const anchor: DragAnchor = { startOffsetSec, endOffsetSec };
       anchorRef.current = anchor;
+      const latestDraftRef = { current: anchor };
       dragContextRef.current = clipTrimContext(
         gameTime,
         anchor.startOffsetSec,
@@ -80,48 +81,55 @@ export default function ReelClipTrimBar({
       setDraft(anchor);
       setDragging(handle);
 
+      const handleEl = event.currentTarget;
+      handleEl.setPointerCapture(event.pointerId);
+
       const onPointerMove = (moveEvent: PointerEvent) => {
         const mapCtx = dragContextRef.current;
         const locked = anchorRef.current;
         if (!mapCtx || !locked) return;
 
         const at = pointerGameTime(moveEvent.clientX, mapCtx);
-        if (handle === "start") {
-          const nextStart = applyTrimHandleDrag(
-            gameTime,
-            locked.startOffsetSec,
-            locked.endOffsetSec,
-            "start",
-            at,
-          ).startOffsetSec;
-          const next = {
-            startOffsetSec: nextStart,
-            endOffsetSec: locked.endOffsetSec,
-          };
-          setDraft(next);
-          onChangeRef.current(next.startOffsetSec, next.endOffsetSec);
-          return;
-        }
-
-        const nextEnd = applyTrimHandleDrag(
-          gameTime,
-          locked.startOffsetSec,
-          locked.endOffsetSec,
-          "end",
-          at,
-        ).endOffsetSec;
-        const next = {
-          startOffsetSec: locked.startOffsetSec,
-          endOffsetSec: nextEnd,
-        };
+        const next =
+          handle === "start"
+            ? {
+                startOffsetSec: applyTrimHandleDrag(
+                  gameTime,
+                  locked.startOffsetSec,
+                  locked.endOffsetSec,
+                  "start",
+                  at,
+                ).startOffsetSec,
+                endOffsetSec: locked.endOffsetSec,
+              }
+            : {
+                startOffsetSec: locked.startOffsetSec,
+                endOffsetSec: applyTrimHandleDrag(
+                  gameTime,
+                  locked.startOffsetSec,
+                  locked.endOffsetSec,
+                  "end",
+                  at,
+                ).endOffsetSec,
+              };
+        latestDraftRef.current = next;
         setDraft(next);
-        onChangeRef.current(next.startOffsetSec, next.endOffsetSec);
       };
 
-      const onPointerUp = () => {
+      const onPointerUp = (upEvent: PointerEvent) => {
         window.removeEventListener("pointermove", onPointerMove);
         window.removeEventListener("pointerup", onPointerUp);
         window.removeEventListener("pointercancel", onPointerUp);
+
+        onChangeRef.current(
+          latestDraftRef.current.startOffsetSec,
+          latestDraftRef.current.endOffsetSec,
+        );
+
+        if (handleEl.hasPointerCapture(upEvent.pointerId)) {
+          handleEl.releasePointerCapture(upEvent.pointerId);
+        }
+
         anchorRef.current = null;
         dragContextRef.current = null;
         setDragging(null);
@@ -164,7 +172,7 @@ export default function ReelClipTrimBar({
           <button
             type="button"
             aria-label="Trim start"
-            className={`absolute top-1/2 z-10 h-6 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
+            className={`absolute top-1/2 z-10 h-7 w-5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
               dragging === "start" ? "ring-2 ring-blue-400/60" : ""
             }`}
             style={{ left: `${left * 100}%` }}
@@ -173,7 +181,7 @@ export default function ReelClipTrimBar({
           <button
             type="button"
             aria-label="Trim end"
-            className={`absolute top-1/2 z-10 h-6 w-4 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
+            className={`absolute top-1/2 z-10 h-7 w-5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-sm border border-white/25 bg-white shadow-sm touch-none ${
               dragging === "end" ? "ring-2 ring-blue-400/60" : ""
             }`}
             style={{ left: `${(left + width) * 100}%` }}

@@ -52,13 +52,14 @@ export function applyTrimHandleDrag(
   handle: "start" | "end",
   pointerGameTime: number,
 ): { startOffsetSec: number; endOffsetSec: number } {
+  const round = (n: number) => Math.round(n * 10) / 10;
   if (handle === "start") {
     const nextStart = Math.min(
       pointerGameTime - gameTime,
       endOffsetSec - REEL_TRIM_MIN_CLIP_SEC,
     );
     return {
-      startOffsetSec: Math.round(nextStart),
+      startOffsetSec: round(nextStart),
       endOffsetSec,
     };
   }
@@ -68,7 +69,7 @@ export function applyTrimHandleDrag(
   );
   return {
     startOffsetSec,
-    endOffsetSec: Math.round(nextEnd),
+    endOffsetSec: round(nextEnd),
   };
 }
 
