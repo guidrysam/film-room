@@ -11,6 +11,8 @@ import {
   type SavedClip,
   type SavedSessionDoc,
 } from "@/lib/saved-sessions";
+import { isFacebookLessonTemplate } from "@/lib/saved-session-clips";
+import { markRoomHost } from "@/lib/room-host";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
@@ -109,6 +111,14 @@ export default function SharedTemplatePage() {
     }
   }, [user, template, router]);
 
+  const handleOpenLesson = useCallback(() => {
+    if (!template?.clips.length) return;
+    const roomId = Math.random().toString(36).substring(2, 8);
+    markRoomHost(roomId);
+    const qs = new URLSearchParams({ loadShared: shareId });
+    router.push(`/room/${roomId}?${qs.toString()}`);
+  }, [template, shareId, router]);
+
   if (authLoading || loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#030306] text-zinc-300">
@@ -192,7 +202,9 @@ export default function SharedTemplatePage() {
     <div className="min-h-screen bg-[#030306] px-4 py-10 text-zinc-50">
       <div className="mx-auto w-full max-w-lg">
         <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-          Shared template
+          {isFacebookLessonTemplate(template)
+            ? "Shared lesson plan"
+            : "Shared template"}
         </p>
         <h1 className="mb-6 text-xl font-semibold tracking-tight text-white">
           {template.name}
@@ -215,7 +227,7 @@ export default function SharedTemplatePage() {
                     {formatClipLabel(c, i)}
                   </span>
                   <span className="ml-2 font-mono text-xs text-zinc-500">
-                    {c.videoId}
+                    {c.provider === "facebook" ? "Facebook" : c.videoId}
                   </span>
                 </li>
               ))}
@@ -252,6 +264,13 @@ export default function SharedTemplatePage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={handleOpenLesson}
+            className={primaryBtn}
+          >
+            Open lesson
+          </button>
           {user ? (
             <button
               type="button"

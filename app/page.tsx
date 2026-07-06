@@ -5,7 +5,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { markRoomHost } from "@/lib/room-host";
-import { resolveYouTubeVideoIdFromPaste } from "@/lib/resolve-youtube-paste";
+import { storeFacebookRoomInit } from "@/lib/facebook-room-init";
+import { resolveVideoFromPaste } from "@/lib/resolve-video-paste";
 import { createQuickReviewGame } from "@/lib/quick-review";
 
 const inputClass =
@@ -33,6 +34,17 @@ export default function Home() {
     router.push(`/room/${roomId}?video=${encodeURIComponent(videoId)}`);
   };
 
+  const goToFacebookRoom = (videoKey: string, href: string) => {
+    const roomId = Math.random().toString(36).substring(2, 8);
+    markRoomHost(roomId);
+    storeFacebookRoomInit(roomId, { videoKey, href });
+    const qs = new URLSearchParams({
+      provider: "facebook",
+      video: videoKey,
+    });
+    router.push(`/room/${roomId}?${qs.toString()}`);
+  };
+
   const createRoom = async () => {
     const trimmed = url.trim();
     if (!trimmed) return;
@@ -41,19 +53,23 @@ export default function Home() {
 
     setStarting(true);
     try {
-      const result = await resolveYouTubeVideoIdFromPaste(trimmed);
+      const result = await resolveVideoFromPaste(trimmed);
       if (!result.ok) {
         setUrlError(result.error);
         return;
       }
 
-      if (user) {
-        const { gameId } = await createQuickReviewGame(user.uid, result.videoId);
-        router.push(`/game/${gameId}/review`);
+      if (result.provider === "youtube") {
+        if (user) {
+          const { gameId } = await createQuickReviewGame(user.uid, result.videoId);
+          router.push(`/game/${gameId}/review`);
+          return;
+        }
+        goToRoom(result.videoId);
         return;
       }
 
-      goToRoom(result.videoId);
+      goToFacebookRoom(result.ref.videoKey, result.ref.href);
     } catch (err) {
       setUrlError(
         err instanceof Error ? err.message : "Could not start review.",
@@ -71,14 +87,14 @@ export default function Home() {
             Film Room
           </h1>
           <p className="text-base leading-relaxed text-white/85 sm:text-lg">
-            Turn a YouTube video into a shared film room.
+            Turn a YouTube or Facebook video into a shared film room.
           </p>
         </div>
 
         <div className="flex w-full flex-col items-center space-y-4 rounded-2xl border border-white/[0.07] bg-zinc-950/40 p-6 shadow-xl shadow-black/40 ring-1 ring-white/[0.04] backdrop-blur-sm sm:p-8">
           <input
             type="text"
-            placeholder="Paste YouTube URL"
+            placeholder="Paste YouTube or Facebook URL"
             value={url}
             onChange={(e) => {
               setUrl(e.target.value);

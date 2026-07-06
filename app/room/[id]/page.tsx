@@ -40,7 +40,18 @@ import {
   TelestratorOverlay,
 } from "@/components/TelestratorOverlay";
 import { signInWithGoogle } from "@/lib/auth-google";
-import { getSavedSession, saveSessionTemplate } from "@/lib/saved-sessions";
+import {
+  ensureSessionSharing,
+  getSavedSession,
+  getSavedSessionByShareId,
+  saveSessionTemplate,
+  type SavedSessionDoc,
+} from "@/lib/saved-sessions";
+import {
+  buildRoomSeedFromSavedTemplate,
+  isFacebookLessonTemplate,
+  roomClipToSavedClip,
+} from "@/lib/saved-session-clips";
 import {
   parseVideoAngles,
   pickAngle,
@@ -48,6 +59,8 @@ import {
   type VideoAngle,
 } from "@/lib/video-angle";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import { consumeFacebookRoomInit } from "@/lib/facebook-room-init";
+import { resolveVideoFromPaste } from "@/lib/resolve-video-paste";
 import {
   type CoachAlertLatest,
   type RoomGameMark,
@@ -65,6 +78,8 @@ import {
   type ReelStep,
 } from "@/lib/highlight-draft";
 import CutStudio from "@/components/CutStudio";
+import FacebookVideoPlayer from "@/components/FacebookVideoPlayer";
+import FacebookLandscapeCapture from "@/components/FacebookLandscapeCapture";
 import RoomReelBar from "@/components/RoomReelBar";
 import { VideoZoomStage } from "@/components/VideoZoomStage";
 
@@ -194,7 +209,12 @@ type TransportAction =
   | "sync"
   | "clip";
 
-type ClipEntry = { videoId: string; label?: string };
+type ClipEntry = {
+  videoId: string;
+  label?: string;
+  provider?: "youtube" | "facebook";
+  facebookVideoUrl?: string;
+};
 
 /** Saved jump points; `videoId` ties each marker to a clip in the queue. */
 type ChapterEntry = {
@@ -242,6 +262,10 @@ type RoomState = {
   manualSyncAt?: number;
   /** Live stream session intent (Stream Room, API at create, or restored from a saved template). Authoritative for LIVE UI — not inferred from watch URLs after load. */
   sourceType?: "live";
+  /** Playback backend; default YouTube when omitted. */
+  videoProvider?: "youtube" | "facebook";
+  /** Active Facebook embed href (kind: facebook). */
+  facebookVideoUrl?: string;
 };
 
 type RoomViewMode = "clip" | "sync";
@@ -372,9 +396,8 @@ function formatClipLabel(clip: ClipEntry, index: number): string {
   return `Clip ${index + 1}`;
 }
 
-function clipToSavedClip(c: ClipEntry): { videoId: string; label?: string } {
-  const label = c.label?.trim();
-  return label ? { videoId: c.videoId, label } : { videoId: c.videoId };
+function clipToSavedClip(c: ClipEntry) {
+  return roomClipToSavedClip(c);
 }
 
 function chapterStrictlyBeforeCursor(
@@ -478,13 +501,44 @@ function parseClipEntries(raw: unknown): ClipEntry[] {
         typeof labelRaw === "string" && labelRaw.trim() !== ""
           ? labelRaw.trim()
           : undefined;
+      const providerRaw = o.provider;
+      const provider =
+        providerRaw === "facebook" || providerRaw === "youtube"
+          ? providerRaw
+          : undefined;
+      const facebookVideoUrlRaw = o.facebookVideoUrl;
+      const facebookVideoUrl =
+        typeof facebookVideoUrlRaw === "string" &&
+        facebookVideoUrlRaw.trim() !== ""
+          ? facebookVideoUrlRaw.trim()
+          : undefined;
       out.push({
         videoId: (row as ClipEntry).videoId,
         ...(label ? { label } : {}),
+        ...(provider ? { provider } : {}),
+        ...(facebookVideoUrl ? { facebookVideoUrl } : {}),
       });
     }
   }
   return out;
+}
+
+function activeFacebookHref(state: RoomState | null | undefined): string | null {
+  if (!state || state.videoProvider !== "facebook") return null;
+  const clip = state.clips[state.currentClipIndex];
+  if (clip?.facebookVideoUrl?.trim()) return clip.facebookVideoUrl.trim();
+  if (state.facebookVideoUrl?.trim()) return state.facebookVideoUrl.trim();
+  return null;
+}
+
+function facebookFieldsForClip(clip: ClipEntry): Record<string, unknown> {
+  if (clip.provider === "facebook" && clip.facebookVideoUrl?.trim()) {
+    return {
+      videoProvider: "facebook",
+      facebookVideoUrl: clip.facebookVideoUrl.trim(),
+    };
+  }
+  return {};
 }
 
 /** Normalize clip list + index; `videoId` from RTDB is authoritative for the active stream. */
@@ -600,11 +654,22 @@ function parseRoomFromDb(val: Record<string, unknown> | null): RoomState | null 
   const sourceType =
     sourceTypeRaw === "live" ? ("live" as const) : undefined;
 
+  const videoProviderRaw = val.videoProvider;
+  const videoProvider =
+    videoProviderRaw === "facebook" ? ("facebook" as const) : undefined;
+  const facebookVideoUrlRaw = val.facebookVideoUrl;
+  const facebookVideoUrl =
+    typeof facebookVideoUrlRaw === "string" && facebookVideoUrlRaw.trim() !== ""
+      ? facebookVideoUrlRaw.trim()
+      : undefined;
+
   return {
     ...(ownerId ? { ownerId } : {}),
     ...(name ? { name } : {}),
     ...(sourceRoomId ? { sourceRoomId } : {}),
     ...(sourceType ? { sourceType } : {}),
+    ...(videoProvider ? { videoProvider } : {}),
+    ...(facebookVideoUrl ? { facebookVideoUrl } : {}),
     videoId: activeVideoId,
     clips,
     currentClipIndex: idx,
@@ -1727,12 +1792,40 @@ function CoachAlertToastOverlay({
   );
 }
 
+function seedRoomFromLessonTemplate(
+  template: SavedSessionDoc,
+  roomRef: ReturnType<typeof ref>,
+  opts: { ownerId?: string },
+): string {
+  const seed = buildRoomSeedFromSavedTemplate(template, opts);
+  void set(roomRef, {
+    ...seed,
+    playbackRate: DEFAULT_PLAYBACK_RATE,
+    updatedAt: serverTimestamp(),
+  });
+  return String(seed.videoId ?? "");
+}
+
+function roomQueryForLessonTemplate(
+  template: SavedSessionDoc,
+  activeVideoId: string,
+): URLSearchParams {
+  const loadQs = new URLSearchParams();
+  loadQs.set("video", activeVideoId);
+  if (isFacebookLessonTemplate(template)) {
+    loadQs.set("provider", "facebook");
+  }
+  if (template.sourceType === "live") loadQs.set("view", "sync");
+  return loadQs;
+}
+
 function RoomContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomId = typeof params.id === "string" ? params.id : "";
   const videoFromUrl = searchParams.get("video");
+  const providerFromUrl = searchParams.get("provider");
   /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
   const gameIdFromUrl = searchParams.get("gameId");
   /** Team Film Room: marks come from Review; room is view-only for marking. */
@@ -1740,11 +1833,20 @@ function RoomContent() {
   const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
   const videoIdFromUrl = useMemo(() => {
+    if (providerFromUrl === "facebook") return null;
     const raw = videoFromUrl?.trim();
     if (!raw) return null;
     return extractYouTubeVideoId(safeDecodeVideoId(raw));
-  }, [videoFromUrl]);
+  }, [videoFromUrl, providerFromUrl]);
+  /** Facebook numeric key from `?provider=facebook&video=`. */
+  const facebookVideoKeyFromUrl = useMemo(() => {
+    if (providerFromUrl !== "facebook") return null;
+    const raw = videoFromUrl?.trim();
+    return raw || null;
+  }, [videoFromUrl, providerFromUrl]);
   const loadSavedId = searchParams.get("loadSaved");
+  /** Public shared lesson template (`/shared/{shareId}` → open in room). */
+  const loadSharedId = searchParams.get("loadShared");
   const viewParam = searchParams.get("view");
   /** When present with `?gameId`, loads a saved highlight reel for shared room playback. */
   const reelIdFromUrl = searchParams.get("reel");
@@ -1752,6 +1854,7 @@ function RoomContent() {
   const [copied, setCopied] = useState(false);
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
+  const [fbLandscapeCaptureOpen, setFbLandscapeCaptureOpen] = useState(false);
   const [telDrawOn, setTelDrawOn] = useState(false);
   const lastViewerStrokeCountRef = useRef<number | null>(null);
   /** Host: app-controlled fullscreen for one angle (not browser / iframe fullscreen). */
@@ -1856,6 +1959,8 @@ function RoomContent() {
     return (fromAngle ?? "").trim();
   }, [roomState, videoIdFromUrl]);
   const playerRef = useRef<InstanceType<typeof YouTube>>(null);
+  /** Facebook embed shim exposed as YouTube-shaped player for transport code. */
+  const facebookPlayerRef = useRef<YouTubePlayer | null>(null);
   /** Sync View: internal YouTube API player per angle.id (host + viewer). */
   const syncPlayerRefs = useRef<Record<string, YouTubePlayer | null>>({});
   /** Data API fields for reconciling iframe UNSTARTED vs true live (key = 11-char video id). */
@@ -1920,6 +2025,8 @@ function RoomContent() {
   );
   const [saveSessionSaving, setSaveSessionSaving] = useState(false);
   const [sessionSavedToast, setSessionSavedToast] = useState(false);
+  const [sharingLessonPlan, setSharingLessonPlan] = useState(false);
+  const [lessonPlanShareCopied, setLessonPlanShareCopied] = useState(false);
   const [sessionDirty, setSessionDirty] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [leaveConfirmError, setLeaveConfirmError] = useState<string | null>(null);
@@ -2668,10 +2775,12 @@ function RoomContent() {
   }, [isHost, roomState]);
 
   useEffect(() => {
-    if (!roomRef || !isHost || !videoIdFromUrl) return;
+    if (!roomRef || !isHost) return;
+    if (!videoIdFromUrl && !facebookVideoKeyFromUrl && !loadSharedId) return;
     if (loadSavedId && authLoading) return;
 
-    const vid = videoIdFromUrl;
+    const vid = videoIdFromUrl ?? facebookVideoKeyFromUrl ?? "";
+    const isFacebookInit = providerFromUrl === "facebook";
 
     void get(roomRef).then(async (snap) => {
       if (snap.exists()) {
@@ -2701,6 +2810,27 @@ function RoomContent() {
         return;
       }
 
+      if (loadSharedId?.trim()) {
+        try {
+          const result = await getSavedSessionByShareId(loadSharedId.trim());
+          if (
+            result.ok &&
+            Array.isArray(result.data.clips) &&
+            result.data.clips.length > 0
+          ) {
+            const activeId = seedRoomFromLessonTemplate(result.data, roomRef, {
+              ...(isHost && user?.uid ? { ownerId: user.uid } : {}),
+            });
+            router.replace(
+              `/room/${roomId}?${roomQueryForLessonTemplate(result.data, activeId).toString()}`,
+            );
+            return;
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+
       if (loadSavedId && user) {
         try {
           const template = await getSavedSession(user.uid, loadSavedId);
@@ -2709,71 +2839,12 @@ function RoomContent() {
             Array.isArray(template.clips) &&
             template.clips.length > 0
           ) {
-            const idx = Math.min(
-              Math.max(0, template.currentClipIndex),
-              template.clips.length - 1,
-            );
-            const activeId = template.clips[idx]?.videoId ?? vid;
-            const tplAngles = template.angles;
-            const hasTemplateAngles =
-              Array.isArray(tplAngles) && tplAngles.length >= 1
-                ? tplAngles
-                : null;
-            void set(roomRef, {
+            const activeId = seedRoomFromLessonTemplate(template, roomRef, {
               ...(isHost && user?.uid ? { ownerId: user.uid } : {}),
-              videoId: activeId,
-              clips: template.clips.map((c) => ({
-                videoId: c.videoId,
-                ...(typeof c.label === "string" && c.label.trim() !== ""
-                  ? { label: c.label.trim() }
-                  : {}),
-              })),
-              currentClipIndex: idx,
-              chapters: (template.chapters ?? []).map((ch) => ({
-                time: ch.time,
-                label: ch.label,
-                videoId: ch.videoId,
-                ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
-              })),
-              ...(hasTemplateAngles
-                ? {
-                    angles: hasTemplateAngles,
-                    currentAngleId:
-                      template.currentAngleId &&
-                      hasTemplateAngles.some((a) => a.id === template.currentAngleId)
-                        ? template.currentAngleId
-                        : hasTemplateAngles[0]!.id,
-                  }
-                : {}),
-              ...(typeof template.syncAnchorTime === "number" &&
-              template.syncAnchorTime > 0
-                ? { syncAnchorTime: template.syncAnchorTime }
-                : {}),
-              ...(template.manualSyncLocked === true
-                ? { manualSyncLocked: true }
-                : {}),
-              ...(template.playerViewAngleId &&
-              hasTemplateAngles?.some((a) => a.id === template.playerViewAngleId)
-                ? { playerViewAngleId: template.playerViewAngleId }
-                : {}),
-              ...(typeof template.manualSyncAt === "number"
-                ? { manualSyncAt: template.manualSyncAt }
-                : {}),
-              ...(template.sourceType === "live"
-                ? { sourceType: "live" as const }
-                : {}),
-              isPlaying: false,
-              currentTime: 0,
-              playbackRate: DEFAULT_PLAYBACK_RATE,
-              playbackCommand: null,
-              updatedAt: serverTimestamp(),
-              action: "init",
-              actionId: 1,
             });
-            const loadQs = new URLSearchParams();
-            loadQs.set("video", activeId);
-            if (template.sourceType === "live") loadQs.set("view", "sync");
-            router.replace(`/room/${roomId}?${loadQs.toString()}`);
+            router.replace(
+              `/room/${roomId}?${roomQueryForLessonTemplate(template, activeId).toString()}`,
+            );
             return;
           }
         } catch {
@@ -2781,22 +2852,47 @@ function RoomContent() {
         }
       }
 
+      if (!vid) return;
+
       let sourceType: "live" | undefined;
-      const declaredLive = await fetchYoutubeIsLive(vid);
-      if (declaredLive.ok && declaredLive.isLive) {
-        sourceType = "live";
+      if (!isFacebookInit) {
+        const declaredLive = await fetchYoutubeIsLive(vid);
+        if (declaredLive.ok && declaredLive.isLive) {
+          sourceType = "live";
+        }
       }
+
+      const fbInit = isFacebookInit ? consumeFacebookRoomInit(roomId) : null;
+      const facebookHref =
+        fbInit?.href ??
+        (isFacebookInit
+          ? `https://www.facebook.com/watch?v=${encodeURIComponent(vid)}`
+          : undefined);
 
       void set(roomRef, {
         ...(isHost && user?.uid ? { ownerId: user.uid } : {}),
         videoId: vid,
-        clips: [{ videoId: vid }],
+        clips: [
+          isFacebookInit
+            ? {
+                videoId: vid,
+                provider: "facebook",
+                ...(facebookHref ? { facebookVideoUrl: facebookHref } : {}),
+              }
+            : { videoId: vid },
+        ],
         currentClipIndex: 0,
         isPlaying: false,
         currentTime: 0,
         playbackRate: DEFAULT_PLAYBACK_RATE,
         playbackCommand: null,
         chapters: [],
+        ...(isFacebookInit
+          ? {
+              videoProvider: "facebook" as const,
+              ...(facebookHref ? { facebookVideoUrl: facebookHref } : {}),
+            }
+          : {}),
         ...(sourceType ? { sourceType } : {}),
         updatedAt: serverTimestamp(),
         action: "init",
@@ -2807,7 +2903,10 @@ function RoomContent() {
     roomRef,
     isHost,
     videoIdFromUrl,
+    facebookVideoKeyFromUrl,
+    providerFromUrl,
     loadSavedId,
+    loadSharedId,
     user,
     authLoading,
     roomId,
@@ -2879,6 +2978,9 @@ function RoomContent() {
       if (stale()) return;
 
       const player =
+        (roomStateRef.current?.videoProvider === "facebook"
+          ? facebookPlayerRef.current
+          : null) ||
         (isSyncLayoutMode(roomViewModeRef.current) &&
           state.angles.length > 1 &&
           syncPlayerRefs.current[state.currentAngleId]) ||
@@ -3163,8 +3265,13 @@ function RoomContent() {
       return;
     }
 
-    const yt = playerRef.current;
-    const player = yt?.getInternalPlayer() as YouTubePlayer | null | undefined;
+    const player =
+      roomState.videoProvider === "facebook"
+        ? facebookPlayerRef.current
+        : (playerRef.current?.getInternalPlayer() as
+            | YouTubePlayer
+            | null
+            | undefined);
 
     const cmd = roomState.playbackCommand;
     const cmdApply =
@@ -3223,6 +3330,9 @@ function RoomContent() {
 
   const getPlayer = () => {
     const s = roomStateRef.current;
+    if (s?.videoProvider === "facebook") {
+      return facebookPlayerRef.current ?? undefined;
+    }
     if (s && isSyncLayoutMode(roomViewModeRef.current) && s.angles.length > 0) {
       const id = s.currentAngleId || s.angles[0]?.id;
       if (id) {
@@ -3239,6 +3349,13 @@ function RoomContent() {
   const handleDismissCoachAlert = useCallback(() => {
     setCoachAlertToast(null);
   }, []);
+
+  useEffect(() => {
+    if (roomState?.videoProvider !== "facebook") return;
+    if (roomViewMode !== "clip") {
+      setRoomViewMode("clip");
+    }
+  }, [roomState?.videoProvider, roomViewMode]);
 
   const handleJumpToMarkReplay = useCallback(
     async (mark: { timestamp: number; angleId?: string }) => {
@@ -4746,6 +4863,7 @@ function RoomContent() {
         action: "seek",
         actionId: commandId,
         updatedAt: serverTimestamp(),
+        ...facebookFieldsForClip(targetClip),
       })
         .then(() => {
           window.setTimeout(() => syncSecondaryPlayersOnce("chapter-jump"), 140);
@@ -4933,67 +5051,100 @@ function RoomContent() {
       );
       return;
     }
-    const id = extractYouTubeVideoId(clipUrlDraft);
-    if (!id) return;
+    const draft = clipUrlDraft.trim();
+    if (!draft) return;
     setClipUrlDraft("");
 
     void (async () => {
-      let label: string | undefined;
-      try {
-        const res = await fetch(
-          `/api/youtube-title?videoId=${encodeURIComponent(id)}`,
-        );
-        let data: { title?: string | null } = {};
-        try {
-          data = (await res.json()) as { title?: string | null };
-        } catch {
-          console.warn("[CLIP] title fetch failed (could not parse JSON)");
-        }
-        if (!res.ok) {
-          console.warn("[CLIP] title fetch failed", `(HTTP ${res.status})`);
-        } else {
-          const t =
-            typeof data.title === "string" ? data.title.trim() : "";
-          if (t) {
-            label = t;
-            console.log("[CLIP] title fetched:", t);
-          } else {
-            console.warn("[CLIP] title fetch failed (no usable title)");
-          }
-        }
-      } catch (err) {
-        console.warn("[CLIP] title fetch failed", err);
+      const resolved = await resolveVideoFromPaste(draft);
+      if (!resolved.ok) {
+        window.alert(resolved.error);
+        return;
       }
 
       const latest = roomStateRef.current;
       if (!latest) return;
       if (latest.sourceType === "live") return;
 
-      const firstVid = latest.clips[0]?.videoId ?? latest.videoId;
-      const base = await fetchYoutubeIsLive(firstVid);
-      if (!base.ok) {
-        window.alert(base.reason);
+      if (
+        latest.videoProvider === "facebook" &&
+        resolved.provider !== "facebook"
+      ) {
+        window.alert(
+          "This room uses Facebook videos. Paste another Facebook link, or start a new YouTube room for YouTube clips.",
+        );
         return;
       }
-      const incoming = await fetchYoutubeIsLive(id);
-      if (!incoming.ok) {
-        window.alert(incoming.reason);
-        return;
-      }
-      if (latest.sourceType !== "live" && incoming.isLive) {
-        window.alert(LIVE_VIA_STREAM_ROOM_MSG);
-        return;
-      }
-      if (base.isLive !== incoming.isLive) {
-        window.alert(MIXED_LIVE_ARCHIVE_MSG);
+      if (
+        latest.videoProvider !== "facebook" &&
+        resolved.provider === "facebook"
+      ) {
+        window.alert(
+          "Facebook clips can only be added in a Facebook teaching room. Start a new room from the home page with a Facebook link.",
+        );
         return;
       }
 
-      const newClip =
-        label && label.length > 0
-          ? { videoId: id, label }
-          : { videoId: id };
-      console.log("[CLIP] final clip object:", newClip);
+      let label: string | undefined;
+      if (resolved.provider === "youtube") {
+        const id = resolved.videoId;
+        try {
+          const res = await fetch(
+            `/api/youtube-title?videoId=${encodeURIComponent(id)}`,
+          );
+          let data: { title?: string | null } = {};
+          try {
+            data = (await res.json()) as { title?: string | null };
+          } catch {
+            console.warn("[CLIP] title fetch failed (could not parse JSON)");
+          }
+          if (res.ok) {
+            const t =
+              typeof data.title === "string" ? data.title.trim() : "";
+            if (t) label = t;
+          }
+        } catch {
+          /* title optional */
+        }
+
+        const firstVid = latest.clips[0]?.videoId ?? latest.videoId;
+        const base = await fetchYoutubeIsLive(firstVid);
+        if (!base.ok) {
+          window.alert(base.reason);
+          return;
+        }
+        const incoming = await fetchYoutubeIsLive(id);
+        if (!incoming.ok) {
+          window.alert(incoming.reason);
+          return;
+        }
+        if (latest.sourceType !== "live" && incoming.isLive) {
+          window.alert(LIVE_VIA_STREAM_ROOM_MSG);
+          return;
+        }
+        if (base.isLive !== incoming.isLive) {
+          window.alert(MIXED_LIVE_ARCHIVE_MSG);
+          return;
+        }
+
+        const newClip =
+          label && label.length > 0 ? { videoId: id, label } : { videoId: id };
+        const next = [...latest.clips, newClip];
+        void update(rr, {
+          clips: next,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {
+          /* RTDB */
+        });
+        return;
+      }
+
+      const fb = resolved.ref;
+      const newClip = {
+        videoId: fb.videoKey,
+        provider: "facebook" as const,
+        facebookVideoUrl: fb.href,
+      };
       const next = [...latest.clips, newClip];
       void update(rr, {
         clips: next,
@@ -5157,6 +5308,7 @@ function RoomContent() {
           isPlaying: false,
           playbackRate: DEFAULT_PLAYBACK_RATE,
           ...resetAngles,
+          ...facebookFieldsForClip(clip),
         },
         "clip",
         { clearPlaybackCommand: true },
@@ -7220,6 +7372,9 @@ function RoomContent() {
         ...(roomState.sourceType === "live"
           ? { sourceType: "live" as const }
           : {}),
+        ...(roomState.videoProvider === "facebook"
+          ? { videoProvider: "facebook" as const }
+          : {}),
       });
 
       // Save succeeded: mark clean and reset dirty baselines to current state.
@@ -7283,6 +7438,60 @@ function RoomContent() {
     saveSessionDefaultName,
     closeSaveSessionDialog,
     goHome,
+  ]);
+
+  const handleShareLessonPlan = useCallback(async () => {
+    if (!isHost || !roomState || roomState.videoProvider !== "facebook") return;
+    let uid = user?.uid;
+    if (!uid) {
+      try {
+        const cred = await signInWithGoogle();
+        uid = cred.user.uid;
+      } catch {
+        return;
+      }
+    }
+    setSharingLessonPlan(true);
+    try {
+      const name =
+        saveSessionName.trim() ||
+        roomState.name?.trim() ||
+        saveSessionDefaultName();
+      const folderTrim = saveSessionFolder.trim();
+      const sessionId = await saveSessionTemplate(uid, {
+        name,
+        clips: roomState.clips.map(clipToSavedClip),
+        chapters: roomState.chapters.map((ch) => ({
+          time: ch.time,
+          label: ch.label,
+          videoId: ch.videoId,
+          ...(typeof ch.gameTime === "number" ? { gameTime: ch.gameTime } : {}),
+        })),
+        currentClipIndex: roomState.currentClipIndex,
+        ...(folderTrim !== "" ? { folder: folderTrim } : {}),
+        videoProvider: "facebook",
+      });
+      const shareId = await ensureSessionSharing(uid, sessionId);
+      const shareUrl = `${window.location.origin}/shared/${encodeURIComponent(shareId)}`;
+      await navigator.clipboard.writeText(shareUrl);
+      setLessonPlanShareCopied(true);
+      window.setTimeout(() => setLessonPlanShareCopied(false), 2500);
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Could not share this lesson plan.",
+      );
+    } finally {
+      setSharingLessonPlan(false);
+    }
+  }, [
+    isHost,
+    roomState,
+    user,
+    saveSessionName,
+    saveSessionFolder,
+    saveSessionDefaultName,
   ]);
 
   const maybeUnsaved = Boolean(
@@ -7511,6 +7720,7 @@ function RoomContent() {
   let effectiveVideoId = (
     roomState.videoId?.trim() ||
     videoIdFromUrl ||
+    facebookVideoKeyFromUrl ||
     roomState.angles[0]?.videoId?.trim() ||
     ""
   ).trim();
@@ -7521,8 +7731,10 @@ function RoomContent() {
 
   if (!effectiveVideoId) {
     const invalidMsg =
-      videoFromUrl?.trim() && !videoIdFromUrl
-        ? "Film Room currently works best with YouTube links. Please paste a YouTube video or live stream URL."
+      videoFromUrl?.trim() &&
+      !videoIdFromUrl &&
+      !facebookVideoKeyFromUrl
+        ? "Paste a YouTube or Facebook video link to start a room."
         : !videoFromUrl?.trim()
           ? "No video selected. Add a ?video= link with a YouTube id, or open a room that already has a session."
           : "Missing video id.";
@@ -7547,6 +7759,19 @@ function RoomContent() {
       </div>
     );
   }
+
+  const isFacebookRoom = roomState.videoProvider === "facebook";
+  const facebookEmbedHref = activeFacebookHref(roomState);
+  const facebookCaptureClips = roomState.clips.map((c) => ({
+    videoKey: c.videoId,
+    href:
+      c.facebookVideoUrl?.trim() ||
+      `https://www.facebook.com/watch?v=${encodeURIComponent(c.videoId)}`,
+    label: c.label,
+  }));
+  const facebookCaptureChapters = roomState.chapters
+    .filter((ch) => ch.videoId === roomState.videoId)
+    .map((ch) => ({ time: ch.time, label: ch.label }));
 
   const hostChip =
     "rounded-lg border border-white/[0.10] bg-zinc-950/90 px-3 py-2 text-xs font-medium text-zinc-50 shadow-md shadow-black/40 backdrop-blur-md transition duration-150 hover:border-white/18 hover:bg-zinc-900/95 active:scale-[0.97] active:brightness-90 active:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 sm:text-sm";
@@ -8526,6 +8751,16 @@ function RoomContent() {
               >
                 {roomState?.isPlaying ? "Pause" : "Play"}
               </button>
+              {isFacebookRoom ? (
+                <button
+                  type="button"
+                  onClick={() => setFbLandscapeCaptureOpen(true)}
+                  className={`${hostChip} border-blue-500/40 text-blue-100`}
+                  title="Full-screen 16:9 landscape tab capture"
+                >
+                  Landscape capture
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={handleSeekLiveBack30}
@@ -9741,23 +9976,44 @@ function RoomContent() {
                 drawLocked={drawGateOn}
                 className={`absolute inset-0 bg-black ${fsStageClass}`}
               >
-                <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
-                  <YouTube
-                    key={
-                      isHost
-                        ? `host-${safeDecodeVideoId(effectiveVideoId)}`
-                        : `viewer-${safeDecodeVideoId(effectiveVideoId)}`
-                    }
-                    ref={playerRef}
-                    videoId={safeDecodeVideoId(effectiveVideoId)}
-                    onReady={handlePlayerReady}
-                    onStateChange={handleYoutubeStateChange}
+                {isFacebookRoom && facebookEmbedHref ? (
+                  <FacebookVideoPlayer
+                    key={`fb-${facebookEmbedHref}`}
+                    href={facebookEmbedHref}
                     className="absolute left-0 top-0 h-full w-full"
-                    iframeClassName="absolute left-0 top-0 h-full w-full"
-                    onError={handlePlayerError}
-                        opts={youtubePlayerOpts}
+                    onReady={(player) => {
+                      facebookPlayerRef.current = player;
+                      handlePlayerReady();
+                    }}
+                    onError={(message) => {
+                      setEmbedError({ code: -1, videoId: effectiveVideoId });
+                      console.warn("[FB] embed error:", message);
+                    }}
                   />
-                </YoutubePointerGate>
+                ) : isFacebookRoom ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black px-4 text-center text-sm text-zinc-300">
+                    Facebook video URL missing for this clip. Re-add the clip from
+                    a facebook.com link.
+                  </div>
+                ) : (
+                  <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
+                    <YouTube
+                      key={
+                        isHost
+                          ? `host-${safeDecodeVideoId(effectiveVideoId)}`
+                          : `viewer-${safeDecodeVideoId(effectiveVideoId)}`
+                      }
+                      ref={playerRef}
+                      videoId={safeDecodeVideoId(effectiveVideoId)}
+                      onReady={handlePlayerReady}
+                      onStateChange={handleYoutubeStateChange}
+                      className="absolute left-0 top-0 h-full w-full"
+                      iframeClassName="absolute left-0 top-0 h-full w-full"
+                      onError={handlePlayerError}
+                      opts={youtubePlayerOpts}
+                    />
+                  </YoutubePointerGate>
+                )}
                 <TelestratorOverlay
                   roomId={roomId}
                   isHost={isHost}
@@ -9825,6 +10081,31 @@ function RoomContent() {
                   >
                     {roomState?.isPlaying ? "Pause" : "Play"}
                   </button>
+                  {isFacebookRoom ? (
+                    <button
+                      type="button"
+                      onClick={() => setFbLandscapeCaptureOpen(true)}
+                      className={`${hostChipClean} border-blue-500/40 text-blue-100`}
+                      title="Full-screen 16:9 landscape tab capture"
+                    >
+                      Landscape capture
+                    </button>
+                  ) : null}
+                  {isFacebookRoom ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleShareLessonPlan()}
+                      disabled={sharingLessonPlan}
+                      className={`${hostChipClean} border-emerald-500/35 text-emerald-100`}
+                      title="Save clips + chapters and copy a share link"
+                    >
+                      {sharingLessonPlan
+                        ? "Sharing…"
+                        : lessonPlanShareCopied
+                          ? "Link copied"
+                          : "Share lesson"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={handleSeekLiveBack30}
@@ -9966,6 +10247,16 @@ function RoomContent() {
                       >
                         {roomState?.isPlaying ? "Pause" : "Play"}
                       </button>
+                      {isFacebookRoom ? (
+                        <button
+                          type="button"
+                          onClick={() => setFbLandscapeCaptureOpen(true)}
+                          className={`${hostChip} border-blue-500/40 text-blue-100`}
+                          title="Full-screen 16:9 landscape tab capture"
+                        >
+                          Landscape capture
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={handleSeekLiveBack30}
@@ -10490,6 +10781,26 @@ function RoomContent() {
                     drawLocked={drawGateOn}
                     className={`absolute inset-0 bg-black ${fsStageClass}`}
                   >
+                    {isFacebookRoom && facebookEmbedHref ? (
+                      <FacebookVideoPlayer
+                        key={`fb-${facebookEmbedHref}`}
+                        href={facebookEmbedHref}
+                        className="absolute left-0 top-0 h-full w-full"
+                        onReady={(player) => {
+                          facebookPlayerRef.current = player;
+                          handlePlayerReady();
+                        }}
+                        onError={(message) => {
+                          setEmbedError({ code: -1, videoId: effectiveVideoId });
+                          console.warn("[FB] embed error:", message);
+                        }}
+                      />
+                    ) : isFacebookRoom ? (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black px-4 text-center text-sm text-zinc-300">
+                        Facebook video URL missing for this clip. Re-add the clip
+                        from a facebook.com link.
+                      </div>
+                    ) : (
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
                       <YouTube
                         key={
@@ -10507,6 +10818,7 @@ function RoomContent() {
                         opts={youtubePlayerOpts}
                       />
                     </YoutubePointerGate>
+                    )}
                     <TelestratorOverlay
                       roomId={roomId}
                       isHost={isHost}
@@ -10643,6 +10955,20 @@ function RoomContent() {
           </div>
         </div>
       </div>
+    ) : null}
+    {fbLandscapeCaptureOpen && isFacebookRoom && facebookEmbedHref ? (
+      <FacebookLandscapeCapture
+        open
+        onClose={() => setFbLandscapeCaptureOpen(false)}
+        href={facebookEmbedHref}
+        videoKey={effectiveVideoId}
+        clips={facebookCaptureClips}
+        clipIndex={roomState.currentClipIndex}
+        chapters={facebookCaptureChapters}
+        initialTime={uiPlaybackTime ?? roomState.currentTime ?? 0}
+        initialPlaying={roomState.isPlaying}
+        exportBaseName={`film-room-${roomId}`}
+      />
     ) : null}
     </>
   );

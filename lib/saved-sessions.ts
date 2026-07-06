@@ -28,7 +28,18 @@ import {
 } from "@/lib/games";
 import { chapterToTimelineEvent } from "@/lib/game-events";
 
-export type SavedClip = { videoId: string; label?: string };
+import {
+  parseSavedClips,
+  roomClipToSavedClip,
+  savedClipToRoomClip,
+} from "@/lib/saved-session-clips";
+
+export type SavedClip = {
+  videoId: string;
+  label?: string;
+  provider?: "youtube" | "facebook";
+  facebookVideoUrl?: string;
+};
 
 export type SavedChapter = {
   time: number;
@@ -61,6 +72,8 @@ export type SavedSessionDoc = {
   manualSyncAt?: number;
   /** When set, loading this template restores room `sourceType: "live"` (authoritative live intent). */
   sourceType?: "live";
+  /** Facebook teaching lessons store embed hrefs on clips; this flags the room player. */
+  videoProvider?: "youtube" | "facebook";
   /** Optional dashboard kind; when absent, use `inferSavedSessionKind`. */
   sessionType?: "clip" | "sync" | "live_sync";
   /** Optional stable folder id for future grouping (v1 unused in UI). */
@@ -189,7 +202,7 @@ function parseSavedSessionFields(
     typeof folderRaw === "string" && folderRaw.trim() !== ""
       ? folderRaw.trim()
       : undefined;
-  const clips: SavedClip[] = Array.isArray(v.clips) ? (v.clips as SavedClip[]) : [];
+  const clips = parseSavedClips(v.clips);
   const currentClipIndex =
     typeof v.currentClipIndex === "number" && Number.isFinite(v.currentClipIndex)
       ? Math.floor(v.currentClipIndex)
@@ -256,6 +269,9 @@ function parseSavedSessionFields(
     typeof v.gameId === "string" && v.gameId.trim() !== ""
       ? v.gameId.trim()
       : undefined;
+  const videoProviderRaw = v.videoProvider;
+  const videoProvider =
+    videoProviderRaw === "facebook" ? ("facebook" as const) : undefined;
   return {
     name: typeof v.name === "string" ? v.name : "Session",
     ...(folder ? { folder } : {}),
@@ -272,6 +288,7 @@ function parseSavedSessionFields(
       : {}),
     ...(manualSyncAt !== undefined ? { manualSyncAt } : {}),
     ...(sourceType ? { sourceType } : {}),
+    ...(videoProvider ? { videoProvider } : {}),
     ...(sessionType ? { sessionType } : {}),
     ...(folderId !== undefined ? { folderId } : {}),
     ownerUserId:
@@ -326,6 +343,7 @@ export async function saveSessionTemplate(
     playerViewAngleId?: string;
     manualSyncAt?: number;
     sourceType?: "live";
+    videoProvider?: "youtube" | "facebook";
     sessionType?: "clip" | "sync" | "live_sync";
     folderId?: string | null;
   },
@@ -372,6 +390,9 @@ export async function saveSessionTemplate(
       ? { manualSyncAt: data.manualSyncAt }
       : {}),
     ...(data.sourceType === "live" ? { sourceType: "live" } : {}),
+    ...(data.videoProvider === "facebook"
+      ? { videoProvider: "facebook" as const }
+      : {}),
     ...(data.sessionType === "clip" ||
     data.sessionType === "sync" ||
     data.sessionType === "live_sync"
@@ -675,10 +696,7 @@ export async function duplicateSessionToMyLibrary(
   return saveSessionTemplate(ownerUserId, {
     name: source.name,
     ...(folderDup ? { folder: folderDup } : {}),
-    clips: source.clips.map((c) => ({
-      videoId: c.videoId,
-      ...(c.label?.trim() ? { label: c.label.trim() } : {}),
-    })),
+    clips: source.clips.map((c) => roomClipToSavedClip(savedClipToRoomClip(c))),
     chapters: source.chapters.map((ch) => ({
       time: ch.time,
       label: ch.label,
@@ -712,6 +730,9 @@ export async function duplicateSessionToMyLibrary(
       ? { manualSyncAt: source.manualSyncAt }
       : {}),
     ...(source.sourceType === "live" ? { sourceType: "live" as const } : {}),
+    ...(source.videoProvider === "facebook"
+      ? { videoProvider: "facebook" as const }
+      : {}),
     ...(source.sessionType === "clip" ||
     source.sessionType === "sync" ||
     source.sessionType === "live_sync"

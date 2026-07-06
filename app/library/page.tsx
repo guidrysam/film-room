@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { signInWithGoogle } from "@/lib/auth-google";
+import { isFacebookLessonTemplate } from "@/lib/saved-session-clips";
 import { markRoomHost } from "@/lib/room-host";
 import {
   createGameFromSavedSession,
@@ -289,6 +290,9 @@ export default function LibraryPage() {
     const qs = new URLSearchParams();
     qs.set("video", videoId);
     qs.set("loadSaved", savedId);
+    if (isFacebookLessonTemplate(template)) {
+      qs.set("provider", "facebook");
+    }
     if (template.sourceType === "live") qs.set("view", "sync");
     router.push(`/room/${roomId}?${qs.toString()}`);
   };
