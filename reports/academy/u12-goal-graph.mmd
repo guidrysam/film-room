@@ -1,0 +1,99 @@
+flowchart LR
+  subgraph chain0["Receiving chain"]
+    u12_receive_open_body["Receive with an Open Body"]
+    u12_first_touch_away_pressure["First Touch Away from Pressure"]
+    u12_receive_between_lines["Receive Between Lines"]
+    u12_receive_aerial_ball["Receive an Aerial Ball"]
+    u12_scan_before_receiving["Scan Before Receiving"]
+    u12_scan_beyond_next_action["Scan Beyond the Next Action"]
+    u12_choose_progress_retain["Choose Progress or Retention"]
+    u12_recognize_overload_isolation["Recognize Overload or Isolation"]
+    u12_receive_open_body --> u12_first_touch_away_pressure
+    u12_receive_open_body --> u12_receive_between_lines
+    u12_scan_before_receiving --> u12_receive_between_lines
+    u12_scan_before_receiving --> u12_scan_beyond_next_action
+    u12_scan_beyond_next_action --> u12_choose_progress_retain
+    u12_choose_progress_retain --> u12_recognize_overload_isolation
+  end
+  subgraph chain1["Passing and support chain"]
+    u12_pass_weight_accuracy["Pass with Useful Weight"]
+    u12_wall_pass_combination["Use a Wall Pass"]
+    u12_third_player_combination["Connect the Third Player"]
+    u12_switch_point_attack["Switch the Point of Attack"]
+    u12_support_angle_distance["Create a Support Angle"]
+    u12_use_full_team_width["Use Full Team Width"]
+    u12_provide_penetrating_depth["Provide Penetrating Depth"]
+    u12_balance_behind_ball["Balance Behind the Ball"]
+    u12_pass_weight_accuracy --> u12_wall_pass_combination
+    u12_support_angle_distance --> u12_wall_pass_combination
+    u12_wall_pass_combination --> u12_third_player_combination
+    u12_pass_weight_accuracy --> u12_switch_point_attack
+    u12_use_full_team_width --> u12_switch_point_attack
+    u12_support_angle_distance --> u12_use_full_team_width
+    u12_support_angle_distance --> u12_provide_penetrating_depth
+    u12_support_angle_distance --> u12_balance_behind_ball
+  end
+  subgraph chain2["1v1 defending chain"]
+    u12_delay_and_show["Delay and Show"]
+    u12_defend_ball_side["Defend the Ball Side"]
+    u12_time_defensive_challenge["Time the Defensive Challenge"]
+    u12_recover_goal_side["Recover Goal Side"]
+    u12_delay_and_show --> u12_defend_ball_side
+    u12_defend_ball_side --> u12_time_defensive_challenge
+    u12_delay_and_show --> u12_recover_goal_side
+  end
+  subgraph chain3["Buildup chain"]
+    u12_gk_starting_shape["Form a Buildup Starting Shape"]
+    u12_play_around_first_press["Play Around the First Press"]
+    u12_play_through_first_press["Play Through the First Press"]
+    u12_buildup_exit_pressure["Exit Buildup Pressure"]
+    u12_gk_starting_shape --> u12_play_around_first_press
+    u12_gk_starting_shape --> u12_play_through_first_press
+    u12_play_around_first_press --> u12_buildup_exit_pressure
+  end
+  subgraph chain4["Transition chain"]
+    u12_protect_central_space["Protect Central Space"]
+    u12_pressure_cover_balance["Coordinate Pressure, Cover, Balance"]
+    u12_shift_as_unit["Shift as a Connected Unit"]
+    u12_defend_crosses_box["Defend Crosses in the Box"]
+    u12_first_look_forward_regain["First Look Forward After Regain"]
+    u12_spread_after_regain["Spread After Regain"]
+    u12_break_line_in_transition["Break a Line in Transition"]
+    u12_secure_transition_if_closed["Secure Transition When Closed"]
+    u12_react_immediately_loss["React Immediately to Loss"]
+    u12_counterpress_near_ball["Counterpress Near the Ball"]
+    u12_protect_center_after_loss["Protect Center After Loss"]
+    u12_delay_counterattack["Delay the Counterattack"]
+    u12_protect_central_space --> u12_pressure_cover_balance
+    u12_pressure_cover_balance --> u12_shift_as_unit
+    u12_pressure_cover_balance --> u12_defend_crosses_box
+    u12_first_look_forward_regain --> u12_spread_after_regain
+    u12_first_look_forward_regain --> u12_break_line_in_transition
+    u12_break_line_in_transition --> u12_secure_transition_if_closed
+    u12_react_immediately_loss --> u12_counterpress_near_ball
+    u12_pressure_cover_balance --> u12_counterpress_near_ball
+    u12_react_immediately_loss --> u12_protect_center_after_loss
+    u12_protect_center_after_loss --> u12_delay_counterattack
+  end
+  subgraph chain5["Finishing chain"]
+    u12_attack_defender_front_foot["Attack the Defender's Front Foot"]
+    u12_protect_after_beating["Protect After Beating"]
+    u12_isolate_wide_defender["Isolate a Wide Defender"]
+    u12_choose_dribble_pass["Choose Dribble or Pass"]
+    u12_create_cutback_lane["Create a Cutback Lane"]
+    u12_time_penalty_area_runs["Time Penalty-Area Runs"]
+    u12_finish_first_time["Finish First Time"]
+    u12_finish_under_pressure["Finish Under Pressure"]
+    u12_attack_defender_front_foot --> u12_protect_after_beating
+    u12_attack_defender_front_foot --> u12_isolate_wide_defender
+    u12_isolate_wide_defender --> u12_create_cutback_lane
+    u12_finish_first_time --> u12_finish_under_pressure
+    u12_protect_after_beating --> u12_finish_under_pressure
+  end
+  subgraph chain6["Goalkeeping chain"]
+    u12_gk_set_position["Set for the Shot"]
+    u12_gk_handle_and_parry["Handle or Parry Safely"]
+    u12_gk_distribute_decision["Choose Goalkeeper Distribution"]
+    u12_gk_set_position --> u12_gk_handle_and_parry
+    u12_gk_handle_and_parry --> u12_gk_distribute_decision
+  end

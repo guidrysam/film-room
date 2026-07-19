@@ -25,6 +25,76 @@ export type AcademyGoalType =
   | "social"
   | "goalkeeping";
 
+export type AcademyGoalDomainId =
+  | "ball-mastery"
+  | "receiving-first-touch"
+  | "passing-combination-play"
+  | "scanning-decision-making"
+  | "support-width-depth"
+  | "one-v-one-attacking"
+  | "one-v-one-defending"
+  | "building-from-goalkeeper"
+  | "creating-finishing-chances"
+  | "team-defending"
+  | "transition-to-attack"
+  | "transition-to-defense"
+  | "goalkeeping"
+  | "communication-leadership"
+  | "reflection-game-understanding";
+
+export type AcademyPositionGroup =
+  | "all"
+  | "goalkeeper"
+  | "defender"
+  | "outside_defender"
+  | "central_defender"
+  | "midfielder"
+  | "wide_player"
+  | "forward";
+
+export type AcademyGoalSuitability =
+  | "team"
+  | "position_group"
+  | "individual";
+
+export type AcademyGoalDomain = {
+  id: AcademyGoalDomainId;
+  title: string;
+  description: string;
+  order: number;
+};
+
+export type AcademySeasonBlockDefinition = {
+  id: string;
+  title: string;
+  weekStart: number;
+  weekEnd: number;
+  description: string;
+};
+
+export type AcademyGameEvidenceEventType =
+  | "goal"
+  | "shot"
+  | "corner"
+  | "turnover"
+  | "recovery"
+  | "pass"
+  | "receive"
+  | "duel"
+  | "transition"
+  | "buildup"
+  | "defensive_action"
+  | "coach_clip";
+
+export type AcademyGameEvidenceTag = {
+  id: string;
+  label: string;
+  description: string;
+  category: "positive" | "improvement" | "neutral_context";
+  applicableGoalIds: string[];
+  applicableEventTypes: AcademyGameEvidenceEventType[];
+};
+
 export type AcademyPreset = {
   id: string;
   version: number;
@@ -55,14 +125,41 @@ export type AcademyGoal = {
   id: string;
   title: string;
   description: string;
+  domainId: AcademyGoalDomainId;
   type: AcademyGoalType;
   ageBands: string[];
   formats: PlayingFormat[];
   principles: string[];
   coachCues: string[];
   observableIndicators: string[];
-  prerequisiteGoalIds?: string[];
-  relatedGoalIds?: string[];
+  commonFailurePatterns: Array<{
+    title: string;
+    description: string;
+  }>;
+  coachFeedbackExamples: string[];
+  gameEvidenceTags: string[];
+  prerequisiteGoalIds: string[];
+  relatedGoalIds: string[];
+  recommendedLessonCount: number;
+  recommendedDrillCount: number;
+  suitableFor: AcademyGoalSuitability | AcademyGoalSuitability[];
+  positionRelevance: Array<{
+    positionGroup: AcademyPositionGroup;
+    relevance: "primary" | "secondary";
+    note?: string;
+  }>;
+  individualLearningSupport: {
+    homePractice: boolean;
+    partnerPractice: boolean;
+    filmStudy: boolean;
+    quiz: boolean;
+    reflection: boolean;
+  };
+  recommendedResourceTopics: string[];
+  seasonalPlacement: Array<{
+    blockId: string;
+    role: "primary" | "supporting" | "reinforcement";
+  }>;
   sourceProvenance: SourceInfluence[];
   editorial: AcademyEditorialMetadata;
 };
@@ -284,6 +381,7 @@ export type SourceInfluence = {
 export type AcademyEditorialStatus =
   | "draft"
   | "needs_animation"
+  | "needs_revision"
   | "needs_coach_review"
   | "approved"
   | "archived"
@@ -525,4 +623,20 @@ export type AcademyContentGraph = {
   practiceIdsByGoalId: Record<string, string[]>;
   assignmentIdsByGoalId: Record<string, string[]>;
   quizIdsByGoalId: Record<string, string[]>;
+};
+
+export type AcademyGoalGraphCatalog = {
+  id: string;
+  version: number;
+  title: string;
+  ageBand: string;
+  primaryFormat: PlayingFormat;
+  seasonWeeks: number;
+  practicesPerWeek: number;
+  typicalRoster: { min: number; max: number };
+  goalkeepers: { min: number; max: number };
+  domains: AcademyGoalDomain[];
+  blocks: AcademySeasonBlockDefinition[];
+  goals: AcademyGoal[];
+  evidenceTags: AcademyGameEvidenceTag[];
 };

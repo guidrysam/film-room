@@ -5,6 +5,8 @@ import {
   academyReportPath,
 } from "@/lib/academy/paths";
 import type { AcademySourceDocument } from "@/lib/academy/types";
+import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
+import GoalReviewClient from "./GoalReviewClient";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +75,8 @@ export default async function AcademyAdminPage() {
   );
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-12 text-zinc-100">
-      <h1 className="text-2xl font-semibold">Film Room Academy sources</h1>
+    <main className="mx-auto max-w-7xl px-4 py-12 text-zinc-100">
+      <h1 className="text-2xl font-semibold">Film Room Academy editorial</h1>
       <div className="mt-5 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
         <strong>Private reference only.</strong> Never expose source files,
         extracted wording, or source diagrams publicly. Every product draft
@@ -100,7 +102,7 @@ export default async function AcademyAdminPage() {
       </dl>
 
       <section className="mt-8">
-        <h2 className="text-lg font-semibold">Registered documents</h2>
+        <h2 className="text-lg font-semibold">Private source registry</h2>
         {documents.length ? (
           <ul className="mt-3 space-y-3">
             {documents.map((document) => {
@@ -136,6 +138,12 @@ export default async function AcademyAdminPage() {
           </p>
         )}
       </section>
+      <GoalReviewClient
+        goals={U12_ACADEMY_GOAL_CATALOG.goals}
+        domains={U12_ACADEMY_GOAL_CATALOG.domains}
+        blocks={U12_ACADEMY_GOAL_CATALOG.blocks}
+        evidenceTags={U12_ACADEMY_GOAL_CATALOG.evidenceTags}
+      />
     </main>
   );
 }
