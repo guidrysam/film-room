@@ -764,5 +764,97 @@ describeRules("firestore rules (emulator)", () => {
         ),
       );
     });
+
+    it("coaches manage Academy records while player data stays coach-only", async () => {
+      const ownerUid = "owner-academy";
+      const coachUid = "coach-academy";
+      const parentUid = "parent-academy";
+      const teamId = "team-academy";
+      await seedTeam(teamId, ownerUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "teams", teamId), {
+          members: {
+            [ownerUid]: "admin",
+            [coachUid]: "coach",
+            [parentUid]: "parent",
+          },
+          memberUids: [ownerUid, coachUid, parentUid],
+        });
+      });
+
+      const coachDb = testEnv!.authenticatedContext(coachUid).firestore();
+      const planRef = doc(
+        coachDb,
+        "teams",
+        teamId,
+        "academyPlans",
+        "plan-1",
+      );
+      await assertSucceeds(
+        setDoc(planRef, {
+          teamId,
+          academyPresetId: "u11-u12-9v9",
+          academyPresetVersion: 1,
+          title: "U12 season",
+          createdBy: coachUid,
+          updatedBy: coachUid,
+        }),
+      );
+      await assertSucceeds(
+        setDoc(
+          doc(
+            coachDb,
+            "teams",
+            teamId,
+            "academyPlans",
+            "plan-1",
+            "practices",
+            "practice-1",
+          ),
+          { title: "Practice 1", templateId: "practice-1" },
+        ),
+      );
+      const assignmentRef = doc(
+        coachDb,
+        "teams",
+        teamId,
+        "academyAssignments",
+        "assignment-1",
+      );
+      await assertSucceeds(
+        setDoc(assignmentRef, {
+          teamId,
+          title: "Watch the lesson",
+          assignedBy: coachUid,
+        }),
+      );
+
+      const parentDb = testEnv!.authenticatedContext(parentUid).firestore();
+      await assertSucceeds(
+        getDoc(doc(parentDb, "teams", teamId, "academyPlans", "plan-1")),
+      );
+      await assertFails(
+        setDoc(
+          doc(parentDb, "teams", teamId, "academyPlans", "plan-2"),
+          {
+            teamId,
+            academyPresetId: "u11-u12-9v9",
+            academyPresetVersion: 1,
+            createdBy: parentUid,
+          },
+        ),
+      );
+      await assertFails(
+        getDoc(
+          doc(
+            parentDb,
+            "teams",
+            teamId,
+            "academyAssignments",
+            "assignment-1",
+          ),
+        ),
+      );
+    });
   });
 });

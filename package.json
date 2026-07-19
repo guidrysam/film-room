@@ -9,7 +9,13 @@
     "lint": "eslint",
     "test": "tsx --test lib/**/*.test.ts",
     "test:rules": "firebase emulators:exec --only firestore --project film-room-b7780 \"tsx --test lib/firestore-rules.test.ts\"",
-    "deploy:rules": "firebase deploy --only firestore:rules --project film-room-b7780"
+    "deploy:rules": "firebase deploy --only firestore:rules --project film-room-b7780",
+    "academy:sources:register": "tsx scripts/academy/register-sources.ts",
+    "academy:sources:extract": "tsx scripts/academy/extract-pdf-text.ts",
+    "academy:sources:index": "tsx scripts/academy/build-source-index.ts",
+    "academy:sources:queue": "tsx scripts/academy/create-editorial-queue.ts",
+    "academy:validate": "tsx scripts/academy/validate-source-index.ts",
+    "academy:sources:all": "npm run academy:sources:register && npm run academy:sources:extract && npm run academy:sources:index && npm run academy:sources:queue && npm run academy:validate"
   },
   "dependencies": {
     "firebase": "^12.12.0",
@@ -27,6 +33,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "firebase-tools": "^15.21.0",
+    "pdf-parse": "^2.4.5",
     "tailwindcss": "^4",
     "tsx": "^4.20.3",
     "typescript": "^5"

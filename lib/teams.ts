@@ -457,6 +457,10 @@ export async function deleteTeam(teamId: string, uid: string): Promise<void> {
   await deleteCollectionDocs(
     collection(firestore, "teams", teamId, "tacticsPresets"),
   );
+  const { deleteAllTeamAcademyData } = await import(
+    "@/lib/academy/team-data"
+  );
+  await deleteAllTeamAcademyData(teamId);
   await deleteTeamInvitesForTeam(teamId);
   await deleteDoc(doc(teamsCol(), teamId));
 }

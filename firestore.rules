@@ -286,6 +286,52 @@ service cloud.firestore {
         allow delete: if request.auth != null &&
                          isTeamCoach(teamId, request.auth.uid);
       }
+
+      // Academy plans store references and team overrides only. Built-in
+      // curriculum remains version-controlled app data and is not duplicated.
+      match /academyPlans/{planId} {
+        allow read: if request.auth != null &&
+                       isTeamMember(teamId, request.auth.uid);
+        allow create: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid) &&
+                         request.resource.data.teamId == teamId &&
+                         request.resource.data.createdBy == request.auth.uid &&
+                         request.resource.data.academyPresetId is string &&
+                         request.resource.data.academyPresetVersion is int;
+        allow update: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid) &&
+                         request.resource.data.teamId == resource.data.teamId &&
+                         request.resource.data.createdBy == resource.data.createdBy &&
+                         request.resource.data.academyPresetId == resource.data.academyPresetId;
+        allow delete: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid);
+
+        match /{academyPlanDocument=**} {
+          allow read: if request.auth != null &&
+                         isTeamMember(teamId, request.auth.uid);
+          allow create, update, delete: if request.auth != null &&
+                                          isTeamCoach(teamId, request.auth.uid);
+        }
+      }
+
+      // Assignments, quiz results, and observations may contain player data.
+      // Keep them coach-only until player-account ownership is implemented.
+      match /academyAssignments/{assignmentId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
+      match /academyQuizAssignments/{assignmentId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
+      match /academyGoalEvidence/{evidenceId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
+      match /academyTemplates/{templateId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
     }
 
     // ---- Team invites (join links) ------------------------------------

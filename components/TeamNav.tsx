@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  teamAcademyUrl,
   teamGamesUrl,
   teamRosterUrl,
   teamSetupUrl,
@@ -10,7 +11,13 @@ import {
 } from "@/lib/team-routes";
 import { canManageTeam, type Team } from "@/lib/teams";
 
-export type TeamNavTab = "roster" | "setup" | "games" | "stats" | "tactics";
+export type TeamNavTab =
+  | "roster"
+  | "setup"
+  | "games"
+  | "stats"
+  | "tactics"
+  | "academy";
 
 const tabClass = (active: boolean) =>
   `rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
@@ -38,6 +45,9 @@ export type TeamNavProps = {
  */
 export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
   const showSettings = canManageTeam(team, currentUid);
+  const showAcademy =
+    process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
+    process.env.NODE_ENV === "development";
   const base = teamRosterUrl(team.id);
 
   return (
@@ -75,6 +85,14 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
         >
           Tactics
         </Link>
+        {showAcademy ? (
+          <Link
+            href={teamAcademyUrl(team.id)}
+            className={tabClass(active === "academy")}
+          >
+            Academy
+          </Link>
+        ) : null}
         <Link href={teamStatsUrl(team.id)} className={tabClass(active === "stats")}>
           Season
         </Link>

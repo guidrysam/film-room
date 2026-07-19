@@ -1,0 +1,63 @@
+{
+  "generatedAt": "2026-07-19T15:16:24.638Z",
+  "documentsDiscovered": 6,
+  "pagesProcessed": 597,
+  "sourceItemsIndexed": 565,
+  "documents": [
+    {
+      "id": "300-soccer-drills-practice-plans",
+      "title": "300 soccer drills practice plans",
+      "filename": "300-soccer-drills-practice-plans.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 213,
+      "indexedItemCount": 213,
+      "confidence": "high"
+    },
+    {
+      "id": "51shooting-drills",
+      "title": "51Shooting Drills",
+      "filename": "51Shooting_Drills.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 90,
+      "indexedItemCount": 90,
+      "confidence": "high"
+    },
+    {
+      "id": "canning-city-curriculum-2017-u14-to-u18",
+      "title": "Canning City Curriculum 2017 U14 to U18",
+      "filename": "Canning-City-Curriculum-2017-U14-to-U18.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 44,
+      "indexedItemCount": 32,
+      "confidence": "high"
+    },
+    {
+      "id": "pdp-1-booklet",
+      "title": "PDP 1 Booklet",
+      "filename": "PDP-1-Booklet.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 68,
+      "indexedItemCount": 55,
+      "confidence": "high"
+    },
+    {
+      "id": "pep-guardiola-soccer-drills-pdf",
+      "title": "Pep Guardiola soccer drills PDF",
+      "filename": "Pep-Guardiola-soccer-drills-PDF.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 90,
+      "indexedItemCount": 89,
+      "confidence": "high"
+    },
+    {
+      "id": "ykcmjn-warm-up-exercises-with-ball",
+      "title": "YkcmJN Warm up exercises with ball",
+      "filename": "YkcmJN-Warm-up-exercises-with-ball.pdf",
+      "licenseStatus": "private_reference_only",
+      "pageCount": 92,
+      "indexedItemCount": 86,
+      "confidence": "high"
+    }
+  ],
+  "editorialQueueSize": 565
+}

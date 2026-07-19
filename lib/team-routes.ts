@@ -20,6 +20,10 @@ export function teamTacticsUrl(teamId: string): string {
   return `/team/${teamId}/tactics`;
 }
 
+export function teamAcademyUrl(teamId: string): string {
+  return `/team/${teamId}/academy`;
+}
+
 export function teamTacticsBoardUrl(teamId: string, boardId: string): string {
   return `/team/${teamId}/tactics/${boardId}`;
 }

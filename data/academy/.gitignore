@@ -1,0 +1,10 @@
+# Private source registry, extracted page text, and editorial queue.
+# Recreate locally with `npm run academy:sources:all`.
+/sources/*.json
+/source-index/*.json
+/editorial-queue/*.json
+
+# Keep directory placeholders in source control.
+!/sources/.gitkeep
+!/source-index/.gitkeep
+!/editorial-queue/.gitkeep

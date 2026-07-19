@@ -2,7 +2,8 @@ import { updateGameSourceSync } from "@/lib/games";
 
 /** Round to centiseconds so Firestore matches in-room display. */
 export function roundSyncOffsetSeconds(offset: number): number {
-  return Math.round(offset * 100) / 100;
+  const roundedMagnitude = Math.round(Math.abs(offset) * 100) / 100;
+  return roundedMagnitude === 0 ? 0 : Math.sign(offset) * roundedMagnitude;
 }
 
 /**
