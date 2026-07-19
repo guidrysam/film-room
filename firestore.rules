@@ -268,6 +268,24 @@ service cloud.firestore {
           allow delete: if parentWritable();
         }
       }
+
+      // Reusable presets owned by this team. Built-in presets are app data.
+      match /tacticsPresets/{presetId} {
+        allow read: if request.auth != null &&
+                       isTeamCoach(teamId, request.auth.uid);
+        allow create: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid) &&
+                         request.resource.data.teamId == teamId &&
+                         request.resource.data.createdBy == request.auth.uid &&
+                         request.resource.data.preset is map;
+        allow update: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid) &&
+                         request.resource.data.teamId == resource.data.teamId &&
+                         request.resource.data.createdBy == resource.data.createdBy &&
+                         request.resource.data.preset is map;
+        allow delete: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid);
+      }
     }
 
     // ---- Team invites (join links) ------------------------------------

@@ -454,6 +454,9 @@ export async function deleteTeam(teamId: string, uid: string): Promise<void> {
   );
   const { deleteAllTacticsBoards } = await import("@/lib/tactics-boards");
   await deleteAllTacticsBoards(teamId);
+  await deleteCollectionDocs(
+    collection(firestore, "teams", teamId, "tacticsPresets"),
+  );
   await deleteTeamInvitesForTeam(teamId);
   await deleteDoc(doc(teamsCol(), teamId));
 }

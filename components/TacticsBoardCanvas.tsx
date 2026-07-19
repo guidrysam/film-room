@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -35,6 +36,9 @@ export type TacticsTool =
   | "home"
   | "away"
   | "ball"
+  | "cone"
+  | "mini_goal"
+  | "area_label"
   | "arrow"
   | "draw"
   | "circle"
@@ -106,18 +110,19 @@ export default function TacticsBoardCanvas({
   onSelect,
   onChangeObjects,
   onGestureEnd,
-  svgRef,
+  svgRef: externalSvgRef,
   className,
 }: TacticsBoardCanvasProps) {
   const localSvgRef = useRef<SVGSVGElement | null>(null);
+  useImperativeHandle<SVGSVGElement | null, SVGSVGElement | null>(
+    externalSvgRef,
+    () => localSvgRef.current,
+  );
   const setSvgNode = useCallback(
     (node: SVGSVGElement | null) => {
       localSvgRef.current = node;
-      if (svgRef) {
-        (svgRef as React.MutableRefObject<SVGSVGElement | null>).current = node;
-      }
     },
-    [svgRef],
+    [],
   );
 
   const dragRef = useRef<{
@@ -217,6 +222,34 @@ export default function TacticsBoardCanvas({
       return;
     }
 
+    if (tool === "cone" || tool === "mini_goal" || tool === "area_label") {
+      const position = clampVisible(norm.x, norm.y);
+      const obj: TacticsBoardObject =
+        tool === "cone"
+          ? {
+              id: generateTacticsObjectId(),
+              type: "cone",
+              ...position,
+              color: "#f97316",
+            }
+          : tool === "mini_goal"
+            ? {
+                id: generateTacticsObjectId(),
+                type: "mini_goal",
+                ...position,
+                rotation: 0,
+              }
+            : {
+                id: generateTacticsObjectId(),
+                type: "area_label",
+                ...position,
+                text: "Area",
+              };
+      commitObjects([...objectsRef.current, obj], true);
+      onSelect?.(obj.id);
+      return;
+    }
+
     const drawType: TacticsDrawingKind =
       tool === "arrow"
         ? "arrow"
@@ -271,7 +304,13 @@ export default function TacticsBoardCanvas({
     if (drag.mode === "move") {
       const obj = objectsRef.current.find((o) => o.id === drag.id);
       if (!obj) return;
-      if (obj.type === "player" || obj.type === "ball") {
+      if (
+        obj.type === "player" ||
+        obj.type === "ball" ||
+        obj.type === "cone" ||
+        obj.type === "mini_goal" ||
+        obj.type === "area_label"
+      ) {
         const c = clampVisible(norm.x, norm.y);
         updateObject(drag.id, { x: c.x, y: c.y });
       }
@@ -281,7 +320,15 @@ export default function TacticsBoardCanvas({
     if (drag.mode === "draw") {
       setDraft((prev) => {
         if (!prev || prev.id !== drag.id) return prev;
-        if (prev.type === "player" || prev.type === "ball") return prev;
+        if (
+          prev.type === "player" ||
+          prev.type === "ball" ||
+          prev.type === "cone" ||
+          prev.type === "mini_goal" ||
+          prev.type === "area_label"
+        ) {
+          return prev;
+        }
         if (prev.freehand) {
           return {
             ...prev,
@@ -303,7 +350,15 @@ export default function TacticsBoardCanvas({
     if (drag.mode === "draw") {
       setDraft((prev) => {
         if (!prev || prev.id !== drag.id) return null;
-        if (prev.type === "player" || prev.type === "ball") return null;
+        if (
+          prev.type === "player" ||
+          prev.type === "ball" ||
+          prev.type === "cone" ||
+          prev.type === "mini_goal" ||
+          prev.type === "area_label"
+        ) {
+          return null;
+        }
         const pts = prev.points;
         const tooSmall =
           !prev.freehand &&
@@ -611,6 +666,134 @@ export default function TacticsBoardCanvas({
                 filter="drop-shadow(0 1px 3px rgba(0,0,0,0.5))"
               />
               <circle r={bR * 0.35} fill="#292524" opacity={0.35} />
+            </g>
+          );
+        })}
+        {allObjects.map((o) => {
+          if (
+            o.type !== "cone" &&
+            o.type !== "mini_goal" &&
+            o.type !== "area_label"
+          ) {
+            return null;
+          }
+          const opacity = opacityOf(o);
+          if (opacity <= 0.01) return null;
+          const p = normToSvg(o.x, o.y, orientation);
+          const selected = selectedId === o.id;
+          const key = `${o.fromLayer ? "from-" : ""}${o.id}`;
+          if (o.type === "cone") {
+            const size = Math.max(12, pR * 0.8);
+            return (
+              <g
+                key={key}
+                data-tactics-object={o.id}
+                transform={`translate(${p.x}, ${p.y})`}
+                opacity={opacity}
+                onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
+                style={{ cursor: readOnly ? "default" : "grab" }}
+              >
+                {selected ? (
+                  <circle
+                    r={size + 6}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.7)"
+                    strokeWidth={2}
+                    strokeDasharray="4 3"
+                  />
+                ) : null}
+                <path
+                  d={`M 0 ${-size} L ${size * 0.7} ${size * 0.75} L ${-size * 0.7} ${size * 0.75} Z`}
+                  fill={o.color || "#f97316"}
+                  stroke="rgba(255,255,255,0.85)"
+                  strokeWidth={2}
+                />
+                <rect
+                  x={-size * 0.85}
+                  y={size * 0.68}
+                  width={size * 1.7}
+                  height={size * 0.28}
+                  rx={3}
+                  fill={o.color || "#f97316"}
+                />
+              </g>
+            );
+          }
+          if (o.type === "mini_goal") {
+            const w = pR * 2.2;
+            const h = pR * 1.2;
+            return (
+              <g
+                key={key}
+                data-tactics-object={o.id}
+                transform={`translate(${p.x}, ${p.y}) rotate(${o.rotation ?? 0})`}
+                opacity={opacity}
+                onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
+                style={{ cursor: readOnly ? "default" : "grab" }}
+              >
+                {selected ? (
+                  <rect
+                    x={-w / 2 - 6}
+                    y={-h - 6}
+                    width={w + 12}
+                    height={h + 12}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.7)"
+                    strokeDasharray="4 3"
+                  />
+                ) : null}
+                <path
+                  d={`M ${-w / 2} 0 V ${-h} H ${w / 2} V 0 M ${-w / 2} ${-h} L ${-w * 0.35} ${-h * 0.65} H ${w * 0.35} L ${w / 2} ${-h}`}
+                  fill="none"
+                  stroke="#f8fafc"
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </g>
+            );
+          }
+          return (
+            <g
+              key={key}
+              data-tactics-object={o.id}
+              transform={`translate(${p.x}, ${p.y})`}
+              opacity={opacity}
+              onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
+              style={{ cursor: readOnly ? "default" : "grab" }}
+            >
+              {selected ? (
+                <rect
+                  x={-64}
+                  y={-20}
+                  width={128}
+                  height={40}
+                  rx={8}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.7)"
+                  strokeDasharray="4 3"
+                />
+              ) : null}
+              <rect
+                x={-58}
+                y={-16}
+                width={116}
+                height={32}
+                rx={7}
+                fill="rgba(0,0,0,0.62)"
+                stroke="rgba(255,255,255,0.5)"
+              />
+              <text
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#fff"
+                fontSize={15}
+                fontWeight={700}
+                fontFamily="system-ui, sans-serif"
+                style={{ pointerEvents: "none", userSelect: "none" }}
+              >
+                {o.text}
+              </text>
             </g>
           );
         })}

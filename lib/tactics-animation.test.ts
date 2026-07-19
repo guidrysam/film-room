@@ -66,6 +66,30 @@ test("interpolate moving object at 0, 0.5, 1", () => {
   }
 });
 
+test("interpolates positional drill objects by stable id", () => {
+  const from: TacticsBoardObject[] = [
+    { id: "cone", type: "cone", x: 0.1, y: 0.2 },
+    { id: "goal", type: "mini_goal", x: 0.2, y: 0.8, rotation: 0 },
+    { id: "label", type: "area_label", x: 0.5, y: 0.1, text: "Start" },
+  ];
+  const to: TacticsBoardObject[] = [
+    { id: "cone", type: "cone", x: 0.9, y: 0.2 },
+    { id: "goal", type: "mini_goal", x: 0.8, y: 0.8, rotation: 90 },
+    { id: "label", type: "area_label", x: 0.5, y: 0.9, text: "Finish" },
+  ];
+  const mid = interpolateStepObjects(from, to, 0.5);
+  for (const object of mid) {
+    assert.equal(object.opacity, 1);
+    if (
+      object.type === "cone" ||
+      object.type === "mini_goal" ||
+      object.type === "area_label"
+    ) {
+      assert.ok(object.x > 0.39 && object.x < 0.61);
+    }
+  }
+});
+
 test("appearing object fades in", () => {
   const from: TacticsBoardObject[] = [];
   const to = [ball("b1", 0.5, 0.5)];

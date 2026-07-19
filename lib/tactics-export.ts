@@ -152,6 +152,12 @@ function objectsToSimpleSvg(
   fieldView: TacticsFieldView,
 ): string {
   const vb = viewBoxAttr(orientation, fieldView);
+  const escapeXml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;");
   const tokens = objects
     .map((o) => {
       if (o.type === "player") {
@@ -164,6 +170,46 @@ function objectsToSimpleSvg(
       if (o.type === "ball") {
         const p = normToSvg(o.x, o.y, orientation);
         return `<circle cx="${p.x}" cy="${p.y}" r="10" fill="#f5f5f4" stroke="#292524"/>`;
+      }
+      if (o.type === "cone") {
+        const p = normToSvg(o.x, o.y, orientation);
+        const color = o.color || "#f97316";
+        return `<path d="M ${p.x} ${p.y - 16} L ${p.x + 11} ${p.y + 11} L ${p.x - 11} ${p.y + 11} Z" fill="${color}" stroke="#fff" stroke-width="2"/>`;
+      }
+      if (o.type === "mini_goal") {
+        const p = normToSvg(o.x, o.y, orientation);
+        return `<g transform="translate(${p.x} ${p.y}) rotate(${o.rotation ?? 0})"><path d="M -30 0 V -25 H 30 V 0 M -30 -25 L -20 -15 H 20 L 30 -25" fill="none" stroke="#fff" stroke-width="5"/></g>`;
+      }
+      if (o.type === "area_label") {
+        const p = normToSvg(o.x, o.y, orientation);
+        return `<rect x="${p.x - 55}" y="${p.y - 16}" width="110" height="32" rx="7" fill="rgba(0,0,0,.65)" stroke="rgba(255,255,255,.5)"/><text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="15" font-family="system-ui">${escapeXml(o.text)}</text>`;
+      }
+      if (
+        o.type === "line" ||
+        o.type === "arrow" ||
+        o.type === "circle" ||
+        o.type === "zone"
+      ) {
+        const points = o.points.map((point) =>
+          normToSvg(point.x, point.y, orientation),
+        );
+        if (points.length < 2) return "";
+        const first = points[0]!;
+        const last = points.at(-1)!;
+        if (o.type === "zone") {
+          const x = Math.min(first.x, last.x);
+          const y = Math.min(first.y, last.y);
+          return `<rect x="${x}" y="${y}" width="${Math.abs(last.x - first.x)}" height="${Math.abs(last.y - first.y)}" fill="${o.color}33" stroke="${o.color}" stroke-width="3"/>`;
+        }
+        if (o.type === "circle") {
+          return `<ellipse cx="${(first.x + last.x) / 2}" cy="${(first.y + last.y) / 2}" rx="${Math.abs(last.x - first.x) / 2}" ry="${Math.abs(last.y - first.y) / 2}" fill="none" stroke="${o.color}" stroke-width="3"/>`;
+        }
+        const path = points
+          .map((point, index) =>
+            `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`,
+          )
+          .join(" ");
+        return `<path d="${path}" fill="none" stroke="${o.color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>`;
       }
       return "";
     })

@@ -48,6 +48,57 @@ test("parseTacticsBoardObject parses player ball and drawings", () => {
   assert.equal(arrow?.type, "arrow");
 });
 
+test("parseTacticsBoardObject parses drill equipment and labels", () => {
+  assert.deepEqual(
+    parseTacticsBoardObject({
+      id: "cone-1",
+      type: "cone",
+      x: 0.2,
+      y: 0.3,
+      color: "#f97316",
+    }),
+    {
+      id: "cone-1",
+      type: "cone",
+      x: 0.2,
+      y: 0.3,
+      color: "#f97316",
+    },
+  );
+  assert.deepEqual(
+    parseTacticsBoardObject({
+      id: "goal-1",
+      type: "mini_goal",
+      x: 0.8,
+      y: 0.5,
+      rotation: 90,
+    }),
+    {
+      id: "goal-1",
+      type: "mini_goal",
+      x: 0.8,
+      y: 0.5,
+      rotation: 90,
+    },
+  );
+  assert.deepEqual(
+    parseTacticsBoardObject({
+      id: "label-1",
+      type: "area_label",
+      x: 0.5,
+      y: 0.1,
+      text: "End zone",
+    }),
+    {
+      id: "label-1",
+      type: "area_label",
+      x: 0.5,
+      y: 0.1,
+      text: "End zone",
+    },
+  );
+});
+
 test("parseTacticsBoard defaults visibility and version", () => {
   const board = parseTacticsBoard("bid", "tid", {
     title: "Corner Kick",

@@ -78,12 +78,49 @@ export type TacticsDrawingObject = {
   visible?: boolean;
 };
 
+export type TacticsConeObject = {
+  id: string;
+  type: "cone";
+  x: number;
+  y: number;
+  color?: string;
+  visible?: boolean;
+};
+
+export type TacticsMiniGoalObject = {
+  id: string;
+  type: "mini_goal";
+  x: number;
+  y: number;
+  rotation?: number;
+  visible?: boolean;
+};
+
+export type TacticsAreaLabelObject = {
+  id: string;
+  type: "area_label";
+  x: number;
+  y: number;
+  text: string;
+  visible?: boolean;
+};
+
 export type TacticsPlaybackSettings = PlaybackSettings;
 
 export type TacticsBoardObject =
   | TacticsPlayerObject
   | TacticsBallObject
-  | TacticsDrawingObject;
+  | TacticsDrawingObject
+  | TacticsConeObject
+  | TacticsMiniGoalObject
+  | TacticsAreaLabelObject;
+
+export type TacticsPresetSource = {
+  presetId: string;
+  presetVersion: number;
+  presetTitle: string;
+  sourceType: "built_in" | "team";
+};
 
 export type TacticsBoard = {
   id: string;
@@ -117,6 +154,7 @@ export type TacticsBoard = {
   shareEnabledBy?: string;
   duplicatedFromBoardId?: string;
   duplicatedFromTitle?: string;
+  presetSource?: TacticsPresetSource;
 };
 
 export type TacticsBoardConflictError = {
@@ -137,6 +175,10 @@ function newId(): string {
     return crypto.randomUUID().replace(/-/g, "").slice(0, 20);
   }
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function generateTacticsBoardId(): string {
+  return newId();
 }
 
 export function generateTacticsObjectId(): string {
@@ -199,6 +241,55 @@ export function parseTacticsBoardObject(raw: unknown): TacticsBoardObject | null
       type: "ball",
       x: clamp01(o.x),
       y: clamp01(o.y),
+      ...(o.visible === false ? { visible: false } : {}),
+    };
+  }
+
+  if (type === "cone") {
+    if (typeof o.x !== "number" || typeof o.y !== "number") return null;
+    const color =
+      typeof o.color === "string" && o.color.trim() !== ""
+        ? o.color.trim()
+        : undefined;
+    return {
+      id,
+      type: "cone",
+      x: clamp01(o.x),
+      y: clamp01(o.y),
+      ...(color ? { color } : {}),
+      ...(o.visible === false ? { visible: false } : {}),
+    };
+  }
+
+  if (type === "mini_goal") {
+    if (typeof o.x !== "number" || typeof o.y !== "number") return null;
+    const rotation =
+      typeof o.rotation === "number" && Number.isFinite(o.rotation)
+        ? o.rotation
+        : undefined;
+    return {
+      id,
+      type: "mini_goal",
+      x: clamp01(o.x),
+      y: clamp01(o.y),
+      ...(rotation !== undefined ? { rotation } : {}),
+      ...(o.visible === false ? { visible: false } : {}),
+    };
+  }
+
+  if (type === "area_label") {
+    if (typeof o.x !== "number" || typeof o.y !== "number") return null;
+    const text =
+      typeof o.text === "string" && o.text.trim() !== ""
+        ? o.text.trim().slice(0, 48)
+        : "";
+    if (!text) return null;
+    return {
+      id,
+      type: "area_label",
+      x: clamp01(o.x),
+      y: clamp01(o.y),
+      text,
       ...(o.visible === false ? { visible: false } : {}),
     };
   }
@@ -296,6 +387,24 @@ export function parseTacticsBoard(
       : 0;
   const activeStepId = trimOrUndef(raw.activeStepId as string);
   const playbackSettings = parsePlaybackSettings(raw.playbackSettings);
+  const presetSourceRaw =
+    raw.presetSource && typeof raw.presetSource === "object"
+      ? (raw.presetSource as Record<string, unknown>)
+      : null;
+  const presetSource: TacticsPresetSource | undefined =
+    presetSourceRaw &&
+    typeof presetSourceRaw.presetId === "string" &&
+    typeof presetSourceRaw.presetVersion === "number" &&
+    typeof presetSourceRaw.presetTitle === "string" &&
+    (presetSourceRaw.sourceType === "built_in" ||
+      presetSourceRaw.sourceType === "team")
+      ? {
+          presetId: presetSourceRaw.presetId,
+          presetVersion: Math.max(1, Math.floor(presetSourceRaw.presetVersion)),
+          presetTitle: presetSourceRaw.presetTitle,
+          sourceType: presetSourceRaw.sourceType,
+        }
+      : undefined;
 
   return {
     id,
@@ -340,6 +449,7 @@ export function parseTacticsBoard(
     ...(trimOrUndef(raw.duplicatedFromTitle as string)
       ? { duplicatedFromTitle: (raw.duplicatedFromTitle as string).trim() }
       : {}),
+    ...(presetSource ? { presetSource } : {}),
   };
 }
 
@@ -691,6 +801,7 @@ export async function duplicateTacticsBoard(
     version: 1,
     duplicatedFromBoardId: source.id,
     duplicatedFromTitle: source.title,
+    ...(source.presetSource ? { presetSource: source.presetSource } : {}),
   });
 
   const { copyTacticsStepsToBoard } = await import("@/lib/tactics-steps");

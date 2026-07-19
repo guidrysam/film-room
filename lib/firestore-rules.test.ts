@@ -689,5 +689,80 @@ describeRules("firestore rules (emulator)", () => {
         }),
       );
     });
+
+    it("team coaches manage team presets while parents cannot read them", async () => {
+      const ownerUid = "owner-preset";
+      const coachUid = "coach-preset";
+      const parentUid = "parent-preset";
+      const teamId = "team-presets";
+      await seedTeam(teamId, ownerUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "teams", teamId), {
+          members: {
+            [ownerUid]: "admin",
+            [coachUid]: "coach",
+            [parentUid]: "parent",
+          },
+          memberUids: [ownerUid, coachUid, parentUid],
+        });
+      });
+
+      const coachDb = testEnv!.authenticatedContext(coachUid).firestore();
+      const presetRef = doc(
+        coachDb,
+        "teams",
+        teamId,
+        "tacticsPresets",
+        "preset-1",
+      );
+      await assertSucceeds(
+        setDoc(presetRef, {
+          teamId,
+          preset: { id: "preset-1", title: "Team buildout", steps: [] },
+          createdBy: coachUid,
+          updatedBy: coachUid,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(presetRef, {
+          preset: { id: "preset-1", title: "Renamed", steps: [] },
+          updatedBy: ownerUid,
+          updatedAt: Timestamp.now(),
+        }),
+      );
+      await assertSucceeds(deleteDoc(presetRef));
+
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(
+            context.firestore(),
+            "teams",
+            teamId,
+            "tacticsPresets",
+            "preset-2",
+          ),
+          {
+            teamId,
+            preset: { id: "preset-2", title: "Private to coaches", steps: [] },
+            createdBy: ownerUid,
+            updatedBy: ownerUid,
+          },
+        );
+      });
+      const parentDb = testEnv!.authenticatedContext(parentUid).firestore();
+      await assertFails(
+        getDoc(
+          doc(
+            parentDb,
+            "teams",
+            teamId,
+            "tacticsPresets",
+            "preset-2",
+          ),
+        ),
+      );
+    });
   });
 });

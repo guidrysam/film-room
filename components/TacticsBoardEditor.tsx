@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
@@ -56,6 +57,10 @@ import {
 } from "@/lib/tactics-formations";
 import { ensureTacticsBoardMigrated } from "@/lib/tactics-migration";
 import {
+  saveBoardAsTeamPreset,
+  updateTeamPresetFromBoard,
+} from "@/lib/tactics-team-presets";
+import {
   addTacticsStepAfter,
   deleteTacticsStep,
   duplicateTacticsStep,
@@ -79,6 +84,11 @@ const ghostBtn =
 
 const primaryBtn =
   "rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40";
+
+const TacticsPresetLibrary = dynamic(
+  () => import("@/components/TacticsPresetLibrary"),
+  { ssr: false },
+);
 
 export type TacticsBoardEditorProps = {
   team: Team;
@@ -127,6 +137,7 @@ export default function TacticsBoardEditor({
   const [conflictRemote, setConflictRemote] = useState<TacticsBoard | null>(null);
   const [stepConflict, setStepConflict] = useState<TacticsStep | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [presetLibraryOpen, setPresetLibraryOpen] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [loadingSteps, setLoadingSteps] = useState(true);
   const [showPrevPositions, setShowPrevPositions] = useState(false);
@@ -666,6 +677,9 @@ export default function TacticsBoardEditor({
             {" · "}
             {visibilityLabel(board.visibility)}
             {steps.length > 0 ? ` · ${steps.length} steps` : ""}
+            {board.presetSource
+              ? ` · From ${board.presetSource.sourceType === "built_in" ? "Film Room" : "team"} preset “${board.presetSource.presetTitle}”`
+              : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -685,6 +699,13 @@ export default function TacticsBoardEditor({
               <button
                 type="button"
                 className={ghostBtn}
+                onClick={() => setPresetLibraryOpen(true)}
+              >
+                Start from Preset
+              </button>
+              <button
+                type="button"
+                className={ghostBtn}
                 onClick={() => setShareOpen((v) => !v)}
               >
                 Share
@@ -699,6 +720,73 @@ export default function TacticsBoardEditor({
                 </button>
                 {moreOpen ? (
                   <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-white/10 bg-zinc-950 p-1.5 shadow-xl">
+                    <button
+                      type="button"
+                      className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        void persistAll().then(async () => {
+                          const presetTitle = window.prompt(
+                            "Team preset name",
+                            title,
+                          );
+                          if (!presetTitle?.trim()) return;
+                          try {
+                            await saveBoardAsTeamPreset(
+                              team.id,
+                              board.id,
+                              currentUid,
+                              { title: presetTitle },
+                            );
+                            setExportMsg("Saved as a Team Preset.");
+                          } catch (error) {
+                            alert(
+                              error instanceof Error
+                                ? error.message
+                                : "Could not save team preset.",
+                            );
+                          }
+                        });
+                      }}
+                    >
+                      Save as Team Preset
+                    </button>
+                    {board.presetSource?.sourceType === "team" ? (
+                      <button
+                        type="button"
+                        className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
+                        onClick={() => {
+                          setMoreOpen(false);
+                          if (
+                            !window.confirm(
+                              `Update team preset “${board.presetSource?.presetTitle}” with this board?`,
+                            )
+                          ) {
+                            return;
+                          }
+                          void persistAll()
+                            .then(() =>
+                              updateTeamPresetFromBoard(
+                                team.id,
+                                board.presetSource!.presetId,
+                                board.id,
+                                currentUid,
+                              ),
+                            )
+                            .then(
+                              () => setExportMsg("Team Preset updated."),
+                              (error) =>
+                                alert(
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Could not update team preset.",
+                                ),
+                            );
+                        }}
+                      >
+                        Update Team Preset
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
@@ -1192,6 +1280,9 @@ export default function TacticsBoardEditor({
               ["home", "Home"],
               ["away", "Away"],
               ["ball", "Ball"],
+              ["cone", "Cone"],
+              ["mini_goal", "Mini goal"],
+              ["area_label", "Area label"],
               ["arrow", "Arrow"],
               ["draw", "Draw"],
               ["circle", "Circle"],
@@ -1268,6 +1359,50 @@ export default function TacticsBoardEditor({
         </div>
       ) : null}
 
+      {selected?.type === "area_label" &&
+      canEdit &&
+      !playback.isPlaybackActive ? (
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-3 py-2">
+          <label className="text-[11px] text-zinc-400">
+            Label
+            <input
+              type="text"
+              maxLength={48}
+              value={selected.text}
+              onChange={(event) =>
+                applyObjectsCommit(
+                  objects.map((object) =>
+                    object.id === selected.id &&
+                    object.type === "area_label"
+                      ? { ...object, text: event.target.value }
+                      : object,
+                  ),
+                )
+              }
+              className="mt-1 block min-w-48 rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-sm text-white"
+            />
+          </label>
+          <button type="button" className={ghostBtn} onClick={deleteSelected}>
+            Delete
+          </button>
+        </div>
+      ) : null}
+
+      {selected &&
+      selected.type !== "player" &&
+      selected.type !== "area_label" &&
+      canEdit &&
+      !playback.isPlaybackActive ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-3 py-2">
+          <span className="text-xs text-zinc-400">
+            Selected: {selected.type.replaceAll("_", " ")}
+          </span>
+          <button type="button" className={ghostBtn} onClick={deleteSelected}>
+            Delete
+          </button>
+        </div>
+      ) : null}
+
       <TacticsBoardCanvas
         orientation={board.fieldOrientation}
         fieldView={board.fieldView}
@@ -1282,6 +1417,15 @@ export default function TacticsBoardEditor({
         onGestureEnd={applyObjectsCommit}
         svgRef={svgRef}
       />
+      {presetLibraryOpen ? (
+        <TacticsPresetLibrary
+          team={team}
+          currentUid={currentUid}
+          displayName={displayName}
+          onClose={() => setPresetLibraryOpen(false)}
+          modal
+        />
+      ) : null}
     </div>
   );
 }

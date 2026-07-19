@@ -30,13 +30,18 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 function cloneObject(o: TacticsBoardObject): TacticsBoardObject {
-  if (o.type === "player" || o.type === "ball") {
-    return { ...o };
+  if (
+    o.type === "line" ||
+    o.type === "arrow" ||
+    o.type === "circle" ||
+    o.type === "zone"
+  ) {
+    return {
+      ...o,
+      points: o.points.map((p) => ({ ...p })),
+    };
   }
-  return {
-    ...o,
-    points: o.points.map((p) => ({ ...p })),
-  };
+  return { ...o };
 }
 
 function mapById(objects: TacticsBoardObject[]): Map<string, TacticsBoardObject> {
@@ -71,7 +76,10 @@ export function interpolateStepObjects(
     if (from && to) {
       if (
         (from.type === "player" && to.type === "player") ||
-        (from.type === "ball" && to.type === "ball")
+        (from.type === "ball" && to.type === "ball") ||
+        (from.type === "cone" && to.type === "cone") ||
+        (from.type === "mini_goal" && to.type === "mini_goal") ||
+        (from.type === "area_label" && to.type === "area_label")
       ) {
         out.push({
           ...cloneObject(to),

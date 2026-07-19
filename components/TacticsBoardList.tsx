@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import SoccerFieldSvg from "@/components/SoccerFieldSvg";
+import TacticsBoardCanvas from "@/components/TacticsBoardCanvas";
 import { tacticsBoardEditorUrl } from "@/lib/tactics-board-share";
 import {
   createTacticsBoard,
@@ -12,17 +13,10 @@ import {
   listTacticsBoards,
   relativeUpdatedLabel,
   renameTacticsBoard,
-  TACTICS_AWAY_COLOR,
-  TACTICS_HOME_COLOR,
   visibilityLabel,
   type TacticsBoard,
 } from "@/lib/tactics-boards";
 import { canCoachTeam, type Team } from "@/lib/teams";
-import {
-  aspectRatioForView,
-  normToSvg,
-  viewBoxAttr,
-} from "@/lib/tactics-field-geometry";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -33,48 +27,25 @@ const ghostBtn =
 const primaryBtn =
   "rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-40";
 
+const TacticsPresetLibrary = dynamic(
+  () => import("@/components/TacticsPresetLibrary"),
+  { ssr: false },
+);
+
 function MiniPreview({ board }: { board: TacticsBoard }) {
-  const orientation = board.fieldOrientation;
-  const fieldView = board.fieldView;
   const preview =
     board.previewObjects.length > 0 ? board.previewObjects : board.objects;
   const multiStep = board.stepCount > 1;
   return (
-    <div
-      className="relative w-full overflow-hidden rounded-lg bg-zinc-900"
-      style={{ aspectRatio: aspectRatioForView(orientation, fieldView) }}
-    >
-      <svg
-        viewBox={viewBoxAttr(orientation, fieldView)}
-        className="h-full w-full"
-        aria-hidden
-      >
-        <SoccerFieldSvg orientation={orientation} asGroup />
-        {preview.slice(0, 24).map((o) => {
-          if (o.type === "player") {
-            const p = normToSvg(o.x, o.y, orientation);
-            return (
-              <circle
-                key={o.id}
-                cx={p.x}
-                cy={p.y}
-                r={18}
-                fill={
-                  o.color ||
-                  (o.team === "home" ? TACTICS_HOME_COLOR : TACTICS_AWAY_COLOR)
-                }
-              />
-            );
-          }
-          if (o.type === "ball") {
-            const p = normToSvg(o.x, o.y, orientation);
-            return (
-              <circle key={o.id} cx={p.x} cy={p.y} r={8} fill="#f5f5f4" />
-            );
-          }
-          return null;
-        })}
-      </svg>
+    <div className="relative w-full overflow-hidden rounded-lg bg-zinc-900">
+      <TacticsBoardCanvas
+        orientation={board.fieldOrientation}
+        fieldView={board.fieldView}
+        objects={preview.slice(0, 32)}
+        tool="select"
+        readOnly
+        className="!rounded-lg !shadow-none"
+      />
       {multiStep ? (
         <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold text-white">
           ▶ {board.stepCount} steps
@@ -103,6 +74,7 @@ export default function TacticsBoardList({
   const [menuId, setMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [showPresets, setShowPresets] = useState(false);
 
   const canCoach = canCoachTeam(team, currentUid);
 
@@ -156,6 +128,14 @@ export default function TacticsBoardList({
 
   return (
     <div className="space-y-4">
+      {showPresets ? (
+        <TacticsPresetLibrary
+          team={team}
+          currentUid={currentUid}
+          displayName={displayName}
+          onClose={() => setShowPresets(false)}
+        />
+      ) : null}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-white">Tactics</p>
@@ -164,14 +144,23 @@ export default function TacticsBoardList({
             Shared with coaches on this team by default.
           </p>
         </div>
-        <button
-          type="button"
-          className={primaryBtn}
-          disabled={creating}
-          onClick={() => void handleCreate()}
-        >
-          {creating ? "Creating…" : "+ New board"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={primaryBtn}
+            disabled={creating}
+            onClick={() => void handleCreate()}
+          >
+            {creating ? "Creating…" : "New Blank Board"}
+          </button>
+          <button
+            type="button"
+            className={ghostBtn}
+            onClick={() => setShowPresets((value) => !value)}
+          >
+            Browse Presets
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -190,7 +179,14 @@ export default function TacticsBoardList({
             className={`${primaryBtn} mt-4`}
             onClick={() => void handleCreate()}
           >
-            Create board
+            New Blank Board
+          </button>
+          <button
+            type="button"
+            className={`${ghostBtn} ml-2 mt-4`}
+            onClick={() => setShowPresets(true)}
+          >
+            Browse Presets
           </button>
         </div>
       ) : null}
