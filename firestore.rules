@@ -201,6 +201,31 @@ service cloud.firestore {
                          request.resource.data.joinedUid == request.auth.uid &&
                          request.resource.data.status == 'joined';
       }
+
+      // Tactics boards — coaches only (parents/players/viewers excluded).
+      match /tactics/{boardId} {
+        allow read: if request.auth != null && isTeamCoach(teamId, request.auth.uid) && (
+          resource.data.visibility != 'private' ||
+          resource.data.createdBy == request.auth.uid ||
+          teamData(teamId).ownerId == request.auth.uid
+        );
+        allow create: if request.auth != null &&
+                         isTeamCoach(teamId, request.auth.uid) &&
+                         request.resource.data.createdBy == request.auth.uid &&
+                         request.resource.data.teamId == teamId &&
+                         request.resource.data.sport == 'soccer' &&
+                         request.resource.data.version is int;
+        allow update: if request.auth != null && isTeamCoach(teamId, request.auth.uid) && (
+          resource.data.visibility != 'private' ||
+          resource.data.createdBy == request.auth.uid ||
+          teamData(teamId).ownerId == request.auth.uid
+        );
+        allow delete: if request.auth != null && isTeamCoach(teamId, request.auth.uid) && (
+          resource.data.createdBy == request.auth.uid ||
+          teamData(teamId).ownerId == request.auth.uid ||
+          isTeamAdmin(teamId, request.auth.uid)
+        );
+      }
     }
 
     // ---- Team invites (join links) ------------------------------------
@@ -482,6 +507,20 @@ service cloud.firestore {
                                request.resource.data.gameId is string &&
                                request.resource.data.cutId is string &&
                                request.resource.data.payload is map;
+      allow delete: if request.auth != null &&
+                       resource.data.createdBy == request.auth.uid;
+    }
+
+    // Public tactics board share links (anonymous view; coaches create).
+    match /tacticsBoardShares/{shareToken} {
+      allow read: if resource.data.enabled == true;
+      allow create, update: if request.auth != null &&
+                               request.resource.data.shareToken == shareToken &&
+                               request.resource.data.teamId is string &&
+                               request.resource.data.boardId is string &&
+                               request.resource.data.payload is map &&
+                               request.resource.data.createdBy == request.auth.uid &&
+                               isTeamCoach(request.resource.data.teamId, request.auth.uid);
       allow delete: if request.auth != null &&
                        resource.data.createdBy == request.auth.uid;
     }

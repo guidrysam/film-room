@@ -16,6 +16,14 @@ export function teamSetupUrl(teamId: string): string {
   return `/team/${teamId}/setup`;
 }
 
+export function teamTacticsUrl(teamId: string): string {
+  return `/team/${teamId}/tactics`;
+}
+
+export function teamTacticsBoardUrl(teamId: string, boardId: string): string {
+  return `/team/${teamId}/tactics/${boardId}`;
+}
+
 export function gameCapUrl(opts?: {
   teamId?: string;
   gameId?: string;

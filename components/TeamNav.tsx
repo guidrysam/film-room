@@ -6,10 +6,11 @@ import {
   teamRosterUrl,
   teamSetupUrl,
   teamStatsUrl,
+  teamTacticsUrl,
 } from "@/lib/team-routes";
 import { canManageTeam, type Team } from "@/lib/teams";
 
-export type TeamNavTab = "roster" | "setup" | "games" | "stats";
+export type TeamNavTab = "roster" | "setup" | "games" | "stats" | "tactics";
 
 const tabClass = (active: boolean) =>
   `rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
@@ -33,7 +34,7 @@ export type TeamNavProps = {
 
 /**
  * Team hub navigation organized around the team's lifecycle:
- * Roster, Games, Season, plus a Settings gear for coaches.
+ * Roster, Games, Tactics, Season, plus a Settings gear for admins.
  */
 export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
   const showSettings = canManageTeam(team, currentUid);
@@ -67,6 +68,12 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
         </Link>
         <Link href={teamGamesUrl(team.id)} className={tabClass(active === "games")}>
           Games
+        </Link>
+        <Link
+          href={teamTacticsUrl(team.id)}
+          className={tabClass(active === "tactics")}
+        >
+          Tactics
         </Link>
         <Link href={teamStatsUrl(team.id)} className={tabClass(active === "stats")}>
           Season
