@@ -19,13 +19,21 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
+  writeBatch,
   type CollectionReference,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import { formatFirestoreWriteError } from "@/lib/firestore-errors";
+import {
+  DEFAULT_PLAYBACK_SETTINGS,
+  parsePlaybackSettings,
+  type PlaybackSettings,
+} from "@/lib/tactics-animation";
+import type { TacticsFieldView } from "@/lib/tactics-field-geometry";
 import { canCoachTeam, getTeam, type Team } from "@/lib/teams";
 
 export type TacticsFieldOrientation = "horizontal" | "vertical";
+export type { TacticsFieldView };
 
 export type TacticsVisibility =
   | "team_coaches"
@@ -45,6 +53,8 @@ export type TacticsPlayerObject = {
   /** Jersey number / short label shown inside the token. */
   label: string;
   color?: string;
+  /** When false, treated as absent for render/animation. Defaults to true. */
+  visible?: boolean;
 };
 
 export type TacticsBallObject = {
@@ -52,6 +62,7 @@ export type TacticsBallObject = {
   type: "ball";
   x: number;
   y: number;
+  visible?: boolean;
 };
 
 export type TacticsDrawingKind = "line" | "arrow" | "circle" | "zone";
@@ -64,7 +75,10 @@ export type TacticsDrawingObject = {
   color: string;
   /** When true, render as freehand polyline rather than a single segment. */
   freehand?: boolean;
+  visible?: boolean;
 };
+
+export type TacticsPlaybackSettings = PlaybackSettings;
 
 export type TacticsBoardObject =
   | TacticsPlayerObject
@@ -83,8 +97,19 @@ export type TacticsBoard = {
   updatedByName?: string;
   sport: "soccer";
   fieldOrientation: TacticsFieldOrientation;
+  /** Full pitch, or zoomed to attacking / defending half (home attacks left→right). */
+  fieldView: TacticsFieldView;
   visibility: TacticsVisibility;
+  /**
+   * Legacy single-frame objects. Retained for migration; prefer steps.
+   * Library previews prefer `previewObjects`.
+   */
   objects: TacticsBoardObject[];
+  /** Denormalized first-step objects for library cards. */
+  previewObjects: TacticsBoardObject[];
+  activeStepId?: string;
+  stepCount: number;
+  playbackSettings: TacticsPlaybackSettings;
   version: number;
   shareToken?: string;
   sharePermission?: TacticsSharePermission;
@@ -163,12 +188,19 @@ export function parseTacticsBoardObject(raw: unknown): TacticsBoardObject | null
       y: clamp01(o.y),
       label,
       ...(color ? { color } : {}),
+      ...(o.visible === false ? { visible: false } : {}),
     };
   }
 
   if (type === "ball") {
     if (typeof o.x !== "number" || typeof o.y !== "number") return null;
-    return { id, type: "ball", x: clamp01(o.x), y: clamp01(o.y) };
+    return {
+      id,
+      type: "ball",
+      x: clamp01(o.x),
+      y: clamp01(o.y),
+      ...(o.visible === false ? { visible: false } : {}),
+    };
   }
 
   if (
@@ -194,6 +226,7 @@ export function parseTacticsBoardObject(raw: unknown): TacticsBoardObject | null
       points,
       color,
       ...(o.freehand === true ? { freehand: true } : {}),
+      ...(o.visible === false ? { visible: false } : {}),
     };
   }
 
@@ -222,6 +255,15 @@ export function parseTacticsBoard(
     if (parsed) objects.push(parsed);
   }
 
+  const previewRaw = Array.isArray(raw.previewObjects)
+    ? raw.previewObjects
+    : objectsRaw;
+  const previewObjects: TacticsBoardObject[] = [];
+  for (const row of previewRaw) {
+    const parsed = parseTacticsBoardObject(row);
+    if (parsed) previewObjects.push(parsed);
+  }
+
   const visibilityRaw = raw.visibility;
   const visibility: TacticsVisibility =
     visibilityRaw === "private" ||
@@ -233,6 +275,11 @@ export function parseTacticsBoard(
   const orientation =
     raw.fieldOrientation === "vertical" ? "vertical" : "horizontal";
 
+  const fieldView: TacticsFieldView =
+    raw.fieldView === "offensive" || raw.fieldView === "defensive"
+      ? raw.fieldView
+      : "full";
+
   const version =
     typeof raw.version === "number" && Number.isFinite(raw.version)
       ? Math.max(1, Math.floor(raw.version))
@@ -242,6 +289,13 @@ export function parseTacticsBoard(
     raw.sharePermission === "edit" || raw.sharePermission === "view"
       ? raw.sharePermission
       : undefined;
+
+  const stepCount =
+    typeof raw.stepCount === "number" && Number.isFinite(raw.stepCount)
+      ? Math.max(0, Math.floor(raw.stepCount))
+      : 0;
+  const activeStepId = trimOrUndef(raw.activeStepId as string);
+  const playbackSettings = parsePlaybackSettings(raw.playbackSettings);
 
   return {
     id,
@@ -262,8 +316,13 @@ export function parseTacticsBoard(
       : {}),
     sport: "soccer",
     fieldOrientation: orientation,
+    fieldView,
     visibility,
     objects,
+    previewObjects,
+    ...(activeStepId ? { activeStepId } : {}),
+    stepCount,
+    playbackSettings,
     version,
     ...(trimOrUndef(raw.shareToken as string)
       ? { shareToken: (raw.shareToken as string).trim() }
@@ -354,6 +413,7 @@ export async function getTacticsBoard(
 export type CreateTacticsBoardInput = {
   title?: string;
   fieldOrientation?: TacticsFieldOrientation;
+  fieldView?: TacticsFieldView;
   displayName?: string | null;
 };
 
@@ -367,9 +427,11 @@ export async function createTacticsBoard(
     throw new Error("Only coaches can create tactics boards.");
   }
   const id = newId();
+  const stepId = `s_${newId()}`;
   const title = input.title?.trim() || "Untitled board";
   const name = trimOrUndef(input.displayName ?? undefined);
-  const payload = {
+  const batch = writeBatch(firestore);
+  batch.set(tacticsDoc(teamId, id), {
     teamId,
     title,
     createdAt: serverTimestamp(),
@@ -379,12 +441,28 @@ export async function createTacticsBoard(
     ...(name ? { createdByName: name, updatedByName: name } : {}),
     sport: "soccer" as const,
     fieldOrientation: input.fieldOrientation ?? "horizontal",
+    fieldView: input.fieldView ?? "full",
     visibility: "team_coaches" as const,
     objects: [] as TacticsBoardObject[],
+    previewObjects: [] as TacticsBoardObject[],
+    activeStepId: stepId,
+    stepCount: 1,
+    playbackSettings: { ...DEFAULT_PLAYBACK_SETTINGS },
     version: 1,
-  };
+  });
+  batch.set(doc(firestore, "teams", teamId, "tactics", id, "steps", stepId), {
+    boardId: id,
+    order: 0,
+    title: "Step 1",
+    objects: [],
+    version: 1,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: uid,
+    updatedBy: uid,
+  });
   try {
-    await setDoc(tacticsDoc(teamId, id), payload);
+    await batch.commit();
   } catch (err) {
     throw formatFirestoreWriteError(err, "Could not create tactics board.");
   }
@@ -396,8 +474,14 @@ export async function createTacticsBoard(
 export type UpdateTacticsBoardPatch = {
   title?: string;
   fieldOrientation?: TacticsFieldOrientation;
+  fieldView?: TacticsFieldView;
   visibility?: TacticsVisibility;
+  /** @deprecated Prefer step updates. Still accepted for legacy/migration. */
   objects?: TacticsBoardObject[];
+  previewObjects?: TacticsBoardObject[];
+  activeStepId?: string;
+  stepCount?: number;
+  playbackSettings?: Partial<TacticsPlaybackSettings>;
   /** Expected version for optimistic concurrency. */
   expectedVersion: number;
   displayName?: string | null;
@@ -451,6 +535,13 @@ export async function updateTacticsBoard(
     update.fieldOrientation = patch.fieldOrientation;
   }
   if (
+    patch.fieldView === "full" ||
+    patch.fieldView === "offensive" ||
+    patch.fieldView === "defensive"
+  ) {
+    update.fieldView = patch.fieldView;
+  }
+  if (
     patch.visibility === "team_coaches" ||
     patch.visibility === "private" ||
     patch.visibility === "shared_link"
@@ -459,6 +550,21 @@ export async function updateTacticsBoard(
   }
   if (Array.isArray(patch.objects)) {
     update.objects = patch.objects;
+  }
+  if (Array.isArray(patch.previewObjects)) {
+    update.previewObjects = patch.previewObjects;
+  }
+  if (typeof patch.activeStepId === "string" && patch.activeStepId.trim()) {
+    update.activeStepId = patch.activeStepId.trim();
+  }
+  if (typeof patch.stepCount === "number" && Number.isFinite(patch.stepCount)) {
+    update.stepCount = Math.max(0, Math.floor(patch.stepCount));
+  }
+  if (patch.playbackSettings) {
+    update.playbackSettings = {
+      ...current.playbackSettings,
+      ...patch.playbackSettings,
+    };
   }
   if (patch.clearShare) {
     update.shareToken = deleteField();
@@ -534,6 +640,8 @@ export async function deleteTacticsBoard(
       /* best-effort */
     }
   }
+  const { deleteAllTacticsSteps } = await import("@/lib/tactics-steps");
+  await deleteAllTacticsSteps(teamId, boardId);
   await deleteDoc(tacticsDoc(teamId, boardId));
 }
 
@@ -551,12 +659,17 @@ export async function duplicateTacticsBoard(
   if (!source || !canViewTacticsBoard(source, team, uid)) {
     throw new Error("Board not found.");
   }
+  // Ensure source steps exist before copying.
+  const { ensureTacticsBoardMigrated } = await import("@/lib/tactics-migration");
+  await ensureTacticsBoardMigrated(teamId, boardId, uid);
+
   const id = newId();
+  const placeholderStepId = `s_${newId()}`;
   const name = trimOrUndef(opts?.displayName ?? undefined);
-  const title =
-    opts?.title?.trim() ||
-    `${source.title} — copy`;
-  const payload = {
+  const title = opts?.title?.trim() || `${source.title} — copy`;
+
+  // Create parent board first so step security rules can resolve it.
+  await setDoc(tacticsDoc(teamId, id), {
     teamId,
     title,
     createdAt: serverTimestamp(),
@@ -566,13 +679,28 @@ export async function duplicateTacticsBoard(
     ...(name ? { createdByName: name, updatedByName: name } : {}),
     sport: "soccer" as const,
     fieldOrientation: source.fieldOrientation,
+    fieldView: source.fieldView,
     visibility: "team_coaches" as const,
-    objects: source.objects,
+    objects: [] as TacticsBoardObject[],
+    previewObjects: source.previewObjects.length
+      ? source.previewObjects
+      : source.objects.slice(0, 32),
+    activeStepId: placeholderStepId,
+    stepCount: 1,
+    playbackSettings: { ...source.playbackSettings },
     version: 1,
     duplicatedFromBoardId: source.id,
     duplicatedFromTitle: source.title,
-  };
-  await setDoc(tacticsDoc(teamId, id), payload);
+  });
+
+  const { copyTacticsStepsToBoard } = await import("@/lib/tactics-steps");
+  const copied = await copyTacticsStepsToBoard(teamId, boardId, id, uid);
+  await updateDoc(tacticsDoc(teamId, id), {
+    activeStepId: copied.activeStepId,
+    stepCount: copied.stepCount,
+    previewObjects: copied.previewObjects,
+  });
+
   const created = await getTacticsBoard(teamId, id);
   if (!created) throw new Error("Duplicate created but could not be loaded.");
   return created;
@@ -581,6 +709,7 @@ export async function duplicateTacticsBoard(
 /** Delete all tactics boards for a team (used by deleteTeam cleanup). */
 export async function deleteAllTacticsBoards(teamId: string): Promise<number> {
   const snap = await getDocs(tacticsCol(teamId));
+  const { deleteAllTacticsSteps } = await import("@/lib/tactics-steps");
   let n = 0;
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
@@ -593,6 +722,7 @@ export async function deleteAllTacticsBoards(teamId: string): Promise<number> {
         /* ignore */
       }
     }
+    await deleteAllTacticsSteps(teamId, d.id);
     await deleteDoc(d.ref);
     n += 1;
   }

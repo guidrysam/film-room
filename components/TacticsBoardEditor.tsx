@@ -1,16 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import TacticsBoardCanvas, {
   type TacticsTool,
 } from "@/components/TacticsBoardCanvas";
+import TacticsPlaybackControls from "@/components/TacticsPlaybackControls";
+import TacticsStepNotes from "@/components/TacticsStepNotes";
+import TacticsStepTimeline from "@/components/TacticsStepTimeline";
+import { useTacticsPlayback } from "@/hooks/useTacticsPlayback";
+import {
+  PLAYBACK_SPEED_PRESETS,
+  type PlaybackSpeedPreset,
+} from "@/lib/tactics-animation";
 import {
   ensureTacticsBoardSharing,
   revokeTacticsBoardShare,
@@ -31,11 +40,13 @@ import {
   visibilityLabel,
   type TacticsBoard,
   type TacticsBoardObject,
+  type TacticsFieldView,
   type TacticsVisibility,
 } from "@/lib/tactics-boards";
 import {
   downloadTacticsPng,
   exportTacticsPdfViaPrint,
+  exportTacticsStepsStoryboard,
   shareTacticsImage,
 } from "@/lib/tactics-export";
 import {
@@ -43,6 +54,16 @@ import {
   setPlayersOnSide,
   TACTICS_PLAYER_COUNT_OPTIONS,
 } from "@/lib/tactics-formations";
+import { ensureTacticsBoardMigrated } from "@/lib/tactics-migration";
+import {
+  addTacticsStepAfter,
+  deleteTacticsStep,
+  duplicateTacticsStep,
+  moveTacticsStep,
+  renameTacticsStep,
+  updateTacticsStep,
+  type TacticsStep,
+} from "@/lib/tactics-steps";
 import type { Team } from "@/lib/teams";
 import { teamTacticsUrl } from "@/lib/team-routes";
 
@@ -70,6 +91,12 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 
 const MAX_HISTORY = 40;
 
+function speedFromMs(ms: number): PlaybackSpeedPreset {
+  if (ms >= 1200) return "slow";
+  if (ms <= 650) return "fast";
+  return "normal";
+}
+
 export default function TacticsBoardEditor({
   team,
   board: initialBoard,
@@ -77,8 +104,17 @@ export default function TacticsBoardEditor({
   displayName,
 }: TacticsBoardEditorProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const startInPlay = searchParams.get("play") === "1";
+
   const [board, setBoard] = useState(initialBoard);
-  const [objects, setObjects] = useState<TacticsBoardObject[]>(initialBoard.objects);
+  const [steps, setSteps] = useState<TacticsStep[]>([]);
+  const [activeStepId, setActiveStepId] = useState<string | null>(
+    initialBoard.activeStepId ?? null,
+  );
+  const [objects, setObjects] = useState<TacticsBoardObject[]>([]);
+  const [stepTitle, setStepTitle] = useState("");
+  const [stepNotes, setStepNotes] = useState("");
   const [title, setTitle] = useState(initialBoard.title);
   const [tool, setTool] = useState<TacticsTool>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -89,17 +125,94 @@ export default function TacticsBoardEditor({
   const [shareBusy, setShareBusy] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [conflictRemote, setConflictRemote] = useState<TacticsBoard | null>(null);
+  const [stepConflict, setStepConflict] = useState<TacticsStep | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [loadingSteps, setLoadingSteps] = useState(true);
+  const [showPrevPositions, setShowPrevPositions] = useState(false);
+  const [loop, setLoop] = useState(initialBoard.playbackSettings.loop);
+  const [speedPreset, setSpeedPreset] = useState<PlaybackSpeedPreset>(
+    speedFromMs(initialBoard.playbackSettings.transitionDurationMs),
+  );
 
-  const historyRef = useRef<TacticsBoardObject[][]>([initialBoard.objects]);
+  const historyRef = useRef<TacticsBoardObject[][]>([[]]);
   const historyIndexRef = useRef(0);
-  const versionRef = useRef(initialBoard.version);
+  const boardVersionRef = useRef(initialBoard.version);
+  const stepVersionRef = useRef(1);
+  const boardPendingRef = useRef(false);
+  const stepPendingRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
-  const pendingRef = useRef(false);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const objectsRef = useRef<TacticsBoardObject[]>([]);
+  const activeStepIdRef = useRef<string | null>(activeStepId);
 
   const canEdit = canEditTacticsBoard(board, team, currentUid);
+
+  const selectedIndex = useMemo(() => {
+    const idx = steps.findIndex((s) => s.id === activeStepId);
+    return idx >= 0 ? idx : 0;
+  }, [steps, activeStepId]);
+
+  const activeStep = steps[selectedIndex] ?? null;
+
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
+  useEffect(() => {
+    activeStepIdRef.current = activeStepId;
+  }, [activeStepId]);
+
+  const loadStepIntoEditor = useCallback((step: TacticsStep) => {
+    setActiveStepId(step.id);
+    setObjects(step.objects);
+    objectsRef.current = step.objects;
+    setStepTitle(step.title);
+    setStepNotes(step.notes ?? "");
+    stepVersionRef.current = step.version;
+    historyRef.current = [step.objects];
+    historyIndexRef.current = 0;
+    stepPendingRef.current = false;
+    setSelectedId(null);
+  }, []);
+
+  // Migrate + load steps on mount.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setLoadingSteps(true);
+      try {
+        const migrated = await ensureTacticsBoardMigrated(
+          team.id,
+          board.id,
+          currentUid,
+        );
+        if (cancelled) return;
+        setBoard(migrated.board);
+        boardVersionRef.current = migrated.board.version;
+        setSteps(migrated.steps);
+        const initial =
+          migrated.steps.find((s) => s.id === migrated.board.activeStepId) ??
+          migrated.steps[0];
+        if (initial) loadStepIntoEditor(initial);
+        setLoop(migrated.board.playbackSettings.loop);
+        setSpeedPreset(
+          speedFromMs(migrated.board.playbackSettings.transitionDurationMs),
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setSaveError(
+            err instanceof Error ? err.message : "Could not load steps.",
+          );
+        }
+      } finally {
+        if (!cancelled) setLoadingSteps(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once per board
+  }, [team.id, board.id, currentUid]);
 
   const pushHistory = useCallback((next: TacticsBoardObject[]) => {
     const idx = historyIndexRef.current;
@@ -110,130 +223,341 @@ export default function TacticsBoardEditor({
     historyIndexRef.current = truncated.length - 1;
   }, []);
 
-  const applyObjects = useCallback(
-    (next: TacticsBoardObject[], recordHistory: boolean) => {
+  const markStepDirty = useCallback(() => {
+    stepPendingRef.current = true;
+    setDirty(true);
+    setSaveState("idle");
+  }, []);
+
+  const applyObjectsLive = useCallback((next: TacticsBoardObject[]) => {
+    setObjects(next);
+    objectsRef.current = next;
+    stepPendingRef.current = true;
+    setDirty(true);
+    setSaveState("idle");
+  }, []);
+
+  const applyObjectsCommit = useCallback(
+    (next: TacticsBoardObject[]) => {
       setObjects(next);
-      if (recordHistory) pushHistory(next);
-      pendingRef.current = true;
-      setDirty(true);
-      setSaveState("idle");
+      objectsRef.current = next;
+      pushHistory(next);
+      markStepDirty();
     },
-    [pushHistory],
+    [markStepDirty, pushHistory],
   );
 
-  const persist = useCallback(async () => {
-    if (!canEdit || !pendingRef.current) return;
-    pendingRef.current = false;
+  const persistStep = useCallback(async (): Promise<boolean> => {
+    if (!canEdit || !activeStepIdRef.current || !stepPendingRef.current) {
+      return true;
+    }
+    stepPendingRef.current = false;
     setSaveState("saving");
     setSaveError(null);
     try {
+      const result = await updateTacticsStep(
+        team.id,
+        board.id,
+        activeStepIdRef.current,
+        currentUid,
+        {
+          objects: objectsRef.current,
+          title: stepTitle,
+          notes: stepNotes.trim() || null,
+          expectedVersion: stepVersionRef.current,
+          displayName,
+        },
+      );
+      if (!result.ok) {
+        setStepConflict(result.conflict.remote);
+        setSaveState("error");
+        stepPendingRef.current = true;
+        return false;
+      }
+      stepVersionRef.current = result.step.version;
+      setSteps((prev) =>
+        prev.map((s) => (s.id === result.step.id ? result.step : s)),
+      );
+      setDirty(false);
+      setSaveState("saved");
+      const freshBoard = await getTacticsBoard(team.id, board.id);
+      if (freshBoard) {
+        setBoard(freshBoard);
+        boardVersionRef.current = freshBoard.version;
+        void syncTacticsBoardShareSnapshot(freshBoard, currentUid);
+      }
+      return true;
+    } catch (err) {
+      stepPendingRef.current = true;
+      setSaveState("error");
+      setSaveError(err instanceof Error ? err.message : "Could not save step.");
+      return false;
+    }
+  }, [
+    board.id,
+    canEdit,
+    currentUid,
+    displayName,
+    stepNotes,
+    stepTitle,
+    team.id,
+  ]);
+
+  const persistBoardMeta = useCallback(async (): Promise<boolean> => {
+    if (!canEdit || !boardPendingRef.current) return true;
+    boardPendingRef.current = false;
+    setSaveState("saving");
+    try {
       const result = await updateTacticsBoard(team.id, board.id, currentUid, {
         title,
-        objects,
         fieldOrientation: board.fieldOrientation,
-        expectedVersion: versionRef.current,
+        fieldView: board.fieldView,
+        activeStepId: activeStepIdRef.current ?? undefined,
+        playbackSettings: {
+          transitionDurationMs: PLAYBACK_SPEED_PRESETS[speedPreset],
+          holdDurationMs: board.playbackSettings.holdDurationMs,
+          loop,
+        },
+        expectedVersion: boardVersionRef.current,
         displayName,
       });
       if (!result.ok) {
         setConflictRemote(result.conflict.remote);
         setSaveState("error");
-        pendingRef.current = true;
-        return;
+        boardPendingRef.current = true;
+        return false;
       }
-      versionRef.current = result.board.version;
+      boardVersionRef.current = result.board.version;
       setBoard(result.board);
-      setDirty(false);
       setSaveState("saved");
-      void syncTacticsBoardShareSnapshot(result.board);
+      void syncTacticsBoardShareSnapshot(result.board, currentUid);
+      return true;
     } catch (err) {
-      pendingRef.current = true;
+      boardPendingRef.current = true;
       setSaveState("error");
       setSaveError(
         err instanceof Error ? err.message : "Could not save board.",
       );
+      return false;
     }
   }, [
-    canEdit,
-    team.id,
-    board.id,
     board.fieldOrientation,
+    board.fieldView,
+    board.id,
+    board.playbackSettings.holdDurationMs,
+    canEdit,
     currentUid,
-    title,
-    objects,
     displayName,
+    loop,
+    speedPreset,
+    team.id,
+    title,
   ]);
 
+  const persistAll = useCallback(async () => {
+    const stepOk = await persistStep();
+    if (!stepOk) return false;
+    return persistBoardMeta();
+  }, [persistBoardMeta, persistStep]);
+
   useEffect(() => {
-    if (!pendingRef.current) return;
+    if (!stepPendingRef.current && !boardPendingRef.current) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      void persist();
+      void persistAll();
     }, 600);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [objects, title, board.fieldOrientation, persist]);
+  }, [
+    objects,
+    stepTitle,
+    stepNotes,
+    title,
+    board.fieldOrientation,
+    board.fieldView,
+    loop,
+    speedPreset,
+    persistAll,
+  ]);
+
+  const selectStep = useCallback(
+    async (stepId: string) => {
+      if (stepId === activeStepIdRef.current) return;
+      await persistStep();
+      const step = steps.find((s) => s.id === stepId);
+      if (!step) return;
+      loadStepIntoEditor(step);
+      boardPendingRef.current = true;
+      void updateTacticsBoard(team.id, board.id, currentUid, {
+        activeStepId: stepId,
+        expectedVersion: boardVersionRef.current,
+        displayName,
+      }).then((r) => {
+        if (r.ok) {
+          boardVersionRef.current = r.board.version;
+          setBoard(r.board);
+          boardPendingRef.current = false;
+        }
+      });
+    },
+    [
+      board.id,
+      currentUid,
+      displayName,
+      loadStepIntoEditor,
+      persistStep,
+      steps,
+      team.id,
+    ],
+  );
+
+  const onDisplayIndexChange = useCallback(
+    (index: number) => {
+      const step = steps[index];
+      if (!step) return;
+      if (step.id === activeStepIdRef.current) return;
+      loadStepIntoEditor(step);
+    },
+    [loadStepIntoEditor, steps],
+  );
+
+  const playbackSettings = useMemo(
+    () => ({
+      transitionDurationMs: PLAYBACK_SPEED_PRESETS[speedPreset],
+      holdDurationMs: board.playbackSettings.holdDurationMs,
+      loop,
+    }),
+    [board.playbackSettings.holdDurationMs, loop, speedPreset],
+  );
+
+  const playback = useTacticsPlayback({
+    steps,
+    selectedIndex,
+    settings: playbackSettings,
+    onDisplayIndexChange,
+  });
 
   useEffect(() => {
-    const onLeave = () => {
-      if (pendingRef.current) void persist();
+    if (startInPlay && !loadingSteps && steps.length > 0) {
+      playback.play();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on initial load
+  }, [loadingSteps, startInPlay, steps.length]);
+
+  // Keyboard controls
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        playback.togglePlay();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        playback.previous();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        playback.next();
+      } else if (e.key === "Escape") {
+        if (playback.isPlaybackActive) {
+          e.preventDefault();
+          playback.stop();
+        } else {
+          setSelectedId(null);
+        }
+      }
     };
-    window.addEventListener("beforeunload", onLeave);
-    return () => window.removeEventListener("beforeunload", onLeave);
-  }, [persist]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [playback]);
+
+  const editingLocked = playback.isPlaybackActive || !canEdit;
+
+  const handleAddStep = async () => {
+    if (!canEdit || !activeStepIdRef.current) return;
+    await persistStep();
+    try {
+      const { steps: next, created } = await addTacticsStepAfter(
+        team.id,
+        board.id,
+        currentUid,
+        activeStepIdRef.current,
+      );
+      setSteps(next);
+      loadStepIntoEditor(created);
+      const fresh = await getTacticsBoard(team.id, board.id);
+      if (fresh) {
+        setBoard(fresh);
+        boardVersionRef.current = fresh.version;
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Could not add step.");
+    }
+  };
 
   const handleUndo = () => {
-    if (historyIndexRef.current <= 0) return;
+    if (editingLocked || historyIndexRef.current <= 0) return;
     historyIndexRef.current -= 1;
     const prev = historyRef.current[historyIndexRef.current]!;
     setObjects(prev);
-    pendingRef.current = true;
-    setDirty(true);
+    objectsRef.current = prev;
+    markStepDirty();
   };
 
   const handleRedo = () => {
-    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    if (
+      editingLocked ||
+      historyIndexRef.current >= historyRef.current.length - 1
+    ) {
+      return;
+    }
     historyIndexRef.current += 1;
     const next = historyRef.current[historyIndexRef.current]!;
     setObjects(next);
-    pendingRef.current = true;
-    setDirty(true);
+    objectsRef.current = next;
+    markStepDirty();
   };
 
   const handleClear = () => {
-    if (!canEdit) return;
-    if (!window.confirm("Clear all players and drawings on this board?")) return;
-    applyObjects([], true);
+    if (editingLocked) return;
+    if (!window.confirm("Clear all players and drawings on this step?")) return;
+    applyObjectsCommit([]);
     setSelectedId(null);
   };
 
   const selected = objects.find((o) => o.id === selectedId) ?? null;
 
-  const updateSelectedPlayer = (patch: {
-    label?: string;
-    color?: string;
-  }) => {
-    if (!selected || selected.type !== "player") return;
-    const next = objects.map((o) =>
-      o.id === selected.id && o.type === "player" ? { ...o, ...patch } : o,
+  const updateSelectedPlayer = (patch: { label?: string; color?: string }) => {
+    if (!selected || selected.type !== "player" || editingLocked) return;
+    applyObjectsCommit(
+      objects.map((o) =>
+        o.id === selected.id && o.type === "player" ? { ...o, ...patch } : o,
+      ),
     );
-    applyObjects(next, true);
   };
 
   const deleteSelected = () => {
-    if (!selectedId) return;
-    applyObjects(
-      objects.filter((o) => o.id !== selectedId),
-      true,
-    );
+    if (!selectedId || editingLocked) return;
+    applyObjectsCommit(objects.filter((o) => o.id !== selectedId));
     setSelectedId(null);
   };
 
-  const handleShareMode = async (mode: TacticsVisibility | "link_view" | "link_edit") => {
+  const handleShareMode = async (
+    mode: TacticsVisibility | "link_view" | "link_edit",
+  ) => {
     if (!canEdit) return;
     setShareBusy(true);
     try {
-      await persist();
+      await persistAll();
       if (mode === "private" || mode === "team_coaches") {
         if (board.shareToken) {
           await revokeTacticsBoardShare(team.id, board.id, currentUid);
@@ -246,14 +570,14 @@ export default function TacticsBoardEditor({
               displayName,
             });
             if (r.ok) {
-              versionRef.current = r.board.version;
+              boardVersionRef.current = r.board.version;
               setBoard(r.board);
             }
           }
         }
         const reloaded = await getTacticsBoard(team.id, board.id);
         if (reloaded) {
-          versionRef.current = reloaded.version;
+          boardVersionRef.current = reloaded.version;
           setBoard(reloaded);
         }
         return;
@@ -267,7 +591,7 @@ export default function TacticsBoardEditor({
       );
       const reloaded = await getTacticsBoard(team.id, board.id);
       if (reloaded) {
-        versionRef.current = reloaded.version;
+        boardVersionRef.current = reloaded.version;
         setBoard(reloaded);
       }
       const url = `${window.location.origin}${tacticsSharedUrl(shareToken)}`;
@@ -292,75 +616,20 @@ export default function TacticsBoardEditor({
     window.setTimeout(() => setShareCopied(false), 2000);
   };
 
-  const handleDuplicate = async () => {
-    try {
-      const copy = await duplicateTacticsBoard(team.id, board.id, currentUid, {
-        displayName,
-      });
-      router.push(tacticsBoardEditorUrl(team.id, copy.id));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Could not duplicate.");
-    }
-  };
+  const ghostObjects =
+    showPrevPositions && selectedIndex > 0
+      ? (steps[selectedIndex - 1]?.objects ?? [])
+      : [];
 
-  const handleDelete = async () => {
-    if (!window.confirm(`Delete “${board.title}”? This cannot be undone.`)) {
-      return;
-    }
-    try {
-      await deleteTacticsBoard(team.id, board.id, currentUid);
-      router.push(teamTacticsUrl(team.id));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Could not delete.");
-    }
-  };
+  const canvasObjects = playback.isPlaybackActive
+    ? playback.renderObjects
+    : objects;
 
-  const loadRemoteVersion = () => {
-    if (!conflictRemote) return;
-    setBoard(conflictRemote);
-    setObjects(conflictRemote.objects);
-    setTitle(conflictRemote.title);
-    versionRef.current = conflictRemote.version;
-    historyRef.current = [conflictRemote.objects];
-    historyIndexRef.current = 0;
-    pendingRef.current = false;
-    setConflictRemote(null);
-    setSaveState("saved");
-    setDirty(false);
-  };
-
-  const saveMineAsCopy = async () => {
-    try {
-      const copy = await duplicateTacticsBoard(team.id, board.id, currentUid, {
-        title: `${title} — my version`,
-        displayName,
-      });
-      const r = await updateTacticsBoard(team.id, copy.id, currentUid, {
-        objects,
-        title: `${title} — my version`,
-        expectedVersion: copy.version,
-        displayName,
-      });
-      if (r.ok) {
-        router.push(tacticsBoardEditorUrl(team.id, r.board.id));
-      } else {
-        router.push(tacticsBoardEditorUrl(team.id, copy.id));
-      }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Could not save a copy.");
-    }
-  };
-
-  const toggleOrientation = () => {
-    if (!canEdit) return;
-    setBoard((b) => ({
-      ...b,
-      fieldOrientation:
-        b.fieldOrientation === "horizontal" ? "vertical" : "horizontal",
-    }));
-    pendingRef.current = true;
-    setDirty(true);
-  };
+  if (loadingSteps) {
+    return (
+      <p className="text-sm text-zinc-400">Loading steps…</p>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -375,14 +644,14 @@ export default function TacticsBoardEditor({
           <input
             type="text"
             value={title}
-            disabled={!canEdit}
+            disabled={!canEdit || playback.isPlaybackActive}
             onChange={(e) => {
               setTitle(e.target.value);
-              pendingRef.current = true;
+              boardPendingRef.current = true;
               setDirty(true);
               setSaveState("idle");
             }}
-            onBlur={() => void persist()}
+            onBlur={() => void persistBoardMeta()}
             className="mt-1 w-full max-w-md rounded-lg border border-transparent bg-transparent px-0 py-1 text-lg font-semibold text-white outline-none focus:border-white/15 focus:bg-white/[0.04] focus:px-2 disabled:opacity-70"
             aria-label="Board title"
           />
@@ -396,6 +665,7 @@ export default function TacticsBoardEditor({
             {relativeUpdatedLabel(board.updatedAt)}
             {" · "}
             {visibilityLabel(board.visibility)}
+            {steps.length > 0 ? ` · ${steps.length} steps` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -428,13 +698,24 @@ export default function TacticsBoardEditor({
                   More
                 </button>
                 {moreOpen ? (
-                  <div className="absolute right-0 z-20 mt-1 w-48 rounded-xl border border-white/10 bg-zinc-950 p-1.5 shadow-xl">
+                  <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-white/10 bg-zinc-950 p-1.5 shadow-xl">
                     <button
                       type="button"
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
                       onClick={() => {
                         setMoreOpen(false);
-                        void handleDuplicate();
+                        void duplicateTacticsBoard(team.id, board.id, currentUid, {
+                          displayName,
+                        }).then(
+                          (copy) =>
+                            router.push(tacticsBoardEditorUrl(team.id, copy.id)),
+                          (err) =>
+                            alert(
+                              err instanceof Error
+                                ? err.message
+                                : "Could not duplicate.",
+                            ),
+                        );
                       }}
                     >
                       Duplicate board
@@ -444,7 +725,15 @@ export default function TacticsBoardEditor({
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
                       onClick={() => {
                         setMoreOpen(false);
-                        toggleOrientation();
+                        setBoard((b) => ({
+                          ...b,
+                          fieldOrientation:
+                            b.fieldOrientation === "horizontal"
+                              ? "vertical"
+                              : "horizontal",
+                        }));
+                        boardPendingRef.current = true;
+                        setDirty(true);
                       }}
                     >
                       Flip{" "}
@@ -457,7 +746,10 @@ export default function TacticsBoardEditor({
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
                       onClick={() => {
                         setMoreOpen(false);
-                        void downloadTacticsPng(svgRef, title).then(
+                        void downloadTacticsPng(
+                          svgRef,
+                          `${title}-step-${selectedIndex + 1}`,
+                        ).then(
                           () => setExportMsg("PNG downloaded."),
                           (err) =>
                             alert(
@@ -468,7 +760,7 @@ export default function TacticsBoardEditor({
                         );
                       }}
                     >
-                      Export PNG
+                      Export PNG (this step)
                     </button>
                     <button
                       type="button"
@@ -485,7 +777,35 @@ export default function TacticsBoardEditor({
                         );
                       }}
                     >
-                      Export PDF
+                      Export PDF (this step)
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full rounded-lg px-3 py-2 text-left text-xs text-zinc-200 hover:bg-white/[0.06]"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        void exportTacticsStepsStoryboard(
+                          steps.map((s, i) => ({
+                            title: s.title || `Step ${i + 1}`,
+                            objects: s.objects,
+                          })),
+                          {
+                            boardTitle: title,
+                            orientation: board.fieldOrientation,
+                            fieldView: board.fieldView,
+                          },
+                        ).then(
+                          () => setExportMsg("Storyboard opened for print/PDF."),
+                          (err) =>
+                            alert(
+                              err instanceof Error
+                                ? err.message
+                                : "Export failed.",
+                            ),
+                        );
+                      }}
+                    >
+                      Export all steps
                     </button>
                     <button
                       type="button"
@@ -496,7 +816,7 @@ export default function TacticsBoardEditor({
                           .then((mode) =>
                             setExportMsg(
                               mode === "shared"
-                                ? "Shared."
+                                ? "Image shared."
                                 : "Image downloaded.",
                             ),
                           )
@@ -522,7 +842,22 @@ export default function TacticsBoardEditor({
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs text-rose-300 hover:bg-rose-500/10"
                       onClick={() => {
                         setMoreOpen(false);
-                        void handleDelete();
+                        if (
+                          !window.confirm(
+                            `Delete “${board.title}”? This cannot be undone.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        void deleteTacticsBoard(team.id, board.id, currentUid)
+                          .then(() => router.push(teamTacticsUrl(team.id)))
+                          .catch((err) =>
+                            alert(
+                              err instanceof Error
+                                ? err.message
+                                : "Could not delete.",
+                            ),
+                          );
                       }}
                     >
                       Delete board
@@ -546,8 +881,8 @@ export default function TacticsBoardEditor({
         <div className="rounded-xl border border-white/[0.08] bg-zinc-950/60 p-4">
           <p className="text-sm font-semibold text-white">Share</p>
           <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-            All coaches on this team can find boards set to team access. Link
-            sharing is optional for view-only or edit access outside the library.
+            Viewers with the link can play the sequence. Edit links remain limited
+            to signed-in coaches on this team.
           </p>
           <div className="mt-3 flex flex-col gap-2">
             {(
@@ -555,11 +890,12 @@ export default function TacticsBoardEditor({
                 ["team_coaches", "All team coaches can edit"],
                 ["private", "Only me"],
                 ["link_view", "Anyone with the link can view"],
-                ["link_edit", "Anyone with the link can edit"],
+                ["link_edit", "Coaches with the link can edit"],
               ] as const
             ).map(([mode, label]) => {
               const active =
-                (mode === "team_coaches" && board.visibility === "team_coaches") ||
+                (mode === "team_coaches" &&
+                  board.visibility === "team_coaches") ||
                 (mode === "private" && board.visibility === "private") ||
                 (mode === "link_view" &&
                   board.visibility === "shared_link" &&
@@ -596,30 +932,193 @@ export default function TacticsBoardEditor({
         </div>
       ) : null}
 
-      {conflictRemote ? (
+      {(conflictRemote || stepConflict) && (
         <div className="rounded-xl border border-amber-500/35 bg-amber-950/40 p-4">
           <p className="text-sm font-semibold text-amber-100">
-            This board was updated by another coach.
-          </p>
-          <p className="mt-1 text-xs text-amber-100/80">
-            {conflictRemote.updatedByName
-              ? `${conflictRemote.updatedByName} saved a newer version.`
-              : "A newer version is on the server."}{" "}
-            Loading theirs will discard your unsaved local edits.
+            This {stepConflict ? "step" : "board"} was updated by another coach.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" className={primaryBtn} onClick={loadRemoteVersion}>
+            <button
+              type="button"
+              className={primaryBtn}
+              onClick={() => {
+                if (stepConflict) {
+                  loadStepIntoEditor(stepConflict);
+                  setStepConflict(null);
+                  setSaveState("saved");
+                  setDirty(false);
+                  return;
+                }
+                if (conflictRemote) {
+                  setBoard(conflictRemote);
+                  boardVersionRef.current = conflictRemote.version;
+                  setConflictRemote(null);
+                  setSaveState("saved");
+                }
+              }}
+            >
               Load their version
             </button>
-            <button type="button" className={ghostBtn} onClick={() => void saveMineAsCopy()}>
+            <button
+              type="button"
+              className={ghostBtn}
+              onClick={() => {
+                void duplicateTacticsBoard(team.id, board.id, currentUid, {
+                  title: `${title} — my version`,
+                  displayName,
+                }).then((copy) =>
+                  router.push(tacticsBoardEditorUrl(team.id, copy.id)),
+                );
+              }}
+            >
               Save mine as a copy
             </button>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {canEdit ? (
+      <TacticsPlaybackControls
+        stepIndex={playback.isPlaybackActive ? playback.captionIndex : selectedIndex}
+        stepCount={steps.length}
+        isPlaying={playback.isPlaying}
+        isPlaybackActive={playback.isPlaybackActive}
+        loop={loop}
+        speedPreset={speedPreset}
+        onPlayPause={() => {
+          void persistStep().then(() => playback.togglePlay());
+        }}
+        onPrevious={playback.previous}
+        onNext={playback.next}
+        onRestart={playback.restart}
+        onToggleLoop={() => {
+          setLoop((v) => !v);
+          if (canEdit) {
+            boardPendingRef.current = true;
+            setDirty(true);
+          }
+        }}
+        onSpeedChange={(preset) => {
+          setSpeedPreset(preset);
+          if (canEdit) {
+            boardPendingRef.current = true;
+            setDirty(true);
+          }
+        }}
+        onExitPlayback={playback.stop}
+        canEditSpeed
+      />
+
+      <TacticsStepTimeline
+        steps={steps}
+        selectedStepId={activeStepId}
+        canEdit={canEdit && !playback.isPlaybackActive}
+        disabled={playback.isPlaying}
+        onSelect={(id) => void selectStep(id)}
+        onAddStep={() => void handleAddStep()}
+        onRename={(id, t) => {
+          void renameTacticsStep(team.id, board.id, currentUid, id, t).then(
+            (step) => {
+              setSteps((prev) => prev.map((s) => (s.id === step.id ? step : s)));
+              if (id === activeStepId) setStepTitle(step.title);
+            },
+          );
+        }}
+        onDuplicate={(id) => {
+          void persistStep().then(() =>
+            duplicateTacticsStep(team.id, board.id, currentUid, id).then(
+              ({ steps: next, created }) => {
+                setSteps(next);
+                loadStepIntoEditor(created);
+              },
+            ),
+          );
+        }}
+        onInsertAfter={(id) => {
+          void persistStep().then(() =>
+            addTacticsStepAfter(team.id, board.id, currentUid, id).then(
+              ({ steps: next, created }) => {
+                setSteps(next);
+                loadStepIntoEditor(created);
+              },
+            ),
+          );
+        }}
+        onMove={(id, dir) => {
+          void persistStep().then(() =>
+            moveTacticsStep(team.id, board.id, currentUid, id, dir).then(
+              setSteps,
+            ),
+          );
+        }}
+        onDelete={(id) => {
+          void deleteTacticsStep(team.id, board.id, currentUid, id).then(
+            (next) => {
+              setSteps(next);
+              const keep =
+                next.find((s) => s.id === activeStepId) ?? next[0];
+              if (keep) loadStepIntoEditor(keep);
+            },
+          );
+        }}
+      />
+
+      {playback.isPlaybackActive ? (
+        <TacticsStepNotes
+          title={steps[playback.captionIndex]?.title ?? ""}
+          notes={steps[playback.captionIndex]?.notes ?? ""}
+          compact
+        />
+      ) : canEdit ? (
+        <TacticsStepNotes
+          title={stepTitle}
+          notes={stepNotes}
+          onTitleChange={(t) => {
+            setStepTitle(t);
+            markStepDirty();
+          }}
+          onNotesChange={(n) => {
+            setStepNotes(n);
+            markStepDirty();
+          }}
+        />
+      ) : (
+        <TacticsStepNotes
+          title={activeStep?.title ?? ""}
+          notes={activeStep?.notes ?? ""}
+          compact
+        />
+      )}
+
+      {canEdit && !playback.isPlaybackActive ? (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.07] bg-zinc-950/50 px-3 py-2">
+          <div
+            className="flex flex-wrap items-center gap-1"
+            role="group"
+            aria-label="Field view"
+          >
+            {(
+              [
+                ["full", "Full field"],
+                ["offensive", "Offensive"],
+                ["defensive", "Defensive"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={toolBtn(board.fieldView === id)}
+                onClick={() => {
+                  setBoard((b) => ({ ...b, fieldView: id as TacticsFieldView }));
+                  boardPendingRef.current = true;
+                  setDirty(true);
+                  setSaveState("idle");
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="hidden h-5 w-px bg-white/10 sm:block" />
           <label className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
             <span
               className="inline-block h-2.5 w-2.5 rounded-full"
@@ -633,10 +1132,10 @@ export default function TacticsBoardEditor({
               onChange={(e) => {
                 const n = Number.parseInt(e.target.value, 10);
                 if (!Number.isFinite(n)) return;
-                applyObjects(setPlayersOnSide(objects, "home", n), true);
+                applyObjectsCommit(setPlayersOnSide(objects, "home", n));
                 setSelectedId(null);
               }}
-              className="rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-xs font-semibold text-white focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              className="rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-xs font-semibold text-white"
             >
               <option value={0}>0</option>
               {TACTICS_PLAYER_COUNT_OPTIONS.map((n) => (
@@ -659,10 +1158,10 @@ export default function TacticsBoardEditor({
               onChange={(e) => {
                 const n = Number.parseInt(e.target.value, 10);
                 if (!Number.isFinite(n)) return;
-                applyObjects(setPlayersOnSide(objects, "away", n), true);
+                applyObjectsCommit(setPlayersOnSide(objects, "away", n));
                 setSelectedId(null);
               }}
-              className="rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-xs font-semibold text-white focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+              className="rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-xs font-semibold text-white"
             >
               <option value={0}>0</option>
               {TACTICS_PLAYER_COUNT_OPTIONS.map((n) => (
@@ -672,13 +1171,20 @@ export default function TacticsBoardEditor({
               ))}
             </select>
           </label>
-          <span className="hidden text-[10px] text-zinc-600 sm:inline">
-            Places dots in a default shape
-          </span>
+          {selectedIndex > 0 ? (
+            <label className="flex items-center gap-2 text-[11px] text-zinc-400">
+              <input
+                type="checkbox"
+                checked={showPrevPositions}
+                onChange={(e) => setShowPrevPositions(e.target.checked)}
+              />
+              Show previous positions
+            </label>
+          ) : null}
         </div>
       ) : null}
 
-      {canEdit ? (
+      {canEdit && !playback.isPlaybackActive ? (
         <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/[0.07] bg-zinc-950/50 p-2">
           {(
             [
@@ -702,7 +1208,10 @@ export default function TacticsBoardEditor({
                   ? { boxShadow: `inset 0 -2px 0 ${TACTICS_HOME_COLOR}` }
                   : id === "away"
                     ? { boxShadow: `inset 0 -2px 0 ${TACTICS_AWAY_COLOR}` }
-                    : id === "arrow" || id === "draw" || id === "circle" || id === "zone"
+                    : id === "arrow" ||
+                        id === "draw" ||
+                        id === "circle" ||
+                        id === "zone"
                       ? { boxShadow: `inset 0 -2px 0 ${TACTICS_DRAW_COLOR}` }
                       : undefined
               }
@@ -723,7 +1232,7 @@ export default function TacticsBoardEditor({
         </div>
       ) : null}
 
-      {selected?.type === "player" && canEdit ? (
+      {selected?.type === "player" && canEdit && !playback.isPlaybackActive ? (
         <div className="flex flex-wrap items-end gap-3 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-3 py-2">
           <label className="text-[11px] text-zinc-400">
             Number
@@ -745,7 +1254,9 @@ export default function TacticsBoardEditor({
               type="color"
               value={
                 selected.color ||
-                (selected.team === "home" ? TACTICS_HOME_COLOR : TACTICS_AWAY_COLOR)
+                (selected.team === "home"
+                  ? TACTICS_HOME_COLOR
+                  : TACTICS_AWAY_COLOR)
               }
               onChange={(e) => updateSelectedPlayer({ color: e.target.value })}
               className="mt-1 block h-9 w-12 cursor-pointer rounded-lg border border-white/12 bg-transparent"
@@ -759,12 +1270,16 @@ export default function TacticsBoardEditor({
 
       <TacticsBoardCanvas
         orientation={board.fieldOrientation}
-        objects={objects}
-        tool={canEdit ? tool : "select"}
-        readOnly={!canEdit}
-        selectedId={selectedId}
+        fieldView={board.fieldView}
+        objects={canvasObjects}
+        ghostObjects={ghostObjects}
+        showGhostPaths={showPrevPositions && !playback.isPlaybackActive}
+        tool={editingLocked ? "select" : tool}
+        readOnly={editingLocked}
+        selectedId={playback.isPlaybackActive ? null : selectedId}
         onSelect={setSelectedId}
-        onChangeObjects={(next) => applyObjects(next, true)}
+        onChangeObjects={applyObjectsLive}
+        onGestureEnd={applyObjectsCommit}
         svgRef={svgRef}
       />
     </div>

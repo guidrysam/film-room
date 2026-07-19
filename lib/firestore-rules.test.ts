@@ -547,4 +547,147 @@ describeRules("firestore rules (emulator)", () => {
       );
     });
   });
+
+  describe("tactics boards and steps", () => {
+    it("coach can create board and step; parent cannot read", async () => {
+      const coachUid = "coach-uid";
+      const parentUid = "parent-uid";
+      const teamId = "team-tactics";
+      await seedTeam(teamId, coachUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "teams", teamId), {
+          members: {
+            [coachUid]: "admin",
+            [parentUid]: "parent",
+          },
+          memberUids: [coachUid, parentUid],
+        });
+      });
+
+      const coachDb = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertSucceeds(
+        setDoc(doc(coachDb, "teams", teamId, "tactics", "board-1"), {
+          teamId,
+          title: "Press",
+          createdBy: coachUid,
+          updatedBy: coachUid,
+          sport: "soccer",
+          version: 1,
+          visibility: "team_coaches",
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        }),
+      );
+      await assertSucceeds(
+        setDoc(doc(coachDb, "teams", teamId, "tactics", "board-1", "steps", "step-1"), {
+          boardId: "board-1",
+          order: 0,
+          title: "Step 1",
+          objects: [],
+          version: 1,
+          createdBy: coachUid,
+          updatedBy: coachUid,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        }),
+      );
+
+      const parentDb = testEnv!.authenticatedContext(parentUid).firestore();
+      await assertFails(
+        getDoc(doc(parentDb, "teams", teamId, "tactics", "board-1")),
+      );
+      await assertFails(
+        getDoc(
+          doc(parentDb, "teams", teamId, "tactics", "board-1", "steps", "step-1"),
+        ),
+      );
+    });
+
+    it("step update requires version increment", async () => {
+      const coachUid = "coach-uid";
+      const teamId = "team-tactics-ver";
+      await seedTeam(teamId, coachUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), "teams", teamId, "tactics", "b1"), {
+          teamId,
+          title: "Board",
+          createdBy: coachUid,
+          updatedBy: coachUid,
+          sport: "soccer",
+          version: 1,
+          visibility: "team_coaches",
+        });
+        await setDoc(
+          doc(context.firestore(), "teams", teamId, "tactics", "b1", "steps", "s1"),
+          {
+            boardId: "b1",
+            order: 0,
+            title: "Step 1",
+            objects: [],
+            version: 1,
+            createdBy: coachUid,
+            updatedBy: coachUid,
+          },
+        );
+      });
+
+      const db = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertFails(
+        updateDoc(doc(db, "teams", teamId, "tactics", "b1", "steps", "s1"), {
+          objects: [{ id: "p1", type: "ball", x: 0.5, y: 0.5 }],
+          version: 1,
+          updatedBy: coachUid,
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, "teams", teamId, "tactics", "b1", "steps", "s1"), {
+          objects: [{ id: "p1", type: "ball", x: 0.5, y: 0.5 }],
+          version: 2,
+          updatedBy: coachUid,
+          title: "Step 1",
+          order: 0,
+          boardId: "b1",
+          createdBy: coachUid,
+        }),
+      );
+    });
+
+    it("another team coach can update share snapshot", async () => {
+      const ownerUid = "owner-uid";
+      const coachUid = "coach-uid";
+      const teamId = "team-share";
+      await seedTeam(teamId, ownerUid);
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "teams", teamId), {
+          members: { [ownerUid]: "admin", [coachUid]: "coach" },
+          memberUids: [ownerUid, coachUid],
+        });
+        await setDoc(doc(context.firestore(), "tacticsBoardShares", "tok1"), {
+          shareToken: "tok1",
+          teamId,
+          boardId: "b1",
+          permission: "view",
+          createdBy: ownerUid,
+          enabled: true,
+          payload: { schema: "tactics_board_share_v2", title: "X" },
+        });
+      });
+
+      const coachDb = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertSucceeds(
+        updateDoc(doc(coachDb, "tacticsBoardShares", "tok1"), {
+          shareToken: "tok1",
+          teamId,
+          boardId: "b1",
+          createdBy: ownerUid,
+          enabled: true,
+          payload: {
+            schema: "tactics_board_share_v2",
+            title: "Updated",
+            steps: [],
+          },
+        }),
+      );
+    });
+  });
 });

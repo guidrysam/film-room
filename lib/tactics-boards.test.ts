@@ -6,7 +6,7 @@ import {
   relativeUpdatedLabel,
   visibilityLabel,
 } from "./tactics-boards";
-import { clampNorm, svgToNorm, normToSvg } from "./tactics-field-geometry";
+import { clampNorm, svgToNorm, normToSvg, viewBoxAttr, viewBoxRect, clampNormToFieldView } from "./tactics-field-geometry";
 import { Timestamp } from "firebase/firestore";
 
 test("parseTacticsBoardObject parses player ball and drawings", () => {
@@ -60,6 +60,21 @@ test("parseTacticsBoard defaults visibility and version", () => {
   assert.equal(board!.version, 1);
   assert.equal(board!.sport, "soccer");
   assert.equal(board!.fieldOrientation, "horizontal");
+  assert.equal(board!.fieldView, "full");
+  assert.equal(board!.stepCount, 0);
+  assert.equal(board!.playbackSettings.transitionDurationMs, 900);
+  assert.deepEqual(board!.previewObjects, []);
+});
+
+test("parseTacticsBoard reads fieldView", () => {
+  const board = parseTacticsBoard("bid", "tid", {
+    title: "Press",
+    createdBy: "uid1",
+    updatedBy: "uid1",
+    fieldView: "offensive",
+    objects: [],
+  });
+  assert.equal(board!.fieldView, "offensive");
 });
 
 test("normToSvg and svgToNorm round-trip horizontally", () => {
@@ -74,6 +89,29 @@ test("clampNorm clamps to unit square", () => {
   assert.deepEqual(clampNorm(-1, 2), { x: 0, y: 1 });
 });
 
+test("viewBoxRect crops halves for offensive and defensive", () => {
+  assert.equal(viewBoxAttr("horizontal", "full"), "0 0 1050 680");
+  assert.deepEqual(viewBoxRect("horizontal", "defensive"), {
+    x: 0,
+    y: 0,
+    w: 525,
+    h: 680,
+  });
+  assert.deepEqual(viewBoxRect("horizontal", "offensive"), {
+    x: 525,
+    y: 0,
+    w: 525,
+    h: 680,
+  });
+  assert.deepEqual(clampNormToFieldView(0.2, 0.5, "horizontal", "offensive"), {
+    x: 0.5,
+    y: 0.5,
+  });
+  assert.deepEqual(clampNormToFieldView(0.8, 0.5, "horizontal", "defensive"), {
+    x: 0.5,
+    y: 0.5,
+  });
+});
 test("visibilityLabel and relativeUpdatedLabel", () => {
   assert.match(visibilityLabel("team_coaches"), /coaches/i);
   assert.equal(relativeUpdatedLabel(null), "Not saved yet");

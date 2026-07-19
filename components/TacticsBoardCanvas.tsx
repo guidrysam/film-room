@@ -17,15 +17,17 @@ import {
   type TacticsBoardObject,
   type TacticsDrawingKind,
   type TacticsFieldOrientation,
+  type TacticsFieldView,
   type TacticsPlayerTeam,
 } from "@/lib/tactics-boards";
 import {
+  aspectRatioForView,
   ballRadius,
-  clampNorm,
+  clampNormToFieldView,
   normToSvg,
   playerRadius,
   svgToNorm,
-  viewBoxForOrientation,
+  viewBoxAttr,
 } from "@/lib/tactics-field-geometry";
 
 export type TacticsTool =
@@ -38,15 +40,27 @@ export type TacticsTool =
   | "circle"
   | "zone";
 
+export type CanvasTacticsObject = TacticsBoardObject & {
+  opacity?: number;
+  fromLayer?: boolean;
+};
+
 export type TacticsBoardCanvasProps = {
   orientation: TacticsFieldOrientation;
-  objects: TacticsBoardObject[];
+  fieldView?: TacticsFieldView;
+  objects: CanvasTacticsObject[];
+  /** Prior-step ghosts (edit aid only). */
+  ghostObjects?: TacticsBoardObject[];
+  showGhostPaths?: boolean;
   tool: TacticsTool;
   drawColor?: string;
   readOnly?: boolean;
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
+  /** Live object updates during drag (no history). */
   onChangeObjects?: (objects: TacticsBoardObject[]) => void;
+  /** Fired when a drag/draw gesture completes (commit history + save). */
+  onGestureEnd?: (objects: TacticsBoardObject[]) => void;
   svgRef?: RefObject<SVGSVGElement | null>;
   className?: string;
 };
@@ -81,13 +95,17 @@ function arrowHeadPoints(
 
 export default function TacticsBoardCanvas({
   orientation,
+  fieldView = "full",
   objects,
+  ghostObjects = [],
+  showGhostPaths = false,
   tool,
   drawColor = TACTICS_DRAW_COLOR,
   readOnly = false,
   selectedId = null,
   onSelect,
   onChangeObjects,
+  onGestureEnd,
   svgRef,
   className,
 }: TacticsBoardCanvasProps) {
@@ -107,6 +125,7 @@ export default function TacticsBoardCanvas({
     pointerId: number;
     mode: "move" | "draw";
   } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   const [draft, setDraft] = useState<TacticsBoardObject | null>(null);
   const objectsRef = useRef(objects);
@@ -114,9 +133,15 @@ export default function TacticsBoardCanvas({
     objectsRef.current = objects;
   }, [objects]);
 
-  const vb = viewBoxForOrientation(orientation);
-  const pR = playerRadius(orientation);
-  const bR = ballRadius(orientation);
+  const pR = playerRadius(orientation, fieldView);
+  const bR = ballRadius(orientation, fieldView);
+  const aspect = aspectRatioForView(orientation, fieldView);
+
+  const clampVisible = useCallback(
+    (x: number, y: number) =>
+      clampNormToFieldView(x, y, orientation, fieldView),
+    [orientation, fieldView],
+  );
 
   const clientToNorm = useCallback(
     (clientX: number, clientY: number) => {
@@ -134,11 +159,12 @@ export default function TacticsBoardCanvas({
   );
 
   const commitObjects = useCallback(
-    (next: TacticsBoardObject[]) => {
+    (next: TacticsBoardObject[], gestureEnd = false) => {
       objectsRef.current = next;
       onChangeObjects?.(next);
+      if (gestureEnd) onGestureEnd?.(next);
     },
-    [onChangeObjects],
+    [onChangeObjects, onGestureEnd],
   );
 
   const updateObject = useCallback(
@@ -170,11 +196,11 @@ export default function TacticsBoardCanvas({
         id: generateTacticsObjectId(),
         type: "player",
         team,
-        ...clampNorm(norm.x, norm.y),
+        ...clampVisible(norm.x, norm.y),
         label: nextPlayerLabel(objectsRef.current, team),
         color: team === "home" ? TACTICS_HOME_COLOR : TACTICS_AWAY_COLOR,
       };
-      commitObjects([...objectsRef.current, obj]);
+      commitObjects([...objectsRef.current, obj], true);
       onSelect?.(obj.id);
       return;
     }
@@ -184,9 +210,9 @@ export default function TacticsBoardCanvas({
       const obj: TacticsBoardObject = {
         id: generateTacticsObjectId(),
         type: "ball",
-        ...clampNorm(norm.x, norm.y),
+        ...clampVisible(norm.x, norm.y),
       };
-      commitObjects([...withoutBall, obj]);
+      commitObjects([...withoutBall, obj], true);
       onSelect?.(obj.id);
       return;
     }
@@ -214,6 +240,7 @@ export default function TacticsBoardCanvas({
       pointerId: e.pointerId,
       mode: "draw",
     };
+    setDragging(true);
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
@@ -231,6 +258,7 @@ export default function TacticsBoardCanvas({
         pointerId: e.pointerId,
         mode: "move",
       };
+      setDragging(true);
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
   };
@@ -244,7 +272,7 @@ export default function TacticsBoardCanvas({
       const obj = objectsRef.current.find((o) => o.id === drag.id);
       if (!obj) return;
       if (obj.type === "player" || obj.type === "ball") {
-        const c = clampNorm(norm.x, norm.y);
+        const c = clampVisible(norm.x, norm.y);
         updateObject(drag.id, { x: c.x, y: c.y });
       }
       return;
@@ -257,12 +285,12 @@ export default function TacticsBoardCanvas({
         if (prev.freehand) {
           return {
             ...prev,
-            points: [...prev.points, clampNorm(norm.x, norm.y)],
+            points: [...prev.points, clampVisible(norm.x, norm.y)],
           };
         }
         return {
           ...prev,
-          points: [prev.points[0]!, clampNorm(norm.x, norm.y)],
+          points: [prev.points[0]!, clampVisible(norm.x, norm.y)],
         };
       });
     }
@@ -283,14 +311,17 @@ export default function TacticsBoardCanvas({
           Math.hypot(pts[1]!.x - pts[0]!.x, pts[1]!.y - pts[0]!.y) < 0.01;
         const freeTooShort = Boolean(prev.freehand && pts.length < 3);
         if (!tooSmall && !freeTooShort) {
-          commitObjects([...objectsRef.current, prev]);
+          commitObjects([...objectsRef.current, prev], true);
           onSelect?.(prev.id);
         }
         return null;
       });
+    } else if (drag.mode === "move") {
+      commitObjects(objectsRef.current, true);
     }
 
     dragRef.current = null;
+    setDragging(false);
     try {
       e.currentTarget.releasePointerCapture?.(e.pointerId);
     } catch {
@@ -298,12 +329,19 @@ export default function TacticsBoardCanvas({
     }
   };
 
+  const opacityOf = (o: CanvasTacticsObject) =>
+    typeof o.opacity === "number" ? o.opacity : 1;
+
   const renderDrawing = (
-    o: Extract<TacticsBoardObject, { type: TacticsDrawingKind }>,
+    o: Extract<CanvasTacticsObject, { type: TacticsDrawingKind }>,
+    keyPrefix = "",
   ) => {
     const selected = selectedId === o.id;
+    const opacity = opacityOf(o);
+    if (opacity <= 0.01) return null;
     const pts = o.points.map((p) => normToSvg(p.x, p.y, orientation));
     if (pts.length < 2) return null;
+    const key = `${keyPrefix}${o.id}`;
 
     if (o.type === "circle") {
       const a = pts[0]!;
@@ -314,7 +352,7 @@ export default function TacticsBoardCanvas({
       const ry = Math.abs(b.y - a.y) / 2;
       return (
         <ellipse
-          key={o.id}
+          key={key}
           data-tactics-object={o.id}
           cx={cx}
           cy={cy}
@@ -324,6 +362,7 @@ export default function TacticsBoardCanvas({
           stroke={o.color}
           strokeWidth={selected ? 4 : 3}
           strokeDasharray={selected ? "6 4" : undefined}
+          opacity={opacity}
           onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
           style={{ cursor: readOnly ? "default" : "pointer" }}
         />
@@ -339,7 +378,7 @@ export default function TacticsBoardCanvas({
       const h = Math.abs(b.y - a.y);
       return (
         <rect
-          key={o.id}
+          key={key}
           data-tactics-object={o.id}
           x={x}
           y={y}
@@ -349,6 +388,7 @@ export default function TacticsBoardCanvas({
           fill={`${o.color}33`}
           stroke={o.color}
           strokeWidth={selected ? 3.5 : 2.5}
+          opacity={opacity}
           onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
           style={{ cursor: readOnly ? "default" : "pointer" }}
         />
@@ -361,7 +401,7 @@ export default function TacticsBoardCanvas({
         .join(" ");
       return (
         <path
-          key={o.id}
+          key={key}
           data-tactics-object={o.id}
           d={d}
           fill="none"
@@ -369,6 +409,7 @@ export default function TacticsBoardCanvas({
           strokeWidth={selected ? 4 : 3}
           strokeLinecap="round"
           strokeLinejoin="round"
+          opacity={opacity}
           onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
           style={{ cursor: readOnly ? "default" : "pointer" }}
         />
@@ -379,8 +420,9 @@ export default function TacticsBoardCanvas({
     const b = pts[1]!;
     return (
       <g
-        key={o.id}
+        key={key}
         data-tactics-object={o.id}
+        opacity={opacity}
         onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
         style={{ cursor: readOnly ? "default" : "pointer" }}
       >
@@ -403,17 +445,30 @@ export default function TacticsBoardCanvas({
     );
   };
 
-  const allObjects = draft ? [...objects, draft] : objects;
+  const allObjects: CanvasTacticsObject[] = draft
+    ? [...objects, draft]
+    : objects;
+
+  const currentById = new Map(
+    allObjects
+      .filter((o) => o.type === "player" || o.type === "ball")
+      .map((o) => [o.id, o]),
+  );
 
   return (
     <div
-      className={`relative aspect-[105/68] w-full touch-none overflow-hidden rounded-2xl bg-zinc-950 shadow-2xl shadow-black/50 ring-1 ring-white/10 ${
-        orientation === "vertical" ? "aspect-[68/105] max-w-md mx-auto" : ""
+      className={`relative w-full overflow-hidden rounded-2xl bg-zinc-950 shadow-2xl shadow-black/50 ring-1 ring-white/10 ${
+        dragging ? "touch-none" : ""
+      } ${
+        orientation === "vertical" && fieldView === "full"
+          ? "mx-auto max-w-md"
+          : ""
       } ${className ?? ""}`}
+      style={{ aspectRatio: aspect }}
     >
       <svg
         ref={setSvgNode}
-        viewBox={`0 0 ${vb.w} ${vb.h}`}
+        viewBox={viewBoxAttr(orientation, fieldView)}
         className="block h-full w-full select-none"
         role="img"
         aria-label="Tactics board"
@@ -423,6 +478,46 @@ export default function TacticsBoardCanvas({
         onPointerCancel={handlePointerUp}
       >
         <SoccerFieldSvg orientation={orientation} asGroup />
+        {showGhostPaths && ghostObjects.length > 0 ? (
+          <g pointerEvents="none" opacity={0.35}>
+            {ghostObjects.map((g) => {
+              if (g.type !== "player" && g.type !== "ball") return null;
+              const cur = currentById.get(g.id);
+              if (!cur || (cur.type !== "player" && cur.type !== "ball")) {
+                return null;
+              }
+              const a = normToSvg(g.x, g.y, orientation);
+              const b = normToSvg(cur.x, cur.y, orientation);
+              return (
+                <g key={`ghost-${g.id}`}>
+                  <line
+                    x1={a.x}
+                    y1={a.y}
+                    x2={b.x}
+                    y2={b.y}
+                    stroke="rgba(255,255,255,0.45)"
+                    strokeWidth={2}
+                    strokeDasharray="6 5"
+                  />
+                  <circle
+                    cx={a.x}
+                    cy={a.y}
+                    r={g.type === "ball" ? bR : pR}
+                    fill={
+                      g.type === "ball"
+                        ? "#f5f5f4"
+                        : g.color ||
+                          (g.team === "home"
+                            ? TACTICS_HOME_COLOR
+                            : TACTICS_AWAY_COLOR)
+                    }
+                    opacity={0.35}
+                  />
+                </g>
+              );
+            })}
+          </g>
+        ) : null}
         {allObjects
           .filter(
             (o) =>
@@ -433,11 +528,14 @@ export default function TacticsBoardCanvas({
           )
           .map((o) =>
             renderDrawing(
-              o as Extract<TacticsBoardObject, { type: TacticsDrawingKind }>,
+              o as Extract<CanvasTacticsObject, { type: TacticsDrawingKind }>,
+              o.fromLayer ? "from-" : "",
             ),
           )}
         {allObjects.map((o) => {
           if (o.type !== "player") return null;
+          const opacity = opacityOf(o);
+          if (opacity <= 0.01) return null;
           const p = normToSvg(o.x, o.y, orientation);
           const color =
             o.color ||
@@ -445,9 +543,10 @@ export default function TacticsBoardCanvas({
           const selected = selectedId === o.id;
           return (
             <g
-              key={o.id}
+              key={`${o.fromLayer ? "from-" : ""}${o.id}`}
               data-tactics-object={o.id}
               transform={`translate(${p.x}, ${p.y})`}
+              opacity={opacity}
               onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
               style={{ cursor: readOnly ? "default" : "grab" }}
             >
@@ -483,13 +582,16 @@ export default function TacticsBoardCanvas({
         })}
         {allObjects.map((o) => {
           if (o.type !== "ball") return null;
+          const opacity = opacityOf(o);
+          if (opacity <= 0.01) return null;
           const p = normToSvg(o.x, o.y, orientation);
           const selected = selectedId === o.id;
           return (
             <g
-              key={o.id}
+              key={`${o.fromLayer ? "from-" : ""}${o.id}`}
               data-tactics-object={o.id}
               transform={`translate(${p.x}, ${p.y})`}
+              opacity={opacity}
               onPointerDown={(e) => handleObjectPointerDown(e, o.id)}
               style={{ cursor: readOnly ? "default" : "grab" }}
             >

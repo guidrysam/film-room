@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import TeamNav from "@/components/TeamNav";
 import TacticsBoardEditor from "@/components/TacticsBoardEditor";
@@ -17,6 +17,33 @@ import { teamTacticsUrl } from "@/lib/team-routes";
 
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08]";
+
+function BoardEditorShell({
+  team,
+  board,
+  uid,
+  displayName,
+}: {
+  team: Team;
+  board: TacticsBoard;
+  uid: string;
+  displayName?: string | null;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <p className="text-sm text-zinc-400">Loading editor…</p>
+      }
+    >
+      <TacticsBoardEditor
+        team={team}
+        board={board}
+        currentUid={uid}
+        displayName={displayName}
+      />
+    </Suspense>
+  );
+}
 
 export default function TeamTacticsBoardPage() {
   const params = useParams();
@@ -100,10 +127,10 @@ export default function TeamTacticsBoardPage() {
     <div className="min-h-screen px-4 py-8 text-zinc-50">
       <div className="mx-auto max-w-5xl">
         <TeamNav team={team} currentUid={user.uid} active="tactics" />
-        <TacticsBoardEditor
+        <BoardEditorShell
           team={team}
           board={board}
-          currentUid={user.uid}
+          uid={user.uid}
           displayName={user.displayName}
         />
         {!canEditTacticsBoard(board, team, user.uid) ? (

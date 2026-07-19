@@ -18,7 +18,11 @@ import {
   type TacticsBoard,
 } from "@/lib/tactics-boards";
 import { canCoachTeam, type Team } from "@/lib/teams";
-import { normToSvg } from "@/lib/tactics-field-geometry";
+import {
+  aspectRatioForView,
+  normToSvg,
+  viewBoxAttr,
+} from "@/lib/tactics-field-geometry";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -31,18 +35,22 @@ const primaryBtn =
 
 function MiniPreview({ board }: { board: TacticsBoard }) {
   const orientation = board.fieldOrientation;
+  const fieldView = board.fieldView;
+  const preview =
+    board.previewObjects.length > 0 ? board.previewObjects : board.objects;
+  const multiStep = board.stepCount > 1;
   return (
-    <div className="relative aspect-[105/68] w-full overflow-hidden rounded-lg bg-zinc-900">
-      <SoccerFieldSvg
-        orientation={orientation}
-        className="h-full w-full"
-      />
+    <div
+      className="relative w-full overflow-hidden rounded-lg bg-zinc-900"
+      style={{ aspectRatio: aspectRatioForView(orientation, fieldView) }}
+    >
       <svg
-        viewBox={orientation === "horizontal" ? "0 0 1050 680" : "0 0 680 1050"}
-        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox={viewBoxAttr(orientation, fieldView)}
+        className="h-full w-full"
         aria-hidden
       >
-        {board.objects.slice(0, 24).map((o) => {
+        <SoccerFieldSvg orientation={orientation} asGroup />
+        {preview.slice(0, 24).map((o) => {
           if (o.type === "player") {
             const p = normToSvg(o.x, o.y, orientation);
             return (
@@ -67,6 +75,11 @@ function MiniPreview({ board }: { board: TacticsBoard }) {
           return null;
         })}
       </svg>
+      {multiStep ? (
+        <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold text-white">
+          ▶ {board.stepCount} steps
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -234,12 +247,27 @@ export default function TacticsBoardList({
                   </Link>
                 )}
                 <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                  {board.stepCount > 0 ? `${board.stepCount} step${board.stepCount === 1 ? "" : "s"} · ` : ""}
                   Edited {relativeUpdatedLabel(board.updatedAt)}
                   {board.updatedByName ? ` by ${board.updatedByName}` : ""}
                 </p>
                 <p className="truncate text-[10px] text-zinc-600">
                   {visibilityLabel(board.visibility)}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <Link
+                    href={tacticsBoardEditorUrl(team.id, board.id)}
+                    className={ghostBtn}
+                  >
+                    Open
+                  </Link>
+                  <Link
+                    href={tacticsBoardEditorUrl(team.id, board.id, { play: true })}
+                    className={ghostBtn}
+                  >
+                    Play
+                  </Link>
+                </div>
               </div>
               <div className="relative shrink-0">
                 <button
@@ -258,6 +286,12 @@ export default function TacticsBoardList({
                       className="block rounded-lg px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.06]"
                     >
                       Open
+                    </Link>
+                    <Link
+                      href={tacticsBoardEditorUrl(team.id, board.id, { play: true })}
+                      className="block rounded-lg px-3 py-2 text-xs text-zinc-200 hover:bg-white/[0.06]"
+                    >
+                      Play
                     </Link>
                     <button
                       type="button"

@@ -3,6 +3,17 @@
  */
 
 import type { RefObject } from "react";
+import type {
+  TacticsBoardObject,
+  TacticsFieldOrientation,
+  TacticsFieldView,
+} from "@/lib/tactics-boards";
+import {
+  TACTICS_AWAY_COLOR,
+  TACTICS_HOME_COLOR,
+} from "@/lib/tactics-boards";
+import { viewBoxAttr } from "@/lib/tactics-field-geometry";
+import { normToSvg } from "@/lib/tactics-field-geometry";
 
 function svgToDataUrl(svg: SVGSVGElement): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
@@ -133,4 +144,74 @@ export async function exportTacticsPdfViaPrint(
 </body></html>`);
   win.document.close();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function objectsToSimpleSvg(
+  objects: TacticsBoardObject[],
+  orientation: TacticsFieldOrientation,
+  fieldView: TacticsFieldView,
+): string {
+  const vb = viewBoxAttr(orientation, fieldView);
+  const tokens = objects
+    .map((o) => {
+      if (o.type === "player") {
+        const p = normToSvg(o.x, o.y, orientation);
+        const color =
+          o.color ||
+          (o.team === "home" ? TACTICS_HOME_COLOR : TACTICS_AWAY_COLOR);
+        return `<circle cx="${p.x}" cy="${p.y}" r="22" fill="${color}" stroke="#fff" stroke-width="2"/><text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="18" font-family="system-ui">${o.label}</text>`;
+      }
+      if (o.type === "ball") {
+        const p = normToSvg(o.x, o.y, orientation);
+        return `<circle cx="${p.x}" cy="${p.y}" r="10" fill="#f5f5f4" stroke="#292524"/>`;
+      }
+      return "";
+    })
+    .join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="1050" height="680"><rect width="100%" height="100%" fill="#177a38"/>${tokens}</svg>`;
+}
+
+/**
+ * Open a multi-page print window — one page per step (Save as PDF).
+ * Extension point for future video export.
+ */
+export async function exportTacticsStepsStoryboard(
+  steps: Array<{ title: string; objects: TacticsBoardObject[] }>,
+  opts: {
+    boardTitle: string;
+    orientation: TacticsFieldOrientation;
+    fieldView: TacticsFieldView;
+  },
+): Promise<void> {
+  if (steps.length === 0) throw new Error("No steps to export.");
+  const win = window.open("", "_blank", "noopener,noreferrer");
+  if (!win) {
+    throw new Error("Pop-up blocked. Allow pop-ups to export PDF.");
+  }
+  const pages = steps
+    .map((step, i) => {
+      const svg = objectsToSimpleSvg(
+        step.objects,
+        opts.orientation,
+        opts.fieldView,
+      );
+      const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      return `<section class="page"><h2>Step ${i + 1}${step.title ? ` — ${step.title.replace(/</g, "")}` : ""}</h2><img src="${dataUrl}" alt="Step ${i + 1}" /></section>`;
+    })
+    .join("");
+  win.document.write(`<!doctype html><html><head><title>${opts.boardTitle.replace(/</g, "")}</title>
+<style>
+  @page { margin: 10mm; size: landscape; }
+  html, body { margin: 0; background: #111; color: #eee; font-family: system-ui; }
+  h1 { font: 600 18px system-ui; text-align: center; margin: 12px; }
+  h2 { font: 600 14px system-ui; margin: 8px 12px; }
+  .page { break-after: page; page-break-after: always; padding: 8px; }
+  .page:last-child { break-after: auto; }
+  img { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #0a0a0a; }
+</style></head><body>
+<h1>${opts.boardTitle.replace(/</g, "")}</h1>
+${pages}
+<script>setTimeout(function(){window.print();},400)</script>
+</body></html>`);
+  win.document.close();
 }
