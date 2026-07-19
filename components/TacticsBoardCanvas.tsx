@@ -21,6 +21,7 @@ import {
   type TacticsFieldView,
   type TacticsPlayerTeam,
 } from "@/lib/tactics-boards";
+import { zoneFillColor, zoneStrokeColor } from "@/lib/tactics-colors";
 import {
   aspectRatioForView,
   ballRadius,
@@ -440,8 +441,8 @@ export default function TacticsBoardCanvas({
           width={Math.max(4, w)}
           height={Math.max(4, h)}
           rx={6}
-          fill={`${o.color}33`}
-          stroke={o.color}
+          fill={zoneFillColor(o.color)}
+          stroke={zoneStrokeColor(o.color)}
           strokeWidth={selected ? 3.5 : 2.5}
           opacity={opacity}
           onPointerDown={(e) => handleObjectPointerDown(e, o.id)}

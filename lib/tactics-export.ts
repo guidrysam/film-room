@@ -12,6 +12,7 @@ import {
   TACTICS_AWAY_COLOR,
   TACTICS_HOME_COLOR,
 } from "@/lib/tactics-boards";
+import { zoneFillColor, zoneStrokeColor } from "@/lib/tactics-colors";
 import { viewBoxAttr } from "@/lib/tactics-field-geometry";
 import { normToSvg } from "@/lib/tactics-field-geometry";
 
@@ -199,7 +200,7 @@ function objectsToSimpleSvg(
         if (o.type === "zone") {
           const x = Math.min(first.x, last.x);
           const y = Math.min(first.y, last.y);
-          return `<rect x="${x}" y="${y}" width="${Math.abs(last.x - first.x)}" height="${Math.abs(last.y - first.y)}" fill="${o.color}33" stroke="${o.color}" stroke-width="3"/>`;
+          return `<rect x="${x}" y="${y}" width="${Math.abs(last.x - first.x)}" height="${Math.abs(last.y - first.y)}" fill="${zoneFillColor(o.color)}" stroke="${zoneStrokeColor(o.color)}" stroke-width="3"/>`;
         }
         if (o.type === "circle") {
           return `<ellipse cx="${(first.x + last.x) / 2}" cy="${(first.y + last.y) / 2}" rx="${Math.abs(last.x - first.x) / 2}" ry="${Math.abs(last.y - first.y) / 2}" fill="none" stroke="${o.color}" stroke-width="3"/>`;
