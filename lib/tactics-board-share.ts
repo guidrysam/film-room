@@ -120,9 +120,7 @@ export async function ensureTacticsBoardSharing(
       { merge: true },
     );
   } catch (err) {
-    throw new Error(
-      formatFirestoreWriteError(err, "Could not create share link."),
-    );
+    throw formatFirestoreWriteError(err, "Could not create share link.");
   }
 
   const result = await updateTacticsBoard(teamId, boardId, uid, {

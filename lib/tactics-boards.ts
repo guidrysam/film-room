@@ -386,9 +386,7 @@ export async function createTacticsBoard(
   try {
     await setDoc(tacticsDoc(teamId, id), payload);
   } catch (err) {
-    throw new Error(
-      formatFirestoreWriteError(err, "Could not create tactics board."),
-    );
+    throw formatFirestoreWriteError(err, "Could not create tactics board.");
   }
   const created = await getTacticsBoard(teamId, id);
   if (!created) throw new Error("Board was created but could not be loaded.");
@@ -488,9 +486,7 @@ export async function updateTacticsBoard(
   try {
     await updateDoc(tacticsDoc(teamId, boardId), update);
   } catch (err) {
-    throw new Error(
-      formatFirestoreWriteError(err, "Could not save tactics board."),
-    );
+    throw formatFirestoreWriteError(err, "Could not save tactics board.");
   }
   const board = await getTacticsBoard(teamId, boardId);
   if (!board) throw new Error("Board saved but could not be reloaded.");
