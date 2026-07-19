@@ -10,6 +10,7 @@ import {
   tickPlayback,
 } from "./tactics-animation";
 import type { TacticsBoardObject } from "./tactics-boards";
+import type { TacticsPresetStep } from "./tactics-presets/types";
 
 const player = (
   id: string,
@@ -88,6 +89,35 @@ test("interpolates positional drill objects by stable id", () => {
       assert.ok(object.x > 0.39 && object.x < 0.61);
     }
   }
+});
+
+test("instructional step text remains available while objects animate", () => {
+  const steps: TacticsPresetStep[] = [
+    {
+      id: "setup",
+      order: 0,
+      title: "Starting shape",
+      explanation: "Players create width before the first pass.",
+      coachCue: "Make the field big.",
+      objects: [player("p1", 0.2, 0.5), ball("ball", 0.2, 0.55)],
+    },
+    {
+      id: "action",
+      order: 1,
+      title: "Advance the ball",
+      explanation: "The receiver moves forward as the pass travels.",
+      coachCue: "Move with the pass.",
+      objects: [player("p1", 0.6, 0.5), ball("ball", 0.6, 0.55)],
+    },
+  ];
+  const animated = interpolateStepObjects(
+    steps[0]!.objects,
+    steps[1]!.objects,
+    0.75,
+  );
+  assert.equal(animated.length, 2);
+  assert.equal(steps[1]!.explanation, "The receiver moves forward as the pass travels.");
+  assert.equal(steps[1]!.coachCue, "Move with the pass.");
 });
 
 test("appearing object fades in", () => {

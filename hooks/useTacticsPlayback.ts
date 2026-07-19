@@ -15,7 +15,7 @@ import {
 import type { TacticsBoardObject } from "@/lib/tactics-boards";
 
 export type UseTacticsPlaybackArgs = {
-  steps: Array<{ objects: TacticsBoardObject[] }>;
+  steps: Array<{ objects: TacticsBoardObject[]; durationMs?: number }>;
   selectedIndex: number;
   settings: PlaybackSettings;
   onDisplayIndexChange?: (index: number) => void;
@@ -32,25 +32,22 @@ export function useTacticsPlayback({
   );
   const progressCarryRef = useRef(0);
   const rafRef = useRef<number | null>(null);
-  const reducedMotionRef = useRef(false);
+  const tickRef = useRef<() => void>(() => {});
+  const [reducedMotion, setReducedMotion] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches),
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    reducedMotionRef.current = mq.matches;
     const onChange = () => {
-      reducedMotionRef.current = mq.matches;
+      setReducedMotion(mq.matches);
     };
     mq.addEventListener?.("change", onChange);
     return () => mq.removeEventListener?.("change", onChange);
   }, []);
-
-  // Keep idle selection in sync when not playing.
-  useEffect(() => {
-    if (playback.status === "idle") {
-      setPlayback(createIdlePlaybackState(selectedIndex));
-    }
-  }, [selectedIndex, playback.status]);
 
   const stopRaf = useCallback(() => {
     if (rafRef.current != null) {
@@ -66,11 +63,16 @@ export function useTacticsPlayback({
       if (prev.status !== "playing") return prev;
       const next = tickPlayback(
         prev,
-        settings,
+        {
+          ...settings,
+          holdDurationMs:
+            steps[prev.fromStepIndex]?.durationMs ??
+            settings.holdDurationMs,
+        },
         steps.length,
         performance.now(),
         progressCarryRef.current,
-        { reducedMotion: reducedMotionRef.current },
+        { reducedMotion },
       );
       progressCarryRef.current = 0;
       if (next.fromStepIndex !== prev.fromStepIndex) {
@@ -81,8 +83,11 @@ export function useTacticsPlayback({
       }
       return next;
     });
-    rafRef.current = requestAnimationFrame(tick);
-  }, [onDisplayIndexChange, settings, steps.length]);
+    rafRef.current = requestAnimationFrame(() => tickRef.current());
+  }, [onDisplayIndexChange, reducedMotion, settings, steps]);
+  useEffect(() => {
+    tickRef.current = tick;
+  }, [tick]);
 
   useEffect(() => {
     if (playback.status === "playing") {
@@ -179,7 +184,7 @@ export function useTacticsPlayback({
     }
     const from = steps[playback.fromStepIndex]?.objects ?? [];
     const to = steps[playback.toStepIndex]?.objects ?? [];
-    if (reducedMotionRef.current) {
+    if (reducedMotion) {
       // Crossfade without movement: swap at midpoint.
       const src = playback.progress < 0.5 ? from : to;
       const opacity =
@@ -189,7 +194,7 @@ export function useTacticsPlayback({
       return src.map((o) => ({ ...o, opacity: Math.max(0.15, opacity) }));
     }
     return interpolateStepObjects(from, to, playback.progress);
-  }, [isPlaybackActive, playback, selectedIndex, steps]);
+  }, [isPlaybackActive, playback, reducedMotion, selectedIndex, steps]);
 
   const captionIndex = isPlaybackActive
     ? playback.phase === "transition" && playback.toStepIndex != null

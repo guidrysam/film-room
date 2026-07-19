@@ -55,7 +55,9 @@ function parseTeamPreset(
         ? Math.max(1, Math.floor(presetRaw.version))
         : 1,
   };
-  if (!validateTacticsPreset(preset).valid) return null;
+  if (!validateTacticsPreset(preset, { allowLegacyDrill: true }).valid) {
+    return null;
+  }
   const createdBy =
     typeof raw.createdBy === "string" ? raw.createdBy.trim() : "";
   if (!createdBy) return null;
@@ -229,20 +231,59 @@ export async function updateTeamPresetFromBoard(
     fieldArea: board.fieldView === "full" ? "full" : "half",
     objectives: [...current.objectives],
     setupInstructions: [...current.setupInstructions],
+    ...(current.howItWorks
+      ? { howItWorks: [...current.howItWorks] }
+      : {}),
     ...(current.activityInstructions
       ? { activityInstructions: [...current.activityInstructions] }
       : {}),
     coachingPoints: [...current.coachingPoints],
+    ...(current.commonMistakes
+      ? {
+          commonMistakes: current.commonMistakes.map((mistake) => ({
+            ...mistake,
+          })),
+        }
+      : {}),
     ...(current.progressions
-      ? { progressions: [...current.progressions] }
+      ? {
+          progressions: current.progressions.map((variation) =>
+            typeof variation === "string" ? variation : { ...variation },
+          ),
+        }
       : {}),
     ...(current.regressions
-      ? { regressions: [...current.regressions] }
+      ? {
+          regressions: current.regressions.map((variation) =>
+            typeof variation === "string" ? variation : { ...variation },
+          ),
+        }
       : {}),
     ...(current.safetyNotes
       ? { safetyNotes: [...current.safetyNotes] }
       : {}),
     ...(current.equipment ? { equipment: { ...current.equipment } } : {}),
+    ...(current.editorialMetadata
+      ? {
+          editorialMetadata: {
+            ...current.editorialMetadata,
+            ...(current.editorialMetadata.methodologyTags
+              ? {
+                  methodologyTags: [
+                    ...current.editorialMetadata.methodologyTags,
+                  ],
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(current.externalReferences
+      ? {
+          externalReferences: current.externalReferences.map((reference) => ({
+            ...reference,
+          })),
+        }
+      : {}),
     playbackSettings: { ...board.playbackSettings },
     steps: steps.map((step, index) => ({
       id: `step-${index + 1}`,
@@ -277,7 +318,9 @@ export async function updateTeamTacticsPreset(
         title: patch.title?.trim() || current.title,
         version: current.version + 1,
       };
-  const validation = validateTacticsPreset(nextPreset);
+  const validation = validateTacticsPreset(nextPreset, {
+    allowLegacyDrill: true,
+  });
   if (!validation.valid) throw new Error(validation.errors[0]);
   await updateDoc(teamPresetRef(teamId, presetId), {
     preset: nextPreset,

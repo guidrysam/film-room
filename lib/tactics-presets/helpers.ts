@@ -9,6 +9,7 @@ import type {
   TacticsPlayerTeam,
 } from "@/lib/tactics-boards";
 import type {
+  PresetEditorialMetadata,
   TacticsPreset,
   TacticsPresetStep,
 } from "@/lib/tactics-presets/types";
@@ -18,6 +19,15 @@ export const DEFAULT_PRESET_PLAYBACK = {
   holdDurationMs: 700,
   loop: false,
 } as const;
+
+export const DEFAULT_FILM_ROOM_EDITORIAL_METADATA: PresetEditorialMetadata = {
+  contentStatus: "internal_draft",
+  methodologyTags: [
+    "game-based learning",
+    "guided discovery",
+    "technical development",
+  ],
+};
 
 export function player(
   id: string,
@@ -85,12 +95,21 @@ export function step(
   title: string,
   objects: TacticsBoardObject[],
   notes?: string,
+  instruction?: Pick<
+    TacticsPresetStep,
+    | "explanation"
+    | "coachCue"
+    | "playerAction"
+    | "ballAction"
+    | "durationMs"
+  >,
 ): TacticsPresetStep {
   return {
     id,
     order,
     title,
     ...(notes ? { notes } : {}),
+    ...instruction,
     objects,
   };
 }

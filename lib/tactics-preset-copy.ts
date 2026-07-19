@@ -18,6 +18,7 @@ import { buildPreviewObjects, newStepId } from "@/lib/tactics-steps";
 import type {
   PresetSource,
   TacticsPreset,
+  TacticsPresetStep,
   TacticsPresetSourceType,
 } from "@/lib/tactics-presets/types";
 import { validateTacticsPreset } from "@/lib/tactics-presets/validation";
@@ -33,14 +34,27 @@ export function clonePresetSteps(
   durationMs?: number;
   objects: TacticsBoardObject[];
 }> {
-  return preset.steps.map((step) => ({
-    sourceStepId: step.id,
-    order: step.order,
-    title: step.title,
-    ...(step.notes ? { notes: step.notes } : {}),
-    ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
-    objects: deepCloneObjects(step.objects),
-  }));
+  const notesFor = (step: TacticsPresetStep): string | undefined => {
+    const instructional = [
+      step.explanation,
+      step.coachCue ? `Coach cue: “${step.coachCue}”` : undefined,
+      step.playerAction ? `Players: ${step.playerAction}` : undefined,
+      step.ballAction ? `Ball: ${step.ballAction}` : undefined,
+      step.notes,
+    ].filter((value): value is string => Boolean(value?.trim()));
+    return instructional.length > 0 ? instructional.join("\n\n") : undefined;
+  };
+  return preset.steps.map((step) => {
+    const notes = notesFor(step);
+    return {
+      sourceStepId: step.id,
+      order: step.order,
+      title: step.title,
+      ...(notes ? { notes } : {}),
+      ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+      objects: deepCloneObjects(step.objects),
+    };
+  });
 }
 
 export function buildPresetSource(
@@ -66,7 +80,9 @@ export async function createBoardFromPreset(
   sourceType: TacticsPresetSourceType,
   displayName?: string | null,
 ): Promise<TacticsBoard> {
-  const validation = validateTacticsPreset(preset);
+  const validation = validateTacticsPreset(preset, {
+    allowLegacyDrill: sourceType === "team",
+  });
   if (!validation.valid) {
     throw new Error(`This preset is invalid: ${validation.errors[0]}`);
   }

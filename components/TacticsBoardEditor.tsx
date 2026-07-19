@@ -141,6 +141,9 @@ export default function TacticsBoardEditor({
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [loadingSteps, setLoadingSteps] = useState(true);
   const [showPrevPositions, setShowPrevPositions] = useState(false);
+  const [newerPresetVersion, setNewerPresetVersion] = useState<number | null>(
+    null,
+  );
   const [loop, setLoop] = useState(initialBoard.playbackSettings.loop);
   const [speedPreset, setSpeedPreset] = useState<PlaybackSpeedPreset>(
     speedFromMs(initialBoard.playbackSettings.transitionDurationMs),
@@ -172,6 +175,26 @@ export default function TacticsBoardEditor({
   useEffect(() => {
     activeStepIdRef.current = activeStepId;
   }, [activeStepId]);
+  useEffect(() => {
+    const source = board.presetSource;
+    if (!source || source.sourceType !== "built_in") return;
+    let cancelled = false;
+    void import("@/lib/tactics-presets").then(
+      ({ getBuiltInTacticsPreset }) => {
+        const current = getBuiltInTacticsPreset(source.presetId);
+        if (
+          !cancelled &&
+          current &&
+          current.version > source.presetVersion
+        ) {
+          setNewerPresetVersion(current.version);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [board.presetSource]);
 
   const loadStepIntoEditor = useCallback((step: TacticsStep) => {
     setActiveStepId(step.id);
@@ -681,6 +704,12 @@ export default function TacticsBoardEditor({
               ? ` · From ${board.presetSource.sourceType === "built_in" ? "Film Room" : "team"} preset “${board.presetSource.presetTitle}”`
               : ""}
           </p>
+          {newerPresetVersion ? (
+            <p className="mt-1 text-[11px] text-amber-300">
+              A newer Film Room version is available. Your customized board
+              will not be changed.
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] text-zinc-400">

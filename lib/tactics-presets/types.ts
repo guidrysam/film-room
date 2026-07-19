@@ -42,10 +42,47 @@ export type TacticsPresetEquipment = {
   miniGoals?: number;
 };
 
+export type DrillVariation = {
+  title: string;
+  description: string;
+};
+
+export type CoachingMistake = {
+  mistake: string;
+  correction?: string;
+};
+
+export type PresetEditorialMetadata = {
+  contentStatus:
+    | "internal_draft"
+    | "reviewed"
+    | "licensed"
+    | "public_domain";
+  methodologyTags?: string[];
+  sourceName?: string;
+  sourceReference?: string;
+  sourceNotes?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+};
+
+export type ExternalDrillReference = {
+  provider: string;
+  title: string;
+  url?: string;
+  license?: string;
+  attributionRequired?: boolean;
+  importedAt?: string;
+};
+
 export type TacticsPresetStep = {
   id: string;
   order: number;
   title: string;
+  explanation?: string;
+  coachCue?: string;
+  playerAction?: string;
+  ballAction?: string;
   notes?: string;
   durationMs?: number;
   objects: TacticsBoardObject[];
@@ -69,12 +106,17 @@ export type TacticsPreset = {
   fieldArea?: "full" | "half" | "third" | "custom";
   objectives: string[];
   setupInstructions: string[];
+  howItWorks?: string[];
+  /** @deprecated Use howItWorks for new presets. */
   activityInstructions?: string[];
   coachingPoints: string[];
-  progressions?: string[];
-  regressions?: string[];
+  commonMistakes?: CoachingMistake[];
+  progressions?: Array<DrillVariation | string>;
+  regressions?: Array<DrillVariation | string>;
   safetyNotes?: string[];
   equipment?: TacticsPresetEquipment;
+  editorialMetadata?: PresetEditorialMetadata;
+  externalReferences?: ExternalDrillReference[];
   playbackSettings: TacticsPlaybackSettings;
   steps: TacticsPresetStep[];
   tags: string[];

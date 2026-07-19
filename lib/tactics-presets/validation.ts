@@ -4,6 +4,12 @@ import type { TacticsPreset } from "@/lib/tactics-presets/types";
 export type PresetValidationResult = {
   valid: boolean;
   errors: string[];
+  warnings: string[];
+};
+
+export type PresetValidationOptions = {
+  /** Preserve legacy team presets while built-in content uses strict lessons. */
+  allowLegacyDrill?: boolean;
 };
 
 function inBounds(value: number): boolean {
@@ -80,13 +86,19 @@ function validateObject(
 
 export function validateTacticsPreset(
   preset: TacticsPreset,
+  options: PresetValidationOptions = {},
 ): PresetValidationResult {
   const errors: string[] = [];
   if (!preset || typeof preset !== "object") {
-    return { valid: false, errors: ["preset: value must be an object"] };
+    return {
+      valid: false,
+      errors: ["preset: value must be an object"],
+      warnings: [],
+    };
   }
   const id = typeof preset.id === "string" ? preset.id : "";
   const path = `preset:${id || "(missing)"}`;
+  const warnings: string[] = [];
   if (!id.trim()) errors.push(`${path}: id is required`);
   if (!Number.isInteger(preset.version) || preset.version < 1) {
     errors.push(`${path}: version must be a positive integer`);
@@ -113,6 +125,44 @@ export function validateTacticsPreset(
       errors.push(`${path}: ${name} must be a string array`);
     }
   }
+  if (
+    preset.commonMistakes !== undefined &&
+    (!Array.isArray(preset.commonMistakes) ||
+      preset.commonMistakes.some(
+        (item) =>
+          !item ||
+          typeof item !== "object" ||
+          typeof item.mistake !== "string" ||
+          !item.mistake.trim() ||
+          (item.correction !== undefined &&
+            typeof item.correction !== "string"),
+      ))
+  ) {
+    errors.push(`${path}: commonMistakes must contain structured mistakes`);
+  }
+  for (const [name, variations] of [
+    ["progressions", preset.progressions],
+    ["regressions", preset.regressions],
+  ] as const) {
+    if (
+      variations !== undefined &&
+      (!Array.isArray(variations) ||
+        variations.some(
+          (item) =>
+            !(
+              typeof item === "string" ||
+              (item &&
+                typeof item === "object" &&
+                typeof item.title === "string" &&
+                item.title.trim() &&
+                typeof item.description === "string" &&
+                item.description.trim())
+            ),
+        ))
+    ) {
+      errors.push(`${path}: ${name} must contain valid drill variations`);
+    }
+  }
   const steps = Array.isArray(preset.steps) ? preset.steps : [];
   if (steps.length === 0) {
     errors.push(`${path}: at least one step is required`);
@@ -132,9 +182,60 @@ export function validateTacticsPreset(
   ) {
     errors.push(`${path}: goalkeeperCount is invalid`);
   }
+  if (
+    preset.editorialMetadata &&
+    ![
+      "internal_draft",
+      "reviewed",
+      "licensed",
+      "public_domain",
+    ].includes(preset.editorialMetadata.contentStatus)
+  ) {
+    errors.push(`${path}: editorial contentStatus is invalid`);
+  }
+  const enforceDrillLesson =
+    preset.kind === "practice_drill" && !options.allowLegacyDrill;
+  if (enforceDrillLesson) {
+    if (steps.length < 4) {
+      errors.push(`${path}: practice drills require at least four steps`);
+    }
+    if (!Array.isArray(preset.setupInstructions) || preset.setupInstructions.length === 0) {
+      errors.push(`${path}: practice drills require setup instructions`);
+    }
+    if (!Array.isArray(preset.objectives) || preset.objectives.length === 0) {
+      errors.push(`${path}: practice drills require objectives`);
+    }
+    if (!Array.isArray(preset.coachingPoints) || preset.coachingPoints.length === 0) {
+      errors.push(`${path}: practice drills require coaching points`);
+    }
+    if (
+      (!Array.isArray(preset.progressions) || preset.progressions.length === 0) &&
+      (!Array.isArray(preset.regressions) || preset.regressions.length === 0)
+    ) {
+      errors.push(
+        `${path}: practice drills require at least one progression or regression`,
+      );
+    }
+    if (!Array.isArray(preset.howItWorks) || preset.howItWorks.length === 0) {
+      errors.push(`${path}: practice drills require howItWorks instructions`);
+    }
+    if (!preset.equipment) {
+      warnings.push(`${path}: equipment data is recommended`);
+    }
+    if (!preset.ageGuidance?.trim()) {
+      warnings.push(`${path}: age guidance is recommended`);
+    }
+    if (preset.playerCount === undefined) {
+      warnings.push(`${path}: player count metadata is recommended`);
+    }
+    if ((preset.commonMistakes?.length ?? 0) < 3) {
+      warnings.push(`${path}: at least three common mistakes are recommended`);
+    }
+  }
 
   const stepIds = new Set<string>();
   const objectTypeById = new Map<string, string>();
+  let previousDrillObjectSignature: string | null = null;
   const firstOrder = steps[0]?.order ?? 0;
   if (firstOrder !== 0 && firstOrder !== 1) {
     errors.push(`${path}: step ordering must start at 0 or 1`);
@@ -157,11 +258,32 @@ export function validateTacticsPreset(
     if (typeof step.title !== "string" || !step.title.trim()) {
       errors.push(`${stepPath}: title is required`);
     }
+    if (
+      enforceDrillLesson &&
+      (typeof step.explanation !== "string" || !step.explanation.trim())
+    ) {
+      errors.push(`${stepPath}: drill steps require an explanation`);
+    }
+    if (
+      enforceDrillLesson &&
+      (typeof step.coachCue !== "string" || !step.coachCue.trim())
+    ) {
+      warnings.push(`${stepPath}: a coach cue is recommended`);
+    }
 
     const objectIds = new Set<string>();
     const objects = Array.isArray(step.objects) ? step.objects : [];
     if (!Array.isArray(step.objects)) {
       errors.push(`${stepPath}: objects must be an array`);
+    }
+    if (enforceDrillLesson) {
+      const signature = JSON.stringify(objects);
+      if (signature === previousDrillObjectSignature) {
+        errors.push(
+          `${stepPath}: drill steps must show a distinct visual state`,
+        );
+      }
+      previousDrillObjectSignature = signature;
     }
     for (const object of objects) {
       if (objectIds.has(object.id)) {
@@ -179,22 +301,25 @@ export function validateTacticsPreset(
     }
   });
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 export function validatePresetCatalog(
   presets: TacticsPreset[],
 ): PresetValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
   const ids = new Set<string>();
   for (const preset of presets) {
     if (ids.has(preset.id)) {
       errors.push(`catalog: duplicate preset id ${preset.id}`);
     }
     ids.add(preset.id);
-    errors.push(...validateTacticsPreset(preset).errors);
+    const result = validateTacticsPreset(preset);
+    errors.push(...result.errors);
+    warnings.push(...result.warnings);
   }
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, warnings };
 }
 
 /**
@@ -205,7 +330,17 @@ export function validatedPresetCatalog(
   presets: TacticsPreset[],
 ): TacticsPreset[] {
   const catalogResult = validatePresetCatalog(presets);
-  if (catalogResult.valid) return presets;
+  if (catalogResult.valid) {
+    if (
+      catalogResult.warnings.length > 0 &&
+      process.env.NODE_ENV !== "production"
+    ) {
+      console.warn(
+        `Tactics preset quality warnings:\n${catalogResult.warnings.join("\n")}`,
+      );
+    }
+    return presets;
+  }
   const message = `Invalid tactics preset catalog:\n${catalogResult.errors.join("\n")}`;
   if (process.env.NODE_ENV !== "production") {
     throw new Error(message);

@@ -4,6 +4,7 @@ import { FORMATION_PRESETS_9V9 } from "@/lib/tactics-presets/formations-9v9";
 import { SET_PIECE_PRESETS } from "@/lib/tactics-presets/set-pieces";
 import { TACTICAL_PRESETS_11V11 } from "@/lib/tactics-presets/tactics-11v11";
 import { TACTICAL_PRESETS_9V9 } from "@/lib/tactics-presets/tactics-9v9";
+import { DEFAULT_FILM_ROOM_EDITORIAL_METADATA } from "@/lib/tactics-presets/helpers";
 import type { TacticsPreset } from "@/lib/tactics-presets/types";
 import { validatedPresetCatalog } from "@/lib/tactics-presets/validation";
 
@@ -14,10 +15,29 @@ const rawCatalog: TacticsPreset[] = [
   ...TACTICAL_PRESETS_11V11,
   ...SET_PIECE_PRESETS,
   ...DRILL_PRESETS,
-];
+].map((preset) => ({
+  ...preset,
+  editorialMetadata: preset.editorialMetadata ?? {
+    ...DEFAULT_FILM_ROOM_EDITORIAL_METADATA,
+    methodologyTags: [
+      ...(DEFAULT_FILM_ROOM_EDITORIAL_METADATA.methodologyTags ?? []),
+    ],
+  },
+}));
 
-export const BUILT_IN_TACTICS_PRESETS =
-  validatedPresetCatalog(rawCatalog);
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(nested);
+    }
+  }
+  return value;
+}
+
+export const BUILT_IN_TACTICS_PRESETS = deepFreeze(
+  validatedPresetCatalog(rawCatalog),
+);
 
 export function getBuiltInTacticsPreset(
   presetId: string,

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import TacticsBoardCanvas from "@/components/TacticsBoardCanvas";
+import TacticsDrillCoachMode from "@/components/TacticsDrillCoachMode";
 import TacticsPlaybackControls from "@/components/TacticsPlaybackControls";
 import TacticsStepNotes from "@/components/TacticsStepNotes";
 import { useTacticsPlayback } from "@/hooks/useTacticsPlayback";
@@ -51,17 +52,28 @@ function DetailList({
   );
 }
 
-export default function TacticsPresetPreview({
-  preset,
-  sourceType,
-  onUse,
-  onClose,
-}: {
+type TacticsPresetPreviewProps = {
   preset: TacticsPreset;
   sourceType: TacticsPresetSourceType;
   onUse: () => Promise<void> | void;
   onClose: () => void;
-}) {
+};
+
+export default function TacticsPresetPreview(
+  props: TacticsPresetPreviewProps,
+) {
+  if (props.preset.kind === "practice_drill") {
+    return <TacticsDrillCoachMode {...props} />;
+  }
+  return <StandardTacticsPresetPreview {...props} />;
+}
+
+function StandardTacticsPresetPreview({
+  preset,
+  sourceType,
+  onUse,
+  onClose,
+}: TacticsPresetPreviewProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [usingPreset, setUsingPreset] = useState(false);
   const [loop, setLoop] = useState(preset.playbackSettings.loop);
@@ -258,15 +270,25 @@ export default function TacticsPresetPreview({
             />
             <DetailList
               title="How it works"
-              items={preset.activityInstructions}
+              items={preset.howItWorks ?? preset.activityInstructions}
               numbered
             />
             <DetailList
               title="Coaching points"
               items={preset.coachingPoints}
             />
-            <DetailList title="Progressions" items={preset.progressions} />
-            <DetailList title="Regressions" items={preset.regressions} />
+            <DetailList
+              title="Progressions"
+              items={preset.progressions?.map((item) =>
+                typeof item === "string" ? item : item.title,
+              )}
+            />
+            <DetailList
+              title="Regressions"
+              items={preset.regressions?.map((item) =>
+                typeof item === "string" ? item : item.title,
+              )}
+            />
             <DetailList title="Safety" items={preset.safetyNotes} />
           </aside>
         </div>
