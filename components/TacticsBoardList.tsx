@@ -6,22 +6,19 @@ import { useCallback, useEffect, useState } from "react";
 import SoccerFieldSvg from "@/components/SoccerFieldSvg";
 import { tacticsBoardEditorUrl } from "@/lib/tactics-board-share";
 import {
-  canCoachTeam,
   createTacticsBoard,
   deleteTacticsBoard,
   duplicateTacticsBoard,
   listTacticsBoards,
   relativeUpdatedLabel,
   renameTacticsBoard,
+  TACTICS_AWAY_COLOR,
+  TACTICS_HOME_COLOR,
   visibilityLabel,
   type TacticsBoard,
 } from "@/lib/tactics-boards";
-import type { Team } from "@/lib/teams";
+import { canCoachTeam, type Team } from "@/lib/teams";
 import { normToSvg } from "@/lib/tactics-field-geometry";
-import {
-  TACTICS_AWAY_COLOR,
-  TACTICS_HOME_COLOR,
-} from "@/lib/tactics-boards";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
