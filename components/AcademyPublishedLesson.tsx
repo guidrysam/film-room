@@ -1,5 +1,5 @@
+import AcademyActivityBoardPlayer from "@/components/AcademyActivityBoardPlayer";
 import AcademyActivityYouTubeSuggestions from "@/components/AcademyActivityYouTubeSuggestions";
-import TacticsBoardCanvas from "@/components/TacticsBoardCanvas";
 import { buildLessonConceptArticle } from "@/lib/academy/concept-article";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
 import type { PublishedLessonPackageView } from "@/lib/academy/published-content";
@@ -96,6 +96,18 @@ export default function AcademyPublishedLesson({
         </div>
       </article>
 
+      {lesson.steps.some((step) => step.objects?.length) ? (
+        <section>
+          <h3 className="mb-3 text-lg font-semibold text-white">
+            Lesson walkthrough
+          </h3>
+          <AcademyActivityBoardPlayer
+            title={lesson.title}
+            steps={lesson.steps}
+          />
+        </section>
+      ) : null}
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-white">Activities</h3>
         <div className="space-y-4">
@@ -109,24 +121,10 @@ export default function AcademyPublishedLesson({
               </p>
               <h4 className="mt-1 font-semibold text-white">{activity.title}</h4>
               <p className="mt-1 text-sm text-zinc-400">{activity.summary}</p>
-              {activity.steps[0]?.objects?.length ? (
-                <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
-                  <TacticsBoardCanvas
-                    orientation="horizontal"
-                    fieldView="full"
-                    objects={activity.steps[0].objects}
-                    tool="select"
-                    readOnly
-                    className="!rounded-none !shadow-none"
-                  />
-                  <p className="border-t border-white/10 bg-black/30 px-3 py-2 text-[11px] text-zinc-400">
-                    Tactical board · {activity.steps[0].title}
-                    {activity.steps.length > 1
-                      ? ` · ${activity.steps.length} steps`
-                      : ""}
-                  </p>
-                </div>
-              ) : null}
+              <AcademyActivityBoardPlayer
+                title={activity.title}
+                steps={activity.steps}
+              />
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <DetailList title="Setup" items={activity.setupInstructions} />
                 <DetailList title="Instructions" items={activity.howItWorks} />
