@@ -1,3 +1,4 @@
+import AcademyActivityYouTubeSuggestions from "@/components/AcademyActivityYouTubeSuggestions";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
 import type { PublishedLessonPackageView } from "@/lib/academy/published-content";
 
@@ -90,6 +91,10 @@ export default function AcademyPublishedLesson({
                 />
                 <DetailList title="Equipment" items={activity.equipment} />
               </div>
+              <AcademyActivityYouTubeSuggestions
+                key={activity.id}
+                activity={activity}
+              />
             </article>
           ))}
         </div>
