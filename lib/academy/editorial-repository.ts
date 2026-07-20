@@ -11,7 +11,6 @@ import { validateAcademyLessonPackage } from "@/lib/academy/lesson-package-valid
 import {
   OPEN_BODY_PACKAGE_ID,
   buildOpenBodyEditorialRecords,
-  getOpenBodyPackageMemberRecords,
 } from "@/lib/academy/open-body-package";
 import { buildBlock1EditorialRecords } from "@/lib/academy/block1-packages";
 import {
@@ -121,19 +120,51 @@ export function extractLessonPackageContent(
     throw new Error(`Package ${packageId} was not found in editorial records.`);
   }
   const manifest = payloadAs<AcademyLessonPackageManifest>(packageRecord);
-  const lesson = payloadAs<AcademyTacticalLesson>(
-    byId.get(manifest.lessonId)!,
-  );
-  const activities = manifest.activityIds.map((id) =>
-    payloadAs<AcademyActivity>(byId.get(id)!),
-  );
-  const assignment = payloadAs<AcademyAssignmentTemplate>(
-    byId.get(manifest.assignmentId)!,
-  );
-  const quiz = payloadAs<AcademyQuiz>(byId.get(manifest.quizId)!);
-  const questions = manifest.questionIds.map((id) =>
-    payloadAs<AcademyQuizQuestion>(byId.get(id)!),
-  );
+  const lessonRecord = byId.get(manifest.lessonId);
+  if (!lessonRecord) {
+    throw new Error(
+      `Package ${packageId}: lesson ${manifest.lessonId} was not found.`,
+    );
+  }
+  const lesson = payloadAs<AcademyTacticalLesson>(lessonRecord);
+  const activities = manifest.activityIds.map((id) => {
+    const record = byId.get(id);
+    if (!record) {
+      throw new Error(`Package ${packageId}: activity ${id} was not found.`);
+    }
+    return payloadAs<AcademyActivity>(record);
+  });
+  const assignmentRecord = byId.get(manifest.assignmentId);
+  if (!assignmentRecord) {
+    throw new Error(
+      `Package ${packageId}: assignment ${manifest.assignmentId} was not found.`,
+    );
+  }
+  const assignment = payloadAs<AcademyAssignmentTemplate>(assignmentRecord);
+  const quizRecord = byId.get(manifest.quizId);
+  if (!quizRecord) {
+    throw new Error(
+      `Package ${packageId}: quiz ${manifest.quizId} was not found.`,
+    );
+  }
+  const quiz = payloadAs<AcademyQuiz>(quizRecord);
+  const questions = manifest.questionIds.map((id) => {
+    const record = byId.get(id);
+    if (!record) {
+      throw new Error(`Package ${packageId}: question ${id} was not found.`);
+    }
+    return payloadAs<AcademyQuizQuestion>(record);
+  });
+  const members = manifest.memberIds.flatMap((id) => {
+    const record = byId.get(id);
+    return record ? [record] : [];
+  });
+  const missingMembers = manifest.memberIds.filter((id) => !byId.has(id));
+  if (missingMembers.length) {
+    throw new Error(
+      `Package ${packageId}: missing members ${missingMembers.join(", ")}`,
+    );
+  }
   return {
     packageRecord,
     manifest,
@@ -142,9 +173,7 @@ export function extractLessonPackageContent(
     assignment,
     quiz,
     questions,
-    members: getOpenBodyPackageMemberRecords(records).filter(
-      (record) => record.id !== packageId,
-    ),
+    members,
   };
 }
 
@@ -326,8 +355,9 @@ export function transitionEditorialObject(
   return { records: nextRecords, auditEntry, changed: record };
 }
 
-export function approveOpenBodyPackage(
+export function approveLessonPackage(
   records: readonly AcademyCanonicalRecord[],
+  packageId: string,
   input: { actor: string; at: string; note?: string },
 ): {
   records: AcademyCanonicalRecord[];
@@ -335,7 +365,7 @@ export function approveOpenBodyPackage(
 } {
   let current = [...records];
   const auditEntries: AcademyEditorialAuditEntry[] = [];
-  const content = extractLessonPackageContent(current);
+  const content = extractLessonPackageContent(current, packageId);
   const packageValidation = validateAcademyLessonPackage({
     catalog: U12_ACADEMY_GOAL_CATALOG,
     lesson: content.lesson,
@@ -372,8 +402,19 @@ export function approveOpenBodyPackage(
   return { records: current, auditEntries };
 }
 
-export function publishOpenBodyPackage(
+export function approveOpenBodyPackage(
   records: readonly AcademyCanonicalRecord[],
+  input: { actor: string; at: string; note?: string },
+): {
+  records: AcademyCanonicalRecord[];
+  auditEntries: AcademyEditorialAuditEntry[];
+} {
+  return approveLessonPackage(records, OPEN_BODY_PACKAGE_ID, input);
+}
+
+export function publishLessonPackage(
+  records: readonly AcademyCanonicalRecord[],
+  packageId: string,
   input: {
     actor: string;
     at: string;
@@ -388,8 +429,7 @@ export function publishOpenBodyPackage(
 } {
   let current = [...records];
   const auditEntries: AcademyEditorialAuditEntry[] = [];
-  const content = extractLessonPackageContent(current);
-  // Refresh content after ensuring every member is approved.
+  const content = extractLessonPackageContent(current, packageId);
   for (const member of [content.packageRecord, ...content.members]) {
     const status =
       member.lifecycle === "needs_review"
@@ -402,7 +442,7 @@ export function publishOpenBodyPackage(
       );
     }
   }
-  const refreshed = extractLessonPackageContent(current);
+  const refreshed = extractLessonPackageContent(current, packageId);
   const publishValidation = validateAcademyLessonPackage({
     catalog: U12_ACADEMY_GOAL_CATALOG,
     lesson: refreshed.lesson,
@@ -435,7 +475,6 @@ export function publishOpenBodyPackage(
     catalogId: input.catalogId ?? "film-room-academy",
     catalogVersion: input.catalogVersion,
   });
-  // Ensure published payloads contain no private editorial notes/provenance.
   for (const object of publishedCatalog.objects) {
     const serialized = JSON.stringify(object.payload);
     if (
@@ -447,10 +486,26 @@ export function publishOpenBodyPackage(
         `${object.id}: published payload leaked private editorial metadata.`,
       );
     }
-    // Re-strip defensively for Team Academy projections.
     object.payload = stripSourceMetadata(object.payload);
   }
   return { records: current, auditEntries, publishedCatalog };
+}
+
+export function publishOpenBodyPackage(
+  records: readonly AcademyCanonicalRecord[],
+  input: {
+    actor: string;
+    at: string;
+    catalogId?: string;
+    catalogVersion: number;
+    note?: string;
+  },
+): {
+  records: AcademyCanonicalRecord[];
+  auditEntries: AcademyEditorialAuditEntry[];
+  publishedCatalog: PublishedAcademyCatalog;
+} {
+  return publishLessonPackage(records, OPEN_BODY_PACKAGE_ID, input);
 }
 
 export function unpublishOpenBodyPackage(
@@ -469,7 +524,7 @@ export function unpublishOpenBodyPackage(
 } {
   let current = [...records];
   const auditEntries: AcademyEditorialAuditEntry[] = [];
-  const content = extractLessonPackageContent(current);
+  const content = extractLessonPackageContent(current, OPEN_BODY_PACKAGE_ID);
   for (const member of [content.packageRecord, ...content.members]) {
     if (member.lifecycle !== "published") continue;
     const result = transitionEditorialObject(current, {
