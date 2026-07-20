@@ -28,6 +28,7 @@ const ID_PREFIX: Record<AcademyCanonicalObjectType, string> = {
   conditioned_game: "conditioned-game",
   practice: "practice",
   seasonal_program: "program",
+  curriculum: "curriculum",
   coaching_cue: "cue",
   common_error: "error",
   progression: "progression",

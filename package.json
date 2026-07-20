@@ -18,6 +18,7 @@
     "academy:catalog:validate": "tsx scripts/academy/validate-canonical-catalog.ts",
     "academy:catalog:publish": "tsx scripts/academy/publish-canonical-catalog.ts",
     "academy:editorial:seed": "tsx scripts/academy/seed-editorial-package.ts",
+    "academy:editorial:seed-block1": "tsx scripts/academy/seed-block1-editorial.ts",
     "academy:editorial:transition": "tsx scripts/academy/transition-editorial.ts",
     "academy:editorial:approve-package": "tsx scripts/academy/approve-editorial-package.ts",
     "academy:editorial:publish-package": "tsx scripts/academy/publish-editorial-package.ts",

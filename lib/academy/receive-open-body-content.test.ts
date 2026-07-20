@@ -1,20 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CANONICAL_ACTIVITY_LIBRARY } from "@/lib/academy/activity-library";
 import { validateAcademyLessonPackage } from "@/lib/academy/lesson-package-validation";
 import {
   OPEN_BODY_ASSIGNMENT,
   OPEN_BODY_QUIZ,
   OPEN_BODY_QUIZ_QUESTIONS,
+  OPEN_BODY_SMALL_SIDED_GAME,
+  OPEN_BODY_TECHNICAL_ACTIVITY,
+  OPEN_BODY_WARMUP,
   RECEIVE_OPEN_BODY_LESSON,
 } from "@/lib/academy/receive-open-body-content";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
+
+const OPEN_BODY_ACTIVITIES = [
+  OPEN_BODY_WARMUP,
+  OPEN_BODY_TECHNICAL_ACTIVITY,
+  OPEN_BODY_SMALL_SIDED_GAME,
+];
 
 function lessonPackage() {
   return {
     catalog: U12_ACADEMY_GOAL_CATALOG,
     lesson: RECEIVE_OPEN_BODY_LESSON,
-    activities: CANONICAL_ACTIVITY_LIBRARY,
+    activities: OPEN_BODY_ACTIVITIES,
     assignment: OPEN_BODY_ASSIGNMENT,
     quiz: OPEN_BODY_QUIZ,
     questions: OPEN_BODY_QUIZ_QUESTIONS,
@@ -25,10 +33,10 @@ test("open-body lesson package is complete and internally valid", () => {
   const validation = validateAcademyLessonPackage(lessonPackage());
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.valid, true);
-  assert.equal(CANONICAL_ACTIVITY_LIBRARY.length, 3);
+  assert.equal(OPEN_BODY_ACTIVITIES.length, 3);
   assert.equal(OPEN_BODY_QUIZ_QUESTIONS.length, 6);
   assert.deepEqual(
-    CANONICAL_ACTIVITY_LIBRARY.map((activity) => activity.activityRole),
+    OPEN_BODY_ACTIVITIES.map((activity) => activity.activityRole),
     ["warm_up", "technical", "small_sided_game"],
   );
 });
@@ -42,7 +50,7 @@ test("canonical IDs and target goal stay stable", () => {
     "u12-receive-open-body",
   ]);
   assert.deepEqual(
-    CANONICAL_ACTIVITY_LIBRARY.map((activity) => activity.id),
+    OPEN_BODY_ACTIVITIES.map((activity) => activity.id),
     [
       "academy-warmup-open-body-gates",
       "academy-activity-open-body-diamond",
@@ -62,7 +70,7 @@ test("all content remains review-only and source-independent", () => {
   assert.equal(serialized.includes(".pdf"), false);
   for (const record of [
     RECEIVE_OPEN_BODY_LESSON,
-    ...CANONICAL_ACTIVITY_LIBRARY,
+    ...OPEN_BODY_ACTIVITIES,
     OPEN_BODY_ASSIGNMENT,
     OPEN_BODY_QUIZ,
     ...OPEN_BODY_QUIZ_QUESTIONS,

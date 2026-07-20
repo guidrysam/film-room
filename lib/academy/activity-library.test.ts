@@ -30,18 +30,24 @@ test("initial canonical activity repository is valid and stable", () => {
   const validation = validateCanonicalActivityLibrary({
     activities: CANONICAL_ACTIVITY_LIBRARY,
     catalog: U12_ACADEMY_GOAL_CATALOG,
-    lessonIds: [RECEIVE_OPEN_BODY_LESSON.id],
+    lessonIds: [
+      RECEIVE_OPEN_BODY_LESSON.id,
+      "u12-lesson-ball-available",
+      "u12-lesson-turn-escape",
+      "u12-lesson-shield-purpose",
+    ],
   });
   assert.deepEqual(validation.errors, []);
   assert.equal(validation.valid, true);
   assert.deepEqual(
-    CANONICAL_ACTIVITY_LIBRARY.map((activity) => activity.id),
+    CANONICAL_ACTIVITY_LIBRARY.slice(0, 3).map((activity) => activity.id),
     [
       "academy-warmup-open-body-gates",
       "academy-activity-open-body-diamond",
       "academy-ssg-open-body-end-zones",
     ],
   );
+  assert.equal(CANONICAL_ACTIVITY_LIBRARY.length, 12);
   for (const activity of CANONICAL_ACTIVITY_LIBRARY) {
     assert.equal(activity.version, 1);
     assert.equal(activity.editorial.status, "needs_coach_review");
@@ -53,10 +59,11 @@ test("initial canonical activity repository is valid and stable", () => {
 });
 
 test("lesson composes canonical activity IDs without embedding activities", () => {
-  assert.deepEqual(
-    RECEIVE_OPEN_BODY_LESSON.activityIds,
-    CANONICAL_ACTIVITY_LIBRARY.map((activity) => activity.id),
-  );
+  assert.deepEqual(RECEIVE_OPEN_BODY_LESSON.activityIds, [
+    "academy-warmup-open-body-gates",
+    "academy-activity-open-body-diamond",
+    "academy-ssg-open-body-end-zones",
+  ]);
   assert.equal(
     Object.hasOwn(RECEIVE_OPEN_BODY_LESSON, "setupInstructions"),
     false,

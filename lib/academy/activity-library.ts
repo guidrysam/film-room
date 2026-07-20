@@ -3,6 +3,21 @@ import {
   OPEN_BODY_TECHNICAL_ACTIVITY,
   OPEN_BODY_WARMUP,
 } from "@/lib/academy/receive-open-body-content";
+import {
+  BALL_AVAILABLE_SSG,
+  BALL_AVAILABLE_TECHNICAL,
+  BALL_AVAILABLE_WARMUP,
+} from "@/lib/academy/block1-ball-available-content";
+import {
+  SHIELD_PURPOSE_SSG,
+  SHIELD_PURPOSE_TECHNICAL,
+  SHIELD_PURPOSE_WARMUP,
+} from "@/lib/academy/block1-shield-purpose-content";
+import {
+  TURN_ESCAPE_SSG,
+  TURN_ESCAPE_TECHNICAL,
+  TURN_ESCAPE_WARMUP,
+} from "@/lib/academy/block1-turn-escape-content";
 import type {
   AcademyActivity,
   AcademyActivityCategory,
@@ -37,6 +52,15 @@ const ACTIVITIES: readonly AcademyActivity[] = [
   OPEN_BODY_WARMUP,
   OPEN_BODY_TECHNICAL_ACTIVITY,
   OPEN_BODY_SMALL_SIDED_GAME,
+  BALL_AVAILABLE_WARMUP,
+  BALL_AVAILABLE_TECHNICAL,
+  BALL_AVAILABLE_SSG,
+  TURN_ESCAPE_WARMUP,
+  TURN_ESCAPE_TECHNICAL,
+  TURN_ESCAPE_SSG,
+  SHIELD_PURPOSE_WARMUP,
+  SHIELD_PURPOSE_TECHNICAL,
+  SHIELD_PURPOSE_SSG,
 ];
 
 const activityById = new Map(

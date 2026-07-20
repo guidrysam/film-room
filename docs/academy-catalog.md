@@ -61,8 +61,19 @@ Every editorial record has:
 - version history
 
 Supported object types include goals, lessons, activities, drills, warmups,
-small-sided and conditioned games, practices, seasonal programs, coaching
-cues, common errors, progressions, regressions, assignments, and quizzes.
+small-sided and conditioned games, practices, seasonal programs, curricula,
+coaching cues, common errors, progressions, regressions, assignments, quizzes,
+and lesson packages.
+
+A **curriculum** is the annual pathway shell:
+
+```text
+Curriculum → Training Block → Learning Sequence → Lesson Package
+```
+
+Calendar slots are optional so clubs can map sequences onto 1× / 2× / 3×
+training weeks without changing package atoms. `seasonal_program` remains the
+older goal-placement preset shape and is not replaced by curriculum.
 
 IDs are allocated once with `createStableCanonicalId` and remain unchanged
 across versions. Revisions increment `version` and return the object to review.

@@ -13,6 +13,7 @@ import {
   buildOpenBodyEditorialRecords,
   getOpenBodyPackageMemberRecords,
 } from "@/lib/academy/open-body-package";
+import { buildBlock1EditorialRecords } from "@/lib/academy/block1-packages";
 import {
   ACADEMY_CANONICAL_EDITORIAL_DIR,
   academyEditorialAuditPath,
@@ -89,6 +90,17 @@ export async function seedOpenBodyEditorialPackage(
 ): Promise<AcademyCanonicalRecord[]> {
   requireAcademyEditor(env);
   const records = buildOpenBodyEditorialRecords("needs_coach_review");
+  for (const record of records) {
+    await saveEditorialRecord(record);
+  }
+  return records;
+}
+
+export async function seedBlock1EditorialPackages(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<AcademyCanonicalRecord[]> {
+  requireAcademyEditor(env);
+  const records = buildBlock1EditorialRecords("needs_coach_review");
   for (const record of records) {
     await saveEditorialRecord(record);
   }

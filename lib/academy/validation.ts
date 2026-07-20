@@ -653,6 +653,26 @@ export function validateAssignmentTemplate(
   if (!assignment.instructions.length) {
     errors.push(`${path}: instructions are required`);
   }
+  if (
+    assignment.estimatedMinutes !== undefined &&
+    (!Number.isFinite(assignment.estimatedMinutes) ||
+      assignment.estimatedMinutes < 5 ||
+      assignment.estimatedMinutes > 60)
+  ) {
+    errors.push(`${path}: estimatedMinutes must be between 5 and 60`);
+  }
+  if (assignment.completionCriteria && !assignment.completionCriteria.length) {
+    errors.push(`${path}: completionCriteria cannot be empty when provided`);
+  }
+  if (!assignment.estimatedMinutes) {
+    warnings.push(`${path}: estimatedMinutes helps coaches set expectations`);
+  }
+  if (!assignment.completionCriteria?.length) {
+    warnings.push(`${path}: completionCriteria help players know when they are done`);
+  }
+  if (!assignment.easierOption || !assignment.harderOption) {
+    warnings.push(`${path}: easier/harder options support mixed readiness`);
+  }
   if (!assignment.editorial) {
     errors.push(`${path}: editorial metadata is required`);
   }

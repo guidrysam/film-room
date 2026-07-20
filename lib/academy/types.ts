@@ -436,6 +436,7 @@ export type AcademyCanonicalObjectType =
   | "conditioned_game"
   | "practice"
   | "seasonal_program"
+  | "curriculum"
   | "coaching_cue"
   | "common_error"
   | "progression"
@@ -594,6 +595,27 @@ export type AcademyEditorialMetadata = {
   warnings?: string[];
 };
 
+export type AcademyLessonPackageCurriculumPlacement = {
+  curriculumId: string;
+  trainingBlockId: string;
+  learningSequenceId: string;
+  sequenceSlotOrder: number;
+};
+
+export type AcademyLessonPackagePracticePlan = {
+  defaultMinutes: number;
+  shortMinutes: number;
+  sections: Array<{
+    order: number;
+    role: PracticeActivityRole;
+    activityId: string;
+    plannedMinutes: number;
+    shortMinutes: number;
+    objective: string;
+  }>;
+  reflectionQuestions: string[];
+};
+
 export type AcademyLessonPackageManifest = {
   id: string;
   version: number;
@@ -606,7 +628,149 @@ export type AcademyLessonPackageManifest = {
   assignmentId: string;
   quizId: string;
   questionIds: string[];
+  /** Optional pathway placement for curriculum-shell validation. */
+  curriculumPlacement?: AcademyLessonPackageCurriculumPlacement;
+  priorLessonIds?: string[];
+  nextLessonIds?: string[];
+  practicePlan?: AcademyLessonPackagePracticePlan;
   editorial: AcademyEditorialMetadata;
+};
+
+/**
+ * Annual / pathway curriculum shell. Distinct from `AcademyPreset`
+ * (`seasonal_program`), which places goals into older week-templated blocks.
+ *
+ * Hierarchy: Curriculum → Training Block → Learning Sequence → Lesson Package.
+ * Calendar slots are optional so clubs can map sequences onto 1× / 2× / 3× weeks.
+ */
+export type AcademyCurriculumOwnership =
+  | { kind: "film_room" }
+  | {
+      kind: "club";
+      clubId: string;
+      sourceCurriculumId: string;
+      sourceVersion: number;
+    }
+  | {
+      kind: "team_adaptation";
+      teamId: string;
+      clubCurriculumId?: string;
+      sourceCurriculumId: string;
+      sourceVersion: number;
+    };
+
+export type AcademyClubIdentityEmphasis =
+  | "possession"
+  | "pressing"
+  | "counterattack"
+  | "balanced"
+  | "custom";
+
+export type AcademyLearningSequenceSlotKind =
+  | "core_lesson"
+  | "flexible"
+  | "assessment";
+
+export type AcademyLearningSequenceSlot = {
+  order: number;
+  kind: AcademyLearningSequenceSlotKind;
+  title: string;
+  primaryGoalIds: string[];
+  /** Map lesson identity; may exist before the package is authored. */
+  lessonId?: string;
+  /** Resolved lesson package id when authored / published. */
+  lessonPackageId?: string;
+  flexibleWeekId?: string;
+  notes?: string;
+};
+
+export type AcademyLearningSequence = {
+  id: string;
+  title: string;
+  summary: string;
+  order: number;
+  slots: AcademyLearningSequenceSlot[];
+};
+
+export type AcademyTrainingBlock = {
+  id: string;
+  order: number;
+  /** Capability-oriented title (what players should be able to do). */
+  title: string;
+  objective: string;
+  playerOutcomes: string[];
+  corePrinciples: string[];
+  prerequisiteBlockIds: string[];
+  primaryGoalIds: string[];
+  assessmentCriteria: string[];
+  repeatOrAdvanceGuidance: string;
+  /** Win/loss habits woven into the block (not a standalone chapter). */
+  transitionHabits: string[];
+  learningSequences: AcademyLearningSequence[];
+  recommendedDurationWeeks: { min: number; default: number; max: number };
+};
+
+export type AcademyConceptSpiral = {
+  conceptId: string;
+  label: string;
+  introduceLessonId: string;
+  practiceLessonId: string;
+  applyLessonId: string;
+  masterLessonId: string;
+};
+
+export type AcademyCurriculumCalendarSlot = {
+  id: string;
+  order: number;
+  label: string;
+  trainingBlockId: string;
+  learningSequenceId: string;
+  sequenceSlotOrder: number;
+};
+
+export type AcademyCurriculum = {
+  id: string;
+  version: number;
+  title: string;
+  shortDescription: string;
+  ageBand: { minAge: number; maxAge: number; labels: string[] };
+  developmentStage: AcademyDevelopmentStage;
+  defaultPlayingFormat: PlayingFormat;
+  ownership: AcademyCurriculumOwnership;
+  philosophy: {
+    summary: string;
+    playerExperiencePrinciples: string[];
+    coachingPrinciples: string[];
+    gamePrinciples: string[];
+  };
+  defaults: {
+    practicesPerWeek: 1 | 2 | 3;
+    practiceMinutes: number;
+    coreLessonCount: number;
+    flexibleWeekCount: number;
+    clubIdentityFlexPercent: { min: number; max: number };
+  };
+  clubIdentityGuidance: {
+    flexPercent: { min: number; max: number };
+    allowedEmphases: AcademyClubIdentityEmphasis[];
+    notes: string[];
+  };
+  trainingBlocks: AcademyTrainingBlock[];
+  conceptSpirals: AcademyConceptSpiral[];
+  /** Optional week/calendar mapping over learning-sequence slots. */
+  calendarSlots?: AcademyCurriculumCalendarSlot[];
+  editorial: AcademyEditorialMetadata;
+};
+
+/** Team pin to a curriculum version for a season (stub for later product wiring). */
+export type TeamCurriculumPin = {
+  id: string;
+  teamId: string;
+  curriculumId: string;
+  curriculumVersion: number;
+  status: "draft" | "active" | "completed" | "archived";
+  assignedAt: string;
+  assignedBy: string;
 };
 
 export type AcademySafetyReview = {
@@ -651,6 +815,11 @@ export type AcademyAssignmentTemplate = {
   linkedDrillId?: string;
   linkedQuizId?: string;
   instructions: string[];
+  /** Estimated independent work time for the player. */
+  estimatedMinutes?: number;
+  completionCriteria?: string[];
+  easierOption?: string;
+  harderOption?: string;
   sourceProvenance: SourceInfluence[];
   editorial: AcademyEditorialMetadata;
 };

@@ -2,6 +2,7 @@ import { stripSourceMetadata } from "@/lib/academy/source-privacy";
 import type {
   AcademyAssignmentTemplate,
   AcademyCanonicalRecord,
+  AcademyCurriculum,
   AcademyGoal,
   AcademyKnowledgeCandidate,
   AcademyPracticeTemplate,
@@ -11,6 +12,7 @@ import type {
   AcademyTacticalLesson,
   PublishedAcademyCatalog,
 } from "@/lib/academy/types";
+import { validateAcademyCurriculum } from "@/lib/academy/curriculum-validation";
 import {
   validateAcademyActivity,
   validateAcademyGoal,
@@ -93,6 +95,8 @@ function validateTypedPayload(
         );
       case "seasonal_program":
         return validatePresetCatalog([record.payload as AcademyPreset]);
+      case "curriculum":
+        return validateAcademyCurriculum(record.payload as AcademyCurriculum);
       case "assignment":
         return validateAssignmentTemplate(
           record.payload as AcademyAssignmentTemplate,
