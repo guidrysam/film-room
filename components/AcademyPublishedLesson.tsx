@@ -1,4 +1,6 @@
 import AcademyActivityYouTubeSuggestions from "@/components/AcademyActivityYouTubeSuggestions";
+import TacticsBoardCanvas from "@/components/TacticsBoardCanvas";
+import { buildLessonConceptArticle } from "@/lib/academy/concept-article";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
 import type { PublishedLessonPackageView } from "@/lib/academy/published-content";
 
@@ -27,6 +29,7 @@ export default function AcademyPublishedLesson({
   view: PublishedLessonPackageView;
 }) {
   const { lesson, activities, assignment, quiz, questions } = view;
+  const conceptArticle = buildLessonConceptArticle(lesson);
   const relatedGoals = lesson.relatedGoalIds.map(
     (goalId) =>
       U12_ACADEMY_GOAL_CATALOG.goals.find((goal) => goal.id === goalId)
@@ -69,6 +72,30 @@ export default function AcademyPublishedLesson({
         <DetailList title="Coaching points" items={lesson.coachingPoints} />
       </div>
 
+      <article className="rounded-xl border border-cyan-400/20 bg-cyan-400/[0.04] p-5">
+        <p className="text-xs uppercase tracking-wide text-cyan-300">
+          Concept article
+        </p>
+        <h3 className="mt-2 text-xl font-semibold text-white">
+          {conceptArticle.title}
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-zinc-300">
+          {conceptArticle.dek}
+        </p>
+        <div className="mt-4 space-y-4">
+          {conceptArticle.sections.map((section) => (
+            <section key={section.heading}>
+              <h4 className="text-sm font-semibold text-white">
+                {section.heading}
+              </h4>
+              <p className="mt-1 text-sm leading-6 text-zinc-300">
+                {section.body}
+              </p>
+            </section>
+          ))}
+        </div>
+      </article>
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-white">Activities</h3>
         <div className="space-y-4">
@@ -82,6 +109,24 @@ export default function AcademyPublishedLesson({
               </p>
               <h4 className="mt-1 font-semibold text-white">{activity.title}</h4>
               <p className="mt-1 text-sm text-zinc-400">{activity.summary}</p>
+              {activity.steps[0]?.objects?.length ? (
+                <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
+                  <TacticsBoardCanvas
+                    orientation="horizontal"
+                    fieldView="full"
+                    objects={activity.steps[0].objects}
+                    tool="select"
+                    readOnly
+                    className="!rounded-none !shadow-none"
+                  />
+                  <p className="border-t border-white/10 bg-black/30 px-3 py-2 text-[11px] text-zinc-400">
+                    Tactical board · {activity.steps[0].title}
+                    {activity.steps.length > 1
+                      ? ` · ${activity.steps.length} steps`
+                      : ""}
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <DetailList title="Setup" items={activity.setupInstructions} />
                 <DetailList title="Instructions" items={activity.howItWorks} />

@@ -184,16 +184,10 @@ test("published quiz payload hides answers while server scoring remains determin
   assert.equal(score.correctCount, 6);
 });
 
-test("quiz scoring requires an authenticated team actor", async () => {
-  const { requireVerifiedTeamActor } = await import("@/lib/firebase-admin");
+test("quiz scoring requires an authenticated Firebase ID token", async () => {
+  const { verifyFirebaseIdTokenRest } = await import("@/lib/firebase-id-token");
   await assert.rejects(
-    () =>
-      requireVerifiedTeamActor(
-        new Request("http://localhost/api/academy/quiz/submit", {
-          method: "POST",
-        }),
-        "team-1",
-      ),
+    () => verifyFirebaseIdTokenRest(""),
     /AUTH_REQUIRED/,
   );
 });

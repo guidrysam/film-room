@@ -107,6 +107,10 @@ export function AcademyPublishedQuiz({
       <summary className="cursor-pointer text-sm font-semibold text-cyan-100">
         Open published quiz · {questions.length} questions
       </summary>
+      <p className="mt-3 text-xs leading-5 text-zinc-400">
+        Read the concept article above first. This knowledge check measures
+        understanding of that idea — not on-field mastery.
+      </p>
       <ol className="mt-4 space-y-5">
         {questions.map((question, index) => (
           <li key={question.id}>

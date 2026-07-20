@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import TacticsPresetThumbnail from "@/components/TacticsPresetThumbnail";
 import {
   generateDeterministicGamePlan,
   generateDeterministicPractice,
@@ -11,6 +14,9 @@ import type {
   PracticeGenerationRequest,
 } from "@/lib/academy/types";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
+import { getBuiltInTacticsPreset } from "@/lib/tactics-presets";
+import { createBoardFromPreset } from "@/lib/tactics-preset-copy";
+import { teamTacticsBoardUrl } from "@/lib/team-routes";
 
 const EQUIPMENT = ["balls", "cones", "pinnies", "mini goals", "goals"];
 const DEFAULT_GOALS = [
@@ -40,7 +46,45 @@ function Toggle({
   );
 }
 
-function PracticeResult({ practice }: { practice: GeneratedAcademyPractice }) {
+function PracticeResult({
+  practice,
+  teamId,
+  currentUid,
+  canCoach,
+  displayName,
+}: {
+  practice: GeneratedAcademyPractice;
+  teamId: string;
+  currentUid: string;
+  canCoach: boolean;
+  displayName?: string | null;
+}) {
+  const router = useRouter();
+  const [openingPresetId, setOpeningPresetId] = useState<string | null>(null);
+
+  async function openTacticalBoard(presetId: string): Promise<void> {
+    const preset = getBuiltInTacticsPreset(presetId);
+    if (!preset) return;
+    setOpeningPresetId(presetId);
+    try {
+      const board = await createBoardFromPreset(
+        teamId,
+        currentUid,
+        preset,
+        "built_in",
+        displayName,
+      );
+      router.push(teamTacticsBoardUrl(teamId, board.id));
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not open the tactical board.",
+      );
+      setOpeningPresetId(null);
+    }
+  }
+
   return (
     <section className="space-y-4" aria-label="Generated practice plan">
       <div>
@@ -55,40 +99,70 @@ function PracticeResult({ practice }: { practice: GeneratedAcademyPractice }) {
         </p>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
-        {practice.sections.map((section) => (
-          <article
-            key={section.id}
-            className="rounded-xl border border-white/10 bg-black/20 p-4"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h4 className="font-medium text-white">{section.title}</h4>
-              <span className="shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-zinc-300">
-                {section.durationMinutes} min
-              </span>
-            </div>
-            {section.drillId ? (
-              <p className="mt-2 text-xs text-blue-300">
-                Drill: {section.drillId}
-              </p>
-            ) : (
-              <p className="mt-2 text-xs text-amber-300">
-                Coach-selected activity needed
-              </p>
-            )}
-            <ul className="mt-3 space-y-1 text-sm text-zinc-300">
-              {section.coachingPoints.slice(0, 3).map((point) => (
-                <li key={point}>• {point}</li>
-              ))}
-            </ul>
-            {section.reflectionPrompts?.length ? (
-              <ul className="mt-3 space-y-1 border-t border-white/10 pt-3 text-sm text-zinc-300">
-                {section.reflectionPrompts.map((prompt) => (
-                  <li key={prompt}>• {prompt}</li>
+        {practice.sections.map((section) => {
+          const presetId = section.sourcePresetId ?? section.drillId;
+          const preset = presetId ? getBuiltInTacticsPreset(presetId) : null;
+          return (
+            <article
+              key={section.id}
+              className="rounded-xl border border-white/10 bg-black/20 p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <h4 className="font-medium text-white">{section.title}</h4>
+                <span className="shrink-0 rounded bg-white/10 px-2 py-1 text-xs text-zinc-300">
+                  {section.durationMinutes} min
+                </span>
+              </div>
+              {preset ? (
+                <div className="mt-3 space-y-2">
+                  <TacticsPresetThumbnail
+                    preset={preset}
+                    className="aspect-[16/10] border border-white/10"
+                  />
+                  {canCoach ? (
+                    <button
+                      type="button"
+                      disabled={openingPresetId === preset.id}
+                      onClick={() => void openTacticalBoard(preset.id)}
+                      className="rounded-lg border border-blue-500/40 bg-blue-600/90 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      {openingPresetId === preset.id
+                        ? "Opening board…"
+                        : "Open tactical board"}
+                    </button>
+                  ) : (
+                    <Link
+                      href={`/team/${teamId}/tactics`}
+                      className="inline-block text-xs font-semibold text-blue-300 hover:text-blue-200"
+                    >
+                      View tactics library
+                    </Link>
+                  )}
+                </div>
+              ) : section.drillId ? (
+                <p className="mt-2 text-xs text-blue-300">
+                  Drill: {section.drillId}
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-amber-300">
+                  Coach-selected activity needed
+                </p>
+              )}
+              <ul className="mt-3 space-y-1 text-sm text-zinc-300">
+                {section.coachingPoints.slice(0, 3).map((point) => (
+                  <li key={point}>• {point}</li>
                 ))}
               </ul>
-            ) : null}
-          </article>
-        ))}
+              {section.reflectionPrompts?.length ? (
+                <ul className="mt-3 space-y-1 border-t border-white/10 pt-3 text-sm text-zinc-300">
+                  {section.reflectionPrompts.map((prompt) => (
+                    <li key={prompt}>• {prompt}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
       {practice.recommendationWarnings.length ? (
         <details className="rounded-xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-100">
@@ -155,7 +229,17 @@ function GamePlanResult({ plan }: { plan: GeneratedAcademyGamePlan }) {
   );
 }
 
-export default function AcademyPlanGenerator() {
+export default function AcademyPlanGenerator({
+  teamId,
+  currentUid,
+  canCoach,
+  displayName,
+}: {
+  teamId: string;
+  currentUid: string;
+  canCoach: boolean;
+  displayName?: string | null;
+}) {
   const [selectedGoalIds, setSelectedGoalIds] =
     useState<string[]>(DEFAULT_GOALS);
   const [domainId, setDomainId] = useState("all");
@@ -424,7 +508,15 @@ export default function AcademyPlanGenerator() {
         </div>
       </section>
 
-      {practice ? <PracticeResult practice={practice} /> : null}
+      {practice ? (
+        <PracticeResult
+          practice={practice}
+          teamId={teamId}
+          currentUid={currentUid}
+          canCoach={canCoach}
+          displayName={displayName}
+        />
+      ) : null}
       {gamePlan ? <GamePlanResult plan={gamePlan} /> : null}
     </div>
   );

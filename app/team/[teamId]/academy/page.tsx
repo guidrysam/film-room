@@ -112,7 +112,12 @@ export default function TeamAcademyPage() {
             </div>
           )}
 
-          <AcademyPlanGenerator />
+          <AcademyPlanGenerator
+            teamId={teamId}
+            currentUid={user.uid}
+            canCoach={canCoachTeam(team, user.uid)}
+            displayName={user.displayName}
+          />
         </>
       )}
     </TeamPageShell>
