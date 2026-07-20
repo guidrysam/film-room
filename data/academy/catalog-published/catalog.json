@@ -1,0 +1,2560 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "film-room-academy",
+  "catalogVersion": 2,
+  "objects": [
+    {
+      "id": "academy-activity-open-body-diamond",
+      "objectType": "activity",
+      "version": 1,
+      "title": "Open-Body Receiving Diamond",
+      "identityFingerprint": "296b4df6fea7b93a",
+      "payload": {
+        "id": "academy-activity-open-body-diamond",
+        "version": 1,
+        "title": "Open-Body Receiving Diamond",
+        "summary": "Players check away, receive across the body, and choose the next side of a passing diamond.",
+        "description": "A repeatable passing pattern that develops the timing and mechanics of arriving side-on. Players check away, receive on the far foot, prepare the next pass with the first touch, and follow their pass around the diamond.",
+        "category": "technical",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "ageRange": {
+          "min": 11,
+          "max": 12
+        },
+        "difficulty": "foundation",
+        "formats": [
+          "small_group",
+          "9v9"
+        ],
+        "activityRole": "technical",
+        "activityType": "technical_exercise",
+        "playerCount": {
+          "min": 4,
+          "ideal": 8,
+          "max": 16
+        },
+        "durationMinutes": {
+          "min": 12,
+          "default": 15,
+          "max": 18
+        },
+        "field": {
+          "length": 15,
+          "width": 15,
+          "unit": "yards",
+          "guidance": "Build one 12-to-15-yard diamond per group of four to six."
+        },
+        "equipment": [
+          "one ball per diamond",
+          "four cones per diamond"
+        ],
+        "goalIds": [
+          "u12-receive-open-body",
+          "u12-first-touch-away-pressure"
+        ],
+        "relatedActivityIds": [
+          "academy-warmup-open-body-gates",
+          "academy-ssg-open-body-end-zones"
+        ],
+        "relatedLessonIds": [
+          "academy-lesson-receive-open-body"
+        ],
+        "relatedPracticeTemplateIds": [],
+        "relatedAssignmentIds": [
+          "academy-assignment-open-body-three-moments"
+        ],
+        "relatedQuizIds": [
+          "academy-quiz-receive-open-body"
+        ],
+        "evidenceTagIds": [
+          "u12-receive-open-body-evidence-positive",
+          "u12-receive-open-body-evidence-improvement"
+        ],
+        "objectives": [
+          "Check away and arrive as the passer looks up.",
+          "Receive on a half-turn with the next cone visible.",
+          "Use the first touch to prepare the next pass."
+        ],
+        "setupInstructions": [
+          "Place four cones in a 12-to-15-yard diamond.",
+          "Put one player at each cone; extra players queue behind the starting cone.",
+          "Start one ball at the top cone.",
+          "Pass clockwise, then reverse direction between rounds."
+        ],
+        "organization": [
+          "Use groups of four to six with one active ball per diamond.",
+          "Players follow their pass to preserve one player at each cone.",
+          "Run in both directions so players receive with both feet."
+        ],
+        "howItWorks": [
+          "The next receiver checks away from the cone and returns side-on.",
+          "The passer plays to the receiver's safe far foot.",
+          "The receiver takes the first touch across the body toward the next cone.",
+          "The receiver passes to the next player while the original passer follows the pass."
+        ],
+        "resetInstructions": [
+          "A loose ball is recovered by the nearest player while everyone holds the next open cone.",
+          "Restart from the nearest occupied cone rather than returning to the beginning."
+        ],
+        "coachingPoints": [
+          "Check away early enough to arrive, not wait.",
+          "See the passer and next cone in the same body shape.",
+          "Receive with the far foot when pressure and angle allow.",
+          "First touch points the body toward the next pass."
+        ],
+        "commonMistakes": [
+          {
+            "mistake": "Receiver stands flat on the cone.",
+            "correction": "Check away, then return with one shoulder toward the next side."
+          },
+          {
+            "mistake": "Receiver uses the near foot and closes the hips.",
+            "correction": "Let the ball travel to the far foot before cushioning."
+          },
+          {
+            "mistake": "First touch stops under the body.",
+            "correction": "Guide it one step toward the next cone."
+          }
+        ],
+        "progressions": [
+          {
+            "title": "Two-touch rhythm",
+            "description": "Use one touch to receive and one to pass."
+          },
+          {
+            "title": "Pressure cue",
+            "description": "A passive defender points left or right, changing the safe receiving foot."
+          }
+        ],
+        "regressions": [
+          {
+            "title": "Shorter sides",
+            "description": "Reduce each pass to eight yards."
+          },
+          {
+            "title": "Pause the picture",
+            "description": "Stop after receiving so players can check body orientation."
+          }
+        ],
+        "steps": [
+          {
+            "id": "technical-open-body-1",
+            "order": 1,
+            "phase": "setup",
+            "title": "Build the diamond",
+            "explanation": "One player occupies each cone with the ball at the top.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "technical-c1",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.2
+              },
+              {
+                "id": "technical-c2",
+                "type": "cone",
+                "x": 0.75,
+                "y": 0.5
+              },
+              {
+                "id": "technical-c3",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.8
+              },
+              {
+                "id": "technical-c4",
+                "type": "cone",
+                "x": 0.25,
+                "y": 0.5
+              },
+              {
+                "id": "technical-p1",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.24,
+                "label": "1"
+              },
+              {
+                "id": "technical-p2",
+                "type": "player",
+                "team": "home",
+                "x": 0.7,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "technical-p3",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.76,
+                "label": "3"
+              },
+              {
+                "id": "technical-p4",
+                "type": "player",
+                "team": "home",
+                "x": 0.3,
+                "y": 0.5,
+                "label": "4"
+              },
+              {
+                "id": "technical-ball",
+                "type": "ball",
+                "x": 0.5,
+                "y": 0.28
+              },
+              {
+                "id": "technical-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.1,
+                "text": "Receiving diamond"
+              }
+            ],
+            "coachCue": "See the ball and the next side.",
+            "playerAction": "Players prepare side-on at each cone.",
+            "ballAction": "Ball begins at the top.",
+            "coachingPurpose": "Make the next passing direction visible."
+          },
+          {
+            "id": "technical-open-body-2",
+            "order": 2,
+            "phase": "start",
+            "title": "Check away and arrive",
+            "explanation": "The right-side receiver moves away, scans, then returns as the passer looks up.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "technical-c1",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.2
+              },
+              {
+                "id": "technical-c2",
+                "type": "cone",
+                "x": 0.75,
+                "y": 0.5
+              },
+              {
+                "id": "technical-c3",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.8
+              },
+              {
+                "id": "technical-c4",
+                "type": "cone",
+                "x": 0.25,
+                "y": 0.5
+              },
+              {
+                "id": "technical-p1",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.24,
+                "label": "1"
+              },
+              {
+                "id": "technical-p2",
+                "type": "player",
+                "team": "home",
+                "x": 0.74,
+                "y": 0.43,
+                "label": "2"
+              },
+              {
+                "id": "technical-p3",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.76,
+                "label": "3"
+              },
+              {
+                "id": "technical-p4",
+                "type": "player",
+                "team": "home",
+                "x": 0.3,
+                "y": 0.5,
+                "label": "4"
+              },
+              {
+                "id": "technical-ball",
+                "type": "ball",
+                "x": 0.5,
+                "y": 0.28
+              },
+              {
+                "id": "technical-check",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.7,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.74,
+                    "y": 0.43
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "technical-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.1,
+                "text": "Away, scan, arrive"
+              }
+            ],
+            "coachCue": "Check away; arrive open.",
+            "playerAction": "Receiver creates separation and returns side-on.",
+            "ballAction": "Passer holds until the receiver arrives.",
+            "coachingPurpose": "Teach timing before receiving technique."
+          },
+          {
+            "id": "technical-open-body-3",
+            "order": 3,
+            "phase": "action",
+            "title": "Receive toward the next side",
+            "explanation": "The receiver takes the ball across the body toward the bottom cone.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "technical-c1",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.2
+              },
+              {
+                "id": "technical-c2",
+                "type": "cone",
+                "x": 0.75,
+                "y": 0.5
+              },
+              {
+                "id": "technical-c3",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.8
+              },
+              {
+                "id": "technical-c4",
+                "type": "cone",
+                "x": 0.25,
+                "y": 0.5
+              },
+              {
+                "id": "technical-p1",
+                "type": "player",
+                "team": "home",
+                "x": 0.56,
+                "y": 0.32,
+                "label": "1"
+              },
+              {
+                "id": "technical-p2",
+                "type": "player",
+                "team": "home",
+                "x": 0.7,
+                "y": 0.54,
+                "label": "2"
+              },
+              {
+                "id": "technical-p3",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.76,
+                "label": "3"
+              },
+              {
+                "id": "technical-p4",
+                "type": "player",
+                "team": "home",
+                "x": 0.3,
+                "y": 0.5,
+                "label": "4"
+              },
+              {
+                "id": "technical-ball",
+                "type": "ball",
+                "x": 0.67,
+                "y": 0.57
+              },
+              {
+                "id": "technical-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.5,
+                    "y": 0.28
+                  },
+                  {
+                    "x": 0.68,
+                    "y": 0.5
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "technical-touch",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.68,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.66,
+                    "y": 0.6
+                  }
+                ],
+                "color": "#22c55e"
+              },
+              {
+                "id": "technical-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.1,
+                "text": "Far foot, next side"
+              }
+            ],
+            "coachCue": "Across the body, into the next pass.",
+            "playerAction": "Receiver opens and guides the first touch clockwise.",
+            "ballAction": "Ball moves to the far foot and into useful space.",
+            "coachingPurpose": "Join body orientation to the next action."
+          },
+          {
+            "id": "technical-open-body-4",
+            "order": 4,
+            "phase": "rotation",
+            "title": "Pass and follow",
+            "explanation": "The receiver passes to the bottom cone while the original passer fills the right cone.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "technical-c1",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.2
+              },
+              {
+                "id": "technical-c2",
+                "type": "cone",
+                "x": 0.75,
+                "y": 0.5
+              },
+              {
+                "id": "technical-c3",
+                "type": "cone",
+                "x": 0.5,
+                "y": 0.8
+              },
+              {
+                "id": "technical-c4",
+                "type": "cone",
+                "x": 0.25,
+                "y": 0.5
+              },
+              {
+                "id": "technical-p1",
+                "type": "player",
+                "team": "home",
+                "x": 0.68,
+                "y": 0.47,
+                "label": "1"
+              },
+              {
+                "id": "technical-p2",
+                "type": "player",
+                "team": "home",
+                "x": 0.61,
+                "y": 0.64,
+                "label": "2"
+              },
+              {
+                "id": "technical-p3",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.76,
+                "label": "3"
+              },
+              {
+                "id": "technical-p4",
+                "type": "player",
+                "team": "home",
+                "x": 0.3,
+                "y": 0.5,
+                "label": "4"
+              },
+              {
+                "id": "technical-ball",
+                "type": "ball",
+                "x": 0.52,
+                "y": 0.73
+              },
+              {
+                "id": "technical-next-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.66,
+                    "y": 0.6
+                  },
+                  {
+                    "x": 0.52,
+                    "y": 0.73
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "technical-follow",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.56,
+                    "y": 0.32
+                  },
+                  {
+                    "x": 0.7,
+                    "y": 0.48
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "technical-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.1,
+                "text": "Pass and follow"
+              }
+            ],
+            "coachCue": "First touch out, pass on, follow quickly.",
+            "playerAction": "Receiver completes the next pass; passer follows.",
+            "ballAction": "Ball continues around the diamond.",
+            "coachingPurpose": "Create repeatable receiving rhythm and rotation."
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "safetyNotes": [
+          "Place extra players behind, not beside, the starting cone.",
+          "Pause the pattern before retrieving a ball that enters another group's area."
+        ],
+        "safetyReview": {
+          "status": "safe",
+          "concerns": [],
+          "recommendedChanges": []
+        },
+        "searchTags": [
+          "receiving",
+          "open body",
+          "diamond",
+          "far foot",
+          "first touch"
+        ]
+      }
+    },
+    {
+      "id": "academy-assignment-open-body-three-moments",
+      "objectType": "assignment",
+      "version": 1,
+      "title": "Find Three Open-Body Moments",
+      "identityFingerprint": "538a2b0ab9174f6d",
+      "payload": {
+        "id": "academy-assignment-open-body-three-moments",
+        "version": 1,
+        "title": "Find Three Open-Body Moments",
+        "description": "Practice the receiving shape at home, then identify where it could help in the next game.",
+        "assignmentType": "practice_skill",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "linkedLessonId": "academy-lesson-receive-open-body",
+        "linkedDrillId": "academy-warmup-open-body-gates",
+        "linkedQuizId": "academy-quiz-receive-open-body",
+        "instructions": [
+          "Place two shoes three steps apart as a receiving gate and use a wall or partner.",
+          "Before each of 20 passes, check over one shoulder, open the hips, and receive across the body through either side of the gate.",
+          "Afterward, write or record one answer: what information helped you choose the receiving side?",
+          "Ask a parent or partner to watch five repetitions and identify when they could see both your chest and your next direction.",
+          "Before the next game, choose one personal reminder: scan early, open early, or first touch away from pressure."
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        }
+      }
+    },
+    {
+      "id": "academy-lesson-receive-open-body",
+      "objectType": "lesson",
+      "version": 1,
+      "title": "See the Next Play: Receive with an Open Body",
+      "identityFingerprint": "b66f5a5eb29f2293",
+      "payload": {
+        "id": "academy-lesson-receive-open-body",
+        "version": 1,
+        "title": "See the Next Play: Receive with an Open Body",
+        "summary": "Players learn to prepare side-on before the pass arrives, receive across the body, and keep both a forward option and a safe option visible.",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "formats": [
+          "small_group",
+          "9v9"
+        ],
+        "difficulty": "foundation",
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "relatedGoalIds": [
+          "u12-first-touch-away-pressure",
+          "u12-scan-before-receiving"
+        ],
+        "estimatedMinutes": 8,
+        "learningObjective": "Prepare an open body shape before receiving so the first touch can support the best available next action.",
+        "successCriteria": [
+          "The player scans before the pass travels or while it travels.",
+          "The player arrives side-on with hips able to see the passer and next space.",
+          "The player receives across the body when that touch protects a forward view.",
+          "The player can play forward or retain possession without first turning through pressure."
+        ],
+        "coachingPoints": [
+          "Scan before receiving, then adjust the feet early.",
+          "Open the hips enough to see the ball and the next space.",
+          "Let the ball travel across the body when the far foot is safe.",
+          "Use the first touch to preserve two options, not to force forward play."
+        ],
+        "commonErrors": [
+          {
+            "title": "Closed body shape",
+            "description": "The receiver faces only the passer, hiding the next space behind the body.",
+            "correction": "Move one foot back and turn the hips before the ball arrives."
+          },
+          {
+            "title": "Receiving square",
+            "description": "Both feet point at the passer, so the player needs an extra touch to turn.",
+            "correction": "Arrive on a half-turn with one shoulder closer to the next action."
+          },
+          {
+            "title": "First touch into pressure",
+            "description": "The receiver opens but pushes the ball toward the nearest defender.",
+            "correction": "Scan the pressure first and choose the safe side of the body."
+          },
+          {
+            "title": "Watching only the ball",
+            "description": "The receiver never checks the defender or next option before contact.",
+            "correction": "Use a quick shoulder check before the pass, then return the eyes to the ball."
+          }
+        ],
+        "observableEvidence": [
+          "Checks a shoulder before setting the receiving stance.",
+          "Receives side-on when pressure and the passing angle allow.",
+          "Uses the farther foot to let the ball travel across the body.",
+          "Keeps a forward and retaining option available after the first touch."
+        ],
+        "progression": "Move from unopposed body preparation to a live defender who changes the safe receiving side.",
+        "introduction": [
+          "Ask players to show a closed shape, then turn one step so they can see the passer and a target ahead.",
+          "Explain that an open body does not mean always turning forward; it means seeing enough information to choose."
+        ],
+        "steps": [
+          {
+            "id": "lesson-open-body-1",
+            "order": 1,
+            "phase": "setup",
+            "title": "Closed picture",
+            "explanation": "The receiver faces the passer squarely and cannot see the defender or forward target.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "lesson-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.22,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "lesson-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.5,
+                "label": "R"
+              },
+              {
+                "id": "lesson-defender",
+                "type": "player",
+                "team": "away",
+                "x": 0.7,
+                "y": 0.5,
+                "label": "D"
+              },
+              {
+                "id": "lesson-ball",
+                "type": "ball",
+                "x": 0.26,
+                "y": 0.5
+              },
+              {
+                "id": "lesson-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.14,
+                "text": "Closed picture"
+              }
+            ],
+            "coachCue": "What can the receiver see?",
+            "playerAction": "Receiver notices that the next space is behind the body.",
+            "ballAction": "Ball remains with the passer.",
+            "coachingPurpose": "Make the cost of a square receiving shape visible."
+          },
+          {
+            "id": "lesson-open-body-2",
+            "order": 2,
+            "phase": "start",
+            "title": "Scan and prepare",
+            "explanation": "Before the pass, the receiver checks the defender and opens one shoulder toward the next space.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "lesson-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.22,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "lesson-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.46,
+                "label": "R"
+              },
+              {
+                "id": "lesson-defender",
+                "type": "player",
+                "team": "away",
+                "x": 0.7,
+                "y": 0.58,
+                "label": "D"
+              },
+              {
+                "id": "lesson-ball",
+                "type": "ball",
+                "x": 0.26,
+                "y": 0.5
+              },
+              {
+                "id": "lesson-scan",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.5,
+                    "y": 0.46
+                  },
+                  {
+                    "x": 0.65,
+                    "y": 0.57
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "lesson-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.14,
+                "text": "Scan, then open"
+              }
+            ],
+            "coachCue": "Shoulder check, feet ready.",
+            "playerAction": "Receiver scans and adjusts to a side-on stance.",
+            "ballAction": "Passer waits until the receiver is prepared.",
+            "coachingPurpose": "Connect scanning to early body preparation."
+          },
+          {
+            "id": "lesson-open-body-3",
+            "order": 3,
+            "phase": "action",
+            "title": "Receive across the body",
+            "explanation": "The pass travels to the far foot so the receiver can cushion the ball toward the visible forward space.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "lesson-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.22,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "lesson-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.52,
+                "y": 0.45,
+                "label": "R"
+              },
+              {
+                "id": "lesson-defender",
+                "type": "player",
+                "team": "away",
+                "x": 0.7,
+                "y": 0.6,
+                "label": "D"
+              },
+              {
+                "id": "lesson-ball",
+                "type": "ball",
+                "x": 0.5,
+                "y": 0.48
+              },
+              {
+                "id": "lesson-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.26,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.5,
+                    "y": 0.48
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "lesson-next-space",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.53,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.82,
+                    "y": 0.42
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "lesson-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.14,
+                "text": "Across the body"
+              }
+            ],
+            "coachCue": "Far foot, soft touch.",
+            "playerAction": "Receiver cushions with the foot farther from the passer.",
+            "ballAction": "Ball travels across the body into the safe forward lane.",
+            "coachingPurpose": "Show how body shape and receiving foot work together."
+          },
+          {
+            "id": "lesson-open-body-4",
+            "order": 4,
+            "phase": "decision",
+            "title": "Choose the next action",
+            "explanation": "The receiver sees pressure and chooses either the forward target or the safe return pass.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "lesson-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.25,
+                "y": 0.62,
+                "label": "P"
+              },
+              {
+                "id": "lesson-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.53,
+                "y": 0.45,
+                "label": "R"
+              },
+              {
+                "id": "lesson-forward",
+                "type": "player",
+                "team": "home",
+                "x": 0.8,
+                "y": 0.28,
+                "label": "F"
+              },
+              {
+                "id": "lesson-defender",
+                "type": "player",
+                "team": "away",
+                "x": 0.68,
+                "y": 0.58,
+                "label": "D"
+              },
+              {
+                "id": "lesson-ball",
+                "type": "ball",
+                "x": 0.56,
+                "y": 0.43
+              },
+              {
+                "id": "lesson-forward-option",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.56,
+                    "y": 0.43
+                  },
+                  {
+                    "x": 0.77,
+                    "y": 0.3
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "lesson-safe-option",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.53,
+                    "y": 0.47
+                  },
+                  {
+                    "x": 0.28,
+                    "y": 0.6
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "lesson-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.14,
+                "text": "Two visible options"
+              }
+            ],
+            "coachCue": "Forward if open; keep it if closed.",
+            "playerAction": "Receiver selects from two visible options.",
+            "ballAction": "Ball stays playable on the safe side of the defender.",
+            "coachingPurpose": "Prevent open-body receiving from becoming a forced turn."
+          }
+        ],
+        "coachQuestions": [
+          "What information should the receiver collect before the pass?",
+          "When would receiving across the body be unsafe?",
+          "Can the player still retain the ball after opening the body?"
+        ],
+        "playerQuestions": [
+          "Could you see both the ball and your next option?",
+          "Which foot kept the ball farthest from pressure?",
+          "What would tell you to play back instead of turning?"
+        ],
+        "activityIds": [
+          "academy-warmup-open-body-gates",
+          "academy-activity-open-body-diamond",
+          "academy-ssg-open-body-end-zones"
+        ],
+        "relatedAssignmentIds": [
+          "academy-assignment-open-body-three-moments"
+        ],
+        "relatedQuizIds": [
+          "academy-quiz-receive-open-body"
+        ],
+        "evidenceTagIds": [
+          "u12-receive-open-body-evidence-positive",
+          "u12-receive-open-body-evidence-improvement"
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        }
+      }
+    },
+    {
+      "id": "academy-package-receive-open-body",
+      "objectType": "lesson_package",
+      "version": 1,
+      "title": "Receive with an Open Body Package",
+      "identityFingerprint": "4430168d8a26ce81",
+      "payload": {
+        "id": "academy-package-receive-open-body",
+        "version": 1,
+        "title": "Receive with an Open Body Package",
+        "summary": "Canonical lesson package for u12-receive-open-body, including activities, assignment, and quiz.",
+        "primaryGoalId": "u12-receive-open-body",
+        "lessonId": "academy-lesson-receive-open-body",
+        "activityIds": [
+          "academy-warmup-open-body-gates",
+          "academy-activity-open-body-diamond",
+          "academy-ssg-open-body-end-zones"
+        ],
+        "assignmentId": "academy-assignment-open-body-three-moments",
+        "quizId": "academy-quiz-receive-open-body",
+        "questionIds": [
+          "academy-quiz-receive-open-body-q1",
+          "academy-quiz-receive-open-body-q2",
+          "academy-quiz-receive-open-body-q3",
+          "academy-quiz-receive-open-body-q4",
+          "academy-quiz-receive-open-body-q5",
+          "academy-quiz-receive-open-body-q6"
+        ],
+        "memberIds": [
+          "academy-lesson-receive-open-body",
+          "academy-warmup-open-body-gates",
+          "academy-activity-open-body-diamond",
+          "academy-ssg-open-body-end-zones",
+          "academy-assignment-open-body-three-moments",
+          "academy-quiz-receive-open-body",
+          "academy-quiz-receive-open-body-q1",
+          "academy-quiz-receive-open-body-q2",
+          "academy-quiz-receive-open-body-q3",
+          "academy-quiz-receive-open-body-q4",
+          "academy-quiz-receive-open-body-q5",
+          "academy-quiz-receive-open-body-q6"
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        }
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body",
+      "objectType": "quiz",
+      "version": 1,
+      "title": "Receive with an Open Body Check",
+      "identityFingerprint": "a2df64cb639b6d57",
+      "payload": {
+        "id": "academy-quiz-receive-open-body",
+        "version": 1,
+        "title": "Receive with an Open Body Check",
+        "description": "Six game-understanding questions about scanning, body orientation, receiving foot, and choosing the next action.",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "questionIds": [
+          "academy-quiz-receive-open-body-q1",
+          "academy-quiz-receive-open-body-q2",
+          "academy-quiz-receive-open-body-q3",
+          "academy-quiz-receive-open-body-q4",
+          "academy-quiz-receive-open-body-q5",
+          "academy-quiz-receive-open-body-q6"
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        }
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q1",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "When should a player begin preparing an open body shape?",
+      "identityFingerprint": "a76391cbbd72da0d",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q1",
+        "questionType": "multiple_choice",
+        "prompt": "When should a player begin preparing an open body shape?",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "before",
+            "label": "Before or while the pass travels"
+          },
+          {
+            "id": "after",
+            "label": "Only after stopping the ball"
+          },
+          {
+            "id": "never",
+            "label": "Only when the coach calls"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q2",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "What should an open receiving shape help the player see?",
+      "identityFingerprint": "0885006c1e971b63",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q2",
+        "questionType": "multiple_choice",
+        "prompt": "What should an open receiving shape help the player see?",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "two",
+            "label": "The ball and at least one next option"
+          },
+          {
+            "id": "ball",
+            "label": "Only the ball"
+          },
+          {
+            "id": "coach",
+            "label": "Only the coach"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q3",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "An open body shape means the player must always turn forward.",
+      "identityFingerprint": "96af35c11af0c292",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q3",
+        "questionType": "true_false",
+        "prompt": "An open body shape means the player must always turn forward.",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "true",
+            "label": "True"
+          },
+          {
+            "id": "false",
+            "label": "False"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q4",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "Pressure is arriving from the receiver's right. Which first touch is usually safer?",
+      "identityFingerprint": "3b9a5ece0a051df1",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q4",
+        "questionType": "multiple_choice",
+        "prompt": "Pressure is arriving from the receiver's right. Which first touch is usually safer?",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "left",
+            "label": "Away to the left, if that space is clear"
+          },
+          {
+            "id": "right",
+            "label": "Toward the pressure on the right"
+          },
+          {
+            "id": "stop",
+            "label": "A hard touch straight ahead every time"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q5",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "Why might a player receive with the foot farther from the passer?",
+      "identityFingerprint": "184a8f14ba4623c0",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q5",
+        "questionType": "multiple_choice",
+        "prompt": "Why might a player receive with the foot farther from the passer?",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "across",
+            "label": "To let the ball travel across the body toward the next action"
+          },
+          {
+            "id": "style",
+            "label": "Because it always looks better"
+          },
+          {
+            "id": "rule",
+            "label": "Because the near foot is never allowed"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-quiz-receive-open-body-q6",
+      "objectType": "quiz_question",
+      "version": 1,
+      "title": "A shoulder check is useful only if the player adjusts the body or decision afterward.",
+      "identityFingerprint": "f1617392e1ff58a2",
+      "payload": {
+        "id": "academy-quiz-receive-open-body-q6",
+        "questionType": "true_false",
+        "prompt": "A shoulder check is useful only if the player adjusts the body or decision afterward.",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "goalIds": [
+          "u12-receive-open-body"
+        ],
+        "options": [
+          {
+            "id": "true",
+            "label": "True"
+          },
+          {
+            "id": "false",
+            "label": "False"
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "version": 1
+      }
+    },
+    {
+      "id": "academy-ssg-open-body-end-zones",
+      "objectType": "small_sided_game",
+      "version": 1,
+      "title": "Open to Play Forward",
+      "identityFingerprint": "8be545beea784e7f",
+      "payload": {
+        "id": "academy-ssg-open-body-end-zones",
+        "version": 1,
+        "title": "Open to Play Forward",
+        "summary": "A directional end-zone game that rewards receiving side-on and connecting forward without forcing the turn.",
+        "description": "A directional game in which teams score by finding a teammate arriving in an end zone. Bonus scoring rewards a prepared side-on reception followed by a controlled forward action, while safe retention remains a valid decision when pressure closes the route.",
+        "category": "small_sided_game",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "ageRange": {
+          "min": 11,
+          "max": 12
+        },
+        "difficulty": "developing",
+        "formats": [
+          "small_group",
+          "9v9"
+        ],
+        "activityRole": "small_sided_game",
+        "activityType": "small_sided_game",
+        "playerCount": {
+          "min": 6,
+          "ideal": 12,
+          "max": 16
+        },
+        "durationMinutes": {
+          "min": 15,
+          "default": 20,
+          "max": 25
+        },
+        "field": {
+          "length": 30,
+          "width": 22,
+          "unit": "yards",
+          "guidance": "Use a four-yard end zone at each end; play 3v3 to 6v6 depending on roster."
+        },
+        "equipment": [
+          "one ball",
+          "eight cones",
+          "two sets of pinnies",
+          "spare balls"
+        ],
+        "goalIds": [
+          "u12-receive-open-body",
+          "u12-scan-before-receiving",
+          "u12-first-touch-away-pressure"
+        ],
+        "relatedActivityIds": [
+          "academy-warmup-open-body-gates",
+          "academy-activity-open-body-diamond"
+        ],
+        "relatedLessonIds": [
+          "academy-lesson-receive-open-body"
+        ],
+        "relatedPracticeTemplateIds": [],
+        "relatedAssignmentIds": [
+          "academy-assignment-open-body-three-moments"
+        ],
+        "relatedQuizIds": [
+          "academy-quiz-receive-open-body"
+        ],
+        "evidenceTagIds": [
+          "u12-receive-open-body-evidence-positive",
+          "u12-receive-open-body-evidence-improvement"
+        ],
+        "objectives": [
+          "Create a side-on receiving position between opponents.",
+          "Recognize when the first touch can go forward.",
+          "Retain possession when pressure closes the forward route."
+        ],
+        "setupInstructions": [
+          "Mark a 30-by-22-yard field with a four-yard end zone at each end.",
+          "Organize equal teams from 3v3 to 6v6.",
+          "A team scores by completing a pass to a teammate arriving in the attacking end zone.",
+          "Keep spare balls on both touchlines for immediate restarts."
+        ],
+        "organization": [
+          "Play equal teams from 3v3 to 6v6 in one directional field.",
+          "Teams attack opposite end zones and restart from their own end after a score.",
+          "Use short rounds with coaching between rounds rather than during live play."
+        ],
+        "howItWorks": [
+          "Teams play directionally and may score only with a controlled reception in the end zone.",
+          "A reception that begins side-on and connects forward within two touches earns two points.",
+          "A normal controlled end-zone reception earns one point.",
+          "If the forward route is closed, retaining the ball remains live and is never penalized.",
+          "Coach interventions use brief freezes only when the receiver's preparation is clearly visible."
+        ],
+        "resetInstructions": [
+          "After a score, the defending team restarts immediately from its end zone.",
+          "After the ball leaves the field, use the nearest spare ball and restart with a pass."
+        ],
+        "coachingPoints": [
+          "Move outside the defender's cover shadow before asking for the ball.",
+          "Scan while the pass travels and adjust the receiving stance.",
+          "Open enough to see forward, but protect the safe return option.",
+          "First touch forward only when the space is genuinely available."
+        ],
+        "commonMistakes": [
+          {
+            "mistake": "Receiver waits in the end zone with a closed body.",
+            "correction": "Arrive from outside as the passer looks up."
+          },
+          {
+            "mistake": "Players force a forward turn into pressure for the bonus.",
+            "correction": "Award the bonus only when the receiver keeps possession."
+          },
+          {
+            "mistake": "Support stands directly behind a defender.",
+            "correction": "Move sideways until the passer can see both feet."
+          }
+        ],
+        "progressions": [
+          {
+            "title": "Midfield receiving bonus",
+            "description": "Award one point when a player receives between defenders and connects forward within two touches."
+          },
+          {
+            "title": "Touch pressure",
+            "description": "Use a three-touch maximum only after players consistently scan and prepare."
+          }
+        ],
+        "regressions": [
+          {
+            "title": "Neutral support",
+            "description": "Add one neutral who plays with the team in possession."
+          },
+          {
+            "title": "Deeper end zones",
+            "description": "Increase both end zones to six yards."
+          }
+        ],
+        "steps": [
+          {
+            "id": "ssg-open-body-1",
+            "order": 1,
+            "phase": "setup",
+            "title": "Set two end zones",
+            "explanation": "Teams begin in a directional field with clear scoring zones.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "ssg-field",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "ssg-left-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.25,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-right-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.75,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-h1",
+                "type": "player",
+                "team": "home",
+                "x": 0.35,
+                "y": 0.32,
+                "label": "1"
+              },
+              {
+                "id": "ssg-h2",
+                "type": "player",
+                "team": "home",
+                "x": 0.38,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-h3",
+                "type": "player",
+                "team": "home",
+                "x": 0.35,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-a1",
+                "type": "player",
+                "team": "away",
+                "x": 0.64,
+                "y": 0.32,
+                "label": "1"
+              },
+              {
+                "id": "ssg-a2",
+                "type": "player",
+                "team": "away",
+                "x": 0.62,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-a3",
+                "type": "player",
+                "team": "away",
+                "x": 0.64,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-ball",
+                "type": "ball",
+                "x": 0.4,
+                "y": 0.5
+              },
+              {
+                "id": "ssg-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.11,
+                "text": "Open to play forward"
+              }
+            ],
+            "coachCue": "Direction clear; arrive in the zone.",
+            "playerAction": "Teams spread and identify their attacking end zone.",
+            "ballAction": "Ball starts with the central home player.",
+            "coachingPurpose": "Create a directional reason to receive open."
+          },
+          {
+            "id": "ssg-open-body-2",
+            "order": 2,
+            "phase": "start",
+            "title": "Create the receiving lane",
+            "explanation": "A wide player moves outside the defender's cover shadow and scans before the pass.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "ssg-field",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "ssg-right-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.75,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-h1",
+                "type": "player",
+                "team": "home",
+                "x": 0.48,
+                "y": 0.28,
+                "label": "1"
+              },
+              {
+                "id": "ssg-h2",
+                "type": "player",
+                "team": "home",
+                "x": 0.42,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-h3",
+                "type": "player",
+                "team": "home",
+                "x": 0.38,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-a1",
+                "type": "player",
+                "team": "away",
+                "x": 0.57,
+                "y": 0.34,
+                "label": "1"
+              },
+              {
+                "id": "ssg-a2",
+                "type": "player",
+                "team": "away",
+                "x": 0.6,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-a3",
+                "type": "player",
+                "team": "away",
+                "x": 0.63,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-ball",
+                "type": "ball",
+                "x": 0.44,
+                "y": 0.5
+              },
+              {
+                "id": "ssg-support-run",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.35,
+                    "y": 0.32
+                  },
+                  {
+                    "x": 0.48,
+                    "y": 0.28
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "ssg-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.11,
+                "text": "Move into view"
+              }
+            ],
+            "coachCue": "Out of the shadow; shoulder check.",
+            "playerAction": "H1 creates a visible diagonal lane and scans.",
+            "ballAction": "H2 protects the ball until the lane opens.",
+            "coachingPurpose": "Connect support movement to receiving orientation."
+          },
+          {
+            "id": "ssg-open-body-3",
+            "order": 3,
+            "phase": "action",
+            "title": "Receive side-on",
+            "explanation": "The receiver opens to see the forward runner and the safe return pass.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "ssg-field",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "ssg-right-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.75,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-h1",
+                "type": "player",
+                "team": "home",
+                "x": 0.5,
+                "y": 0.3,
+                "label": "1"
+              },
+              {
+                "id": "ssg-h2",
+                "type": "player",
+                "team": "home",
+                "x": 0.45,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-h3",
+                "type": "player",
+                "team": "home",
+                "x": 0.58,
+                "y": 0.7,
+                "label": "3"
+              },
+              {
+                "id": "ssg-a1",
+                "type": "player",
+                "team": "away",
+                "x": 0.58,
+                "y": 0.37,
+                "label": "1"
+              },
+              {
+                "id": "ssg-a2",
+                "type": "player",
+                "team": "away",
+                "x": 0.62,
+                "y": 0.52,
+                "label": "2"
+              },
+              {
+                "id": "ssg-a3",
+                "type": "player",
+                "team": "away",
+                "x": 0.67,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-ball",
+                "type": "ball",
+                "x": 0.52,
+                "y": 0.31
+              },
+              {
+                "id": "ssg-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.45,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.52,
+                    "y": 0.31
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "ssg-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.11,
+                "text": "See two options"
+              }
+            ],
+            "coachCue": "Open hips; see forward and back.",
+            "playerAction": "H1 receives with both next actions visible.",
+            "ballAction": "Ball arrives on H1's safe foot.",
+            "coachingPurpose": "Make choice—not forced turning—the reward."
+          },
+          {
+            "id": "ssg-open-body-4",
+            "order": 4,
+            "phase": "decision",
+            "title": "Play forward when open",
+            "explanation": "The receiver connects with a runner arriving in the end zone.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "ssg-field",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "ssg-right-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.75,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-h1",
+                "type": "player",
+                "team": "home",
+                "x": 0.55,
+                "y": 0.31,
+                "label": "1"
+              },
+              {
+                "id": "ssg-h2",
+                "type": "player",
+                "team": "home",
+                "x": 0.49,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-h3",
+                "type": "player",
+                "team": "home",
+                "x": 0.78,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-a1",
+                "type": "player",
+                "team": "away",
+                "x": 0.61,
+                "y": 0.39,
+                "label": "1"
+              },
+              {
+                "id": "ssg-a2",
+                "type": "player",
+                "team": "away",
+                "x": 0.64,
+                "y": 0.52,
+                "label": "2"
+              },
+              {
+                "id": "ssg-a3",
+                "type": "player",
+                "team": "away",
+                "x": 0.7,
+                "y": 0.62,
+                "label": "3"
+              },
+              {
+                "id": "ssg-ball",
+                "type": "ball",
+                "x": 0.76,
+                "y": 0.67
+              },
+              {
+                "id": "ssg-score-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.55,
+                    "y": 0.31
+                  },
+                  {
+                    "x": 0.76,
+                    "y": 0.67
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "ssg-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.11,
+                "text": "Forward picture open"
+              }
+            ],
+            "coachCue": "See it, then connect.",
+            "playerAction": "H3 arrives in the zone as H1 releases the pass.",
+            "ballAction": "Ball reaches the end-zone runner under control.",
+            "coachingPurpose": "Reward transfer from receiving shape to penetration."
+          },
+          {
+            "id": "ssg-open-body-5",
+            "order": 5,
+            "phase": "reset",
+            "title": "Retain when the route closes",
+            "explanation": "After a restart or turnover, the new receiver keeps the safe option instead of forcing forward.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "ssg-field",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.86,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#3b82f628"
+              },
+              {
+                "id": "ssg-left-zone",
+                "type": "zone",
+                "points": [
+                  {
+                    "x": 0.14,
+                    "y": 0.2
+                  },
+                  {
+                    "x": 0.25,
+                    "y": 0.8
+                  }
+                ],
+                "color": "#f59e0b30"
+              },
+              {
+                "id": "ssg-h1",
+                "type": "player",
+                "team": "home",
+                "x": 0.56,
+                "y": 0.34,
+                "label": "1"
+              },
+              {
+                "id": "ssg-h2",
+                "type": "player",
+                "team": "home",
+                "x": 0.52,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-h3",
+                "type": "player",
+                "team": "home",
+                "x": 0.58,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-a1",
+                "type": "player",
+                "team": "away",
+                "x": 0.48,
+                "y": 0.32,
+                "label": "1"
+              },
+              {
+                "id": "ssg-a2",
+                "type": "player",
+                "team": "away",
+                "x": 0.42,
+                "y": 0.5,
+                "label": "2"
+              },
+              {
+                "id": "ssg-a3",
+                "type": "player",
+                "team": "away",
+                "x": 0.47,
+                "y": 0.68,
+                "label": "3"
+              },
+              {
+                "id": "ssg-ball",
+                "type": "ball",
+                "x": 0.45,
+                "y": 0.5
+              },
+              {
+                "id": "ssg-retain",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.45,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.48,
+                    "y": 0.32
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "ssg-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.11,
+                "text": "Closed? Keep it."
+              }
+            ],
+            "coachCue": "Open body, honest decision.",
+            "playerAction": "Away retains through support because forward is blocked.",
+            "ballAction": "Ball moves safely away from immediate pressure.",
+            "coachingPurpose": "Protect decision quality from the scoring constraint."
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "safetyNotes": [
+          "Maintain a clear buffer beyond both end lines.",
+          "Use touchline spare balls only after the previous ball is clearly out of play.",
+          "Scale field size to roster size to avoid repeated high-speed collisions."
+        ],
+        "safetyReview": {
+          "status": "safe",
+          "concerns": [],
+          "recommendedChanges": []
+        },
+        "searchTags": [
+          "small sided game",
+          "receiving",
+          "open body",
+          "end zone",
+          "decision making"
+        ]
+      }
+    },
+    {
+      "id": "academy-warmup-open-body-gates",
+      "objectType": "warmup",
+      "version": 1,
+      "title": "Open-Body Gate Check",
+      "identityFingerprint": "515804101dcbb57b",
+      "payload": {
+        "id": "academy-warmup-open-body-gates",
+        "version": 1,
+        "title": "Open-Body Gate Check",
+        "summary": "Pairs pass through a gate while the receiver scans, opens, and takes the first touch toward a called exit.",
+        "description": "A continuous partner warmup that introduces scanning and open-body receiving without opposition. The passer supplies a late directional cue so the receiver must prepare early, control the ball through a safe exit, and reset quickly.",
+        "category": "warmup",
+        "ageBands": [
+          "U11-U12"
+        ],
+        "ageRange": {
+          "min": 11,
+          "max": 12
+        },
+        "difficulty": "foundation",
+        "formats": [
+          "small_group",
+          "9v9"
+        ],
+        "activityRole": "warm_up",
+        "activityType": "warmup",
+        "playerCount": {
+          "min": 2,
+          "ideal": 12,
+          "max": 16
+        },
+        "durationMinutes": {
+          "min": 8,
+          "default": 10,
+          "max": 12
+        },
+        "field": {
+          "length": 20,
+          "width": 20,
+          "unit": "yards",
+          "guidance": "Use one four-yard gate per pair with six yards behind each side."
+        },
+        "equipment": [
+          "one ball per pair",
+          "two cones per pair"
+        ],
+        "goalIds": [
+          "u12-receive-open-body",
+          "u12-scan-before-receiving"
+        ],
+        "relatedActivityIds": [
+          "academy-activity-open-body-diamond"
+        ],
+        "relatedLessonIds": [
+          "academy-lesson-receive-open-body"
+        ],
+        "relatedPracticeTemplateIds": [],
+        "relatedAssignmentIds": [
+          "academy-assignment-open-body-three-moments"
+        ],
+        "relatedQuizIds": [
+          "academy-quiz-receive-open-body"
+        ],
+        "evidenceTagIds": [
+          "u12-receive-open-body-evidence-positive",
+          "u12-receive-open-body-evidence-improvement"
+        ],
+        "objectives": [
+          "Scan before the partner passes.",
+          "Prepare a side-on stance outside the gate.",
+          "Receive across the body toward the called exit."
+        ],
+        "setupInstructions": [
+          "Create one four-yard cone gate per pair.",
+          "Place partners six yards apart on opposite sides with one ball.",
+          "Name the two exit directions behind each receiver.",
+          "Leave at least three yards between neighboring pairs."
+        ],
+        "organization": [
+          "Work in pairs with one active ball and one gate.",
+          "Both players alternate passer and receiver roles after every repetition.",
+          "Run 60-second rounds with a short reset between rounds."
+        ],
+        "howItWorks": [
+          "The receiver checks both exits before the pass.",
+          "The passer calls left or right as the ball travels.",
+          "The receiver opens, takes the ball through the gate toward that exit, then passes back from the new angle.",
+          "Partners alternate receiving roles continuously."
+        ],
+        "resetInstructions": [
+          "If the ball leaves the area, the nearest player retrieves it while the partner restores the gate position.",
+          "Switch the starting passer after each 60-second round."
+        ],
+        "coachingPoints": [
+          "Scan before the pass starts.",
+          "Move the feet early; do not wait for the ball to fix the body shape.",
+          "Use the foot farther from the passer when it keeps the exit visible.",
+          "Cushion the first touch within one stride."
+        ],
+        "commonMistakes": [
+          {
+            "mistake": "Receiver waits square inside the gate.",
+            "correction": "Start just outside and arrive side-on as the pass travels."
+          },
+          {
+            "mistake": "Player turns before controlling the ball.",
+            "correction": "Watch the final part of the pass and cushion before accelerating."
+          },
+          {
+            "mistake": "First touch crosses into the neighboring pair.",
+            "correction": "Shorten the touch and enlarge spacing between gates."
+          }
+        ],
+        "progressions": [
+          {
+            "title": "Late visual cue",
+            "description": "The passer points to an exit instead of calling it."
+          },
+          {
+            "title": "Two-touch return",
+            "description": "Receive through the exit and return the pass in two touches."
+          }
+        ],
+        "regressions": [
+          {
+            "title": "Known exit",
+            "description": "Choose the receiving direction before the pass."
+          },
+          {
+            "title": "Wider gate",
+            "description": "Increase the gate to six yards and shorten the pass."
+          }
+        ],
+        "steps": [
+          {
+            "id": "warmup-open-body-1",
+            "order": 1,
+            "phase": "setup",
+            "title": "Set the gate",
+            "explanation": "Partners begin opposite a clear gate with space behind both exits.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "warmup-c1",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.4
+              },
+              {
+                "id": "warmup-c2",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.6
+              },
+              {
+                "id": "warmup-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.24,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "warmup-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.58,
+                "y": 0.5,
+                "label": "R"
+              },
+              {
+                "id": "warmup-ball",
+                "type": "ball",
+                "x": 0.28,
+                "y": 0.5
+              },
+              {
+                "id": "warmup-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.16,
+                "text": "Gate check"
+              }
+            ],
+            "coachCue": "Space beyond both exits.",
+            "playerAction": "Receiver starts outside the gate and scans both directions.",
+            "ballAction": "Ball begins under the passer's control.",
+            "coachingPurpose": "Establish safe spacing and two possible exits."
+          },
+          {
+            "id": "warmup-open-body-2",
+            "order": 2,
+            "phase": "start",
+            "title": "Open before the pass",
+            "explanation": "The receiver checks over the shoulder and turns the hips toward the called exit.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "warmup-c1",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.4
+              },
+              {
+                "id": "warmup-c2",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.6
+              },
+              {
+                "id": "warmup-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.24,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "warmup-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.58,
+                "y": 0.47,
+                "label": "R"
+              },
+              {
+                "id": "warmup-ball",
+                "type": "ball",
+                "x": 0.28,
+                "y": 0.5
+              },
+              {
+                "id": "warmup-scan",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.58,
+                    "y": 0.47
+                  },
+                  {
+                    "x": 0.68,
+                    "y": 0.34
+                  }
+                ],
+                "color": "#94a3b8"
+              },
+              {
+                "id": "warmup-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.16,
+                "text": "Scan and prepare"
+              }
+            ],
+            "coachCue": "Check, then open.",
+            "playerAction": "Receiver adjusts the feet before the ball travels.",
+            "ballAction": "Passer prepares a firm ground pass.",
+            "coachingPurpose": "Make preparation happen before contact."
+          },
+          {
+            "id": "warmup-open-body-3",
+            "order": 3,
+            "phase": "action",
+            "title": "Receive through the exit",
+            "explanation": "The receiver uses the far foot and guides the first touch through the selected side.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "warmup-c1",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.4
+              },
+              {
+                "id": "warmup-c2",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.6
+              },
+              {
+                "id": "warmup-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.24,
+                "y": 0.5,
+                "label": "P"
+              },
+              {
+                "id": "warmup-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.61,
+                "y": 0.42,
+                "label": "R"
+              },
+              {
+                "id": "warmup-ball",
+                "type": "ball",
+                "x": 0.63,
+                "y": 0.39
+              },
+              {
+                "id": "warmup-pass",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.28,
+                    "y": 0.5
+                  },
+                  {
+                    "x": 0.56,
+                    "y": 0.47
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "warmup-touch",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.56,
+                    "y": 0.47
+                  },
+                  {
+                    "x": 0.64,
+                    "y": 0.37
+                  }
+                ],
+                "color": "#22c55e"
+              },
+              {
+                "id": "warmup-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.16,
+                "text": "Across and out"
+              }
+            ],
+            "coachCue": "Far foot, through the exit.",
+            "playerAction": "Receiver cushions into the called lane.",
+            "ballAction": "Ball crosses the body and exits under control.",
+            "coachingPurpose": "Coordinate body shape, foot choice, and first touch."
+          },
+          {
+            "id": "warmup-open-body-4",
+            "order": 4,
+            "phase": "rotation",
+            "title": "Pass back and change roles",
+            "explanation": "The receiver turns to face the partner, returns the ball, and becomes the next passer.",
+            "durationMs": 1800,
+            "objects": [
+              {
+                "id": "warmup-c1",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.4
+              },
+              {
+                "id": "warmup-c2",
+                "type": "cone",
+                "x": 0.46,
+                "y": 0.6
+              },
+              {
+                "id": "warmup-passer",
+                "type": "player",
+                "team": "home",
+                "x": 0.25,
+                "y": 0.5,
+                "label": "R"
+              },
+              {
+                "id": "warmup-receiver",
+                "type": "player",
+                "team": "home",
+                "x": 0.66,
+                "y": 0.37,
+                "label": "P"
+              },
+              {
+                "id": "warmup-ball",
+                "type": "ball",
+                "x": 0.3,
+                "y": 0.49
+              },
+              {
+                "id": "warmup-return",
+                "type": "arrow",
+                "points": [
+                  {
+                    "x": 0.63,
+                    "y": 0.39
+                  },
+                  {
+                    "x": 0.3,
+                    "y": 0.49
+                  }
+                ],
+                "color": "#fbbf24"
+              },
+              {
+                "id": "warmup-label",
+                "type": "area_label",
+                "x": 0.5,
+                "y": 0.16,
+                "text": "Return and repeat"
+              }
+            ],
+            "coachCue": "Reset quickly; new receiver scans.",
+            "playerAction": "Partners exchange passer and receiver roles.",
+            "ballAction": "Ball returns through the gate.",
+            "coachingPurpose": "Create continuous, alternating repetitions."
+          }
+        ],
+        "editorial": {
+          "status": "published",
+          "originalWording": true,
+          "originalDiagram": true,
+          "generatedWithAssistance": true,
+          "createdAt": "2026-07-19T12:00:00.000Z",
+          "updatedAt": "2026-07-19T18:01:42.552Z",
+          "publishedAt": "2026-07-19T18:01:42.552Z"
+        },
+        "safetyNotes": [
+          "Keep at least three yards between neighboring gates.",
+          "Players retrieve loose balls only after checking adjacent working lanes."
+        ],
+        "safetyReview": {
+          "status": "safe",
+          "concerns": [],
+          "recommendedChanges": []
+        },
+        "searchTags": [
+          "receiving",
+          "open body",
+          "half turn",
+          "first touch",
+          "pairs"
+        ]
+      }
+    }
+  ]
+}

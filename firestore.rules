@@ -328,7 +328,16 @@ service cloud.firestore {
         allow read, create, update, delete: if request.auth != null &&
                                              isTeamCoach(teamId, request.auth.uid);
       }
+      // Coach-attached film tags that bridge game moments to development goals.
+      match /academyFilmEvidence/{attachmentId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
       match /academyTemplates/{templateId} {
+        allow read, create, update, delete: if request.auth != null &&
+                                             isTeamCoach(teamId, request.auth.uid);
+      }
+      match /academyRecommendationState/{recommendationId} {
         allow read, create, update, delete: if request.auth != null &&
                                              isTeamCoach(teamId, request.auth.uid);
       }

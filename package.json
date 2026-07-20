@@ -14,16 +14,26 @@
     "academy:sources:extract": "tsx scripts/academy/extract-pdf-text.ts",
     "academy:sources:index": "tsx scripts/academy/build-source-index.ts",
     "academy:sources:queue": "tsx scripts/academy/create-editorial-queue.ts",
+    "academy:catalog:candidates": "tsx scripts/academy/build-knowledge-candidates.ts",
+    "academy:catalog:validate": "tsx scripts/academy/validate-canonical-catalog.ts",
+    "academy:catalog:publish": "tsx scripts/academy/publish-canonical-catalog.ts",
+    "academy:editorial:seed": "tsx scripts/academy/seed-editorial-package.ts",
+    "academy:editorial:transition": "tsx scripts/academy/transition-editorial.ts",
+    "academy:editorial:approve-package": "tsx scripts/academy/approve-editorial-package.ts",
+    "academy:editorial:publish-package": "tsx scripts/academy/publish-editorial-package.ts",
+    "academy:editorial:unpublish-package": "tsx scripts/academy/unpublish-editorial-package.ts",
     "academy:validate": "tsx scripts/academy/validate-source-index.ts",
     "academy:goals:validate": "tsx scripts/academy/generate-u12-goal-reports.ts",
-    "academy:sources:all": "npm run academy:sources:register && npm run academy:sources:extract && npm run academy:sources:index && npm run academy:sources:queue && npm run academy:validate"
+    "academy:sources:all": "npm run academy:sources:register && npm run academy:sources:extract && npm run academy:sources:index && npm run academy:sources:queue && npm run academy:catalog:candidates && npm run academy:validate"
   },
   "dependencies": {
     "firebase": "^12.12.0",
+    "firebase-admin": "^14.2.0",
     "next": "16.2.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "react-youtube": "^10.1.0"
+    "react-youtube": "^10.1.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

@@ -33,7 +33,22 @@ const PRIVATE_KEYS = new Set([
   "internalSummary",
   "filename",
   "usageRestrictions",
+  "sourceCandidateIds",
+  "editorialNotes",
+  "reviewedBy",
+  "reviewedAt",
+  "approvedBy",
+  "approvedAt",
+  "publishedBy",
+  "rejectedBy",
+  "rejectedAt",
+  "rejectionReason",
+  "warnings",
 ]);
+
+function isPrivateSourceKey(key: string): boolean {
+  return PRIVATE_KEYS.has(key) || /^source/i.test(key);
+}
 
 export function stripSourceMetadata<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -43,7 +58,7 @@ export function stripSourceMetadata<T>(value: T): T {
 
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !PRIVATE_KEYS.has(key))
+      .filter(([key]) => !isPrivateSourceKey(key))
       .map(([key, item]) => [key, stripSourceMetadata(item)]),
   ) as T;
 }

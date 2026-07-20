@@ -5,8 +5,17 @@ import {
   academyReportPath,
 } from "@/lib/academy/paths";
 import type { AcademySourceDocument } from "@/lib/academy/types";
+import {
+  loadEditorialRecordsForAdmin,
+  packageReviewSummary,
+  toReviewQueueItems,
+} from "@/lib/academy/editorial-loader";
 import { U12_ACADEMY_GOAL_CATALOG } from "@/lib/academy/u12-goal-catalog";
+import ActivityLibrarySection from "./ActivityLibrarySection";
 import GoalReviewClient from "./GoalReviewClient";
+import LessonReviewPreview from "./LessonReviewPreview";
+import PackageReviewPanel from "./PackageReviewPanel";
+import ReviewQueue from "./ReviewQueue";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +31,14 @@ type ImportReport = {
     confidence: string;
   }>;
 };
+
+type AcademyAdminSearchParams = Promise<
+  Record<string, string | string[] | undefined>
+>;
+
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
 
 async function readJson<T>(filename: string): Promise<T | null> {
   try {
@@ -51,7 +68,11 @@ async function loadDocuments(): Promise<AcademySourceDocument[]> {
   }
 }
 
-export default async function AcademyAdminPage() {
+export default async function AcademyAdminPage({
+  searchParams,
+}: {
+  searchParams: AcademyAdminSearchParams;
+}) {
   // Source records are filesystem-only private references. Keep this route
   // development-only until server-verified product-admin auth is available.
   const enabled =
@@ -66,13 +87,17 @@ export default async function AcademyAdminPage() {
     );
   }
 
-  const [documents, report] = await Promise.all([
+  const [documents, report, params, editorialRecords] = await Promise.all([
     loadDocuments(),
     readJson<ImportReport>(academyReportPath("source-import.json")),
+    searchParams,
+    loadEditorialRecordsForAdmin(),
   ]);
   const reportById = new Map(
     report?.documents?.map((document) => [document.id, document]) ?? [],
   );
+  const reviewItems = toReviewQueueItems(editorialRecords);
+  const packageSummary = packageReviewSummary(editorialRecords);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-12 text-zinc-100">
@@ -138,12 +163,38 @@ export default async function AcademyAdminPage() {
           </p>
         )}
       </section>
+      <ReviewQueue
+        items={reviewItems}
+        query={{
+          objectType: firstParam(params.reviewType),
+          status: firstParam(params.reviewStatus),
+          developmentGoalId: firstParam(params.reviewGoal),
+          validation: firstParam(params.reviewValidation),
+        }}
+      />
+      <PackageReviewPanel
+        records={editorialRecords}
+        readiness={packageSummary.readiness}
+        validationErrors={packageSummary.validationErrors}
+      />
       <GoalReviewClient
         goals={U12_ACADEMY_GOAL_CATALOG.goals}
         domains={U12_ACADEMY_GOAL_CATALOG.domains}
         blocks={U12_ACADEMY_GOAL_CATALOG.blocks}
         evidenceTags={U12_ACADEMY_GOAL_CATALOG.evidenceTags}
       />
+      <ActivityLibrarySection
+        query={{
+          query: firstParam(params.activityQuery),
+          category: firstParam(params.activityType),
+          ageBand: firstParam(params.activityAge),
+          difficulty: firstParam(params.activityDifficulty),
+          developmentGoalId: firstParam(params.activityGoal),
+          editorialStatus: firstParam(params.activityStatus),
+          selectedActivityId: firstParam(params.academyActivityId),
+        }}
+      />
+      <LessonReviewPreview />
     </main>
   );
 }

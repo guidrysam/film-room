@@ -1,12 +1,16 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  ACADEMY_CANONICAL_EDITORIAL_DIR,
   ACADEMY_EDITORIAL_QUEUE_DIR,
+  ACADEMY_KNOWLEDGE_CANDIDATES_DIR,
+  ACADEMY_PUBLISHED_CATALOG_DIR,
   ACADEMY_REPORTS_DIR,
   ACADEMY_SOURCE_INDEX_DIR,
   ACADEMY_SOURCE_REGISTRY_DIR,
 } from "../../lib/academy/paths";
 import type {
+  AcademyCanonicalRecord,
   AcademySourceDocument,
   AcademySourceItem,
 } from "../../lib/academy/types";
@@ -39,6 +43,9 @@ export async function ensureAcademyDirectories(): Promise<void> {
       ACADEMY_SOURCE_REGISTRY_DIR,
       ACADEMY_SOURCE_INDEX_DIR,
       ACADEMY_EDITORIAL_QUEUE_DIR,
+      ACADEMY_KNOWLEDGE_CANDIDATES_DIR,
+      ACADEMY_CANONICAL_EDITORIAL_DIR,
+      ACADEMY_PUBLISHED_CATALOG_DIR,
       ACADEMY_REPORTS_DIR,
     ].map((directory) => mkdir(directory, { recursive: true })),
   );
@@ -98,4 +105,16 @@ export async function loadAllSourceItems(): Promise<AcademySourceItem[]> {
     files.map((filename) => readJson<AcademySourceItem[]>(filename)),
   );
   return catalogs.flat();
+}
+
+export async function loadCanonicalRecords(): Promise<
+  AcademyCanonicalRecord[]
+> {
+  const files = await listJsonFiles(ACADEMY_CANONICAL_EDITORIAL_DIR);
+  const values = await Promise.all(
+    files.map((filename) =>
+      readJson<AcademyCanonicalRecord | AcademyCanonicalRecord[]>(filename),
+    ),
+  );
+  return values.flatMap((value) => (Array.isArray(value) ? value : [value]));
 }

@@ -2,7 +2,17 @@
 
 import { useParams } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
+import AcademyPlanGenerator from "@/components/AcademyPlanGenerator";
+import AcademyPublishedLesson from "@/components/AcademyPublishedLesson";
+import AcademyEvidenceRecommendations, {
+  AcademyPublishedQuiz,
+} from "@/components/AcademyEvidenceRecommendations";
 import TeamPageShell from "@/components/TeamPageShell";
+import {
+  getPublishedLessonPackageView,
+  listPublishedLessons,
+} from "@/lib/academy/published-content";
+import { canCoachTeam } from "@/lib/teams";
 
 const sections = [
   "Overview",
@@ -22,6 +32,11 @@ export default function TeamAcademyPage() {
   const enabled =
     process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
     process.env.NODE_ENV === "development";
+  const publishedLessons = listPublishedLessons();
+  const primaryLessonView =
+    publishedLessons[0]
+      ? getPublishedLessonPackageView(publishedLessons[0].id)
+      : null;
 
   if (loading) {
     return (
@@ -54,7 +69,7 @@ export default function TeamAcademyPage() {
 
   return (
     <TeamPageShell teamId={teamId} currentUid={user.uid} active="academy">
-      {() => (
+      {(team) => (
         <>
           <nav
             aria-label="Academy sections"
@@ -73,19 +88,31 @@ export default function TeamAcademyPage() {
               </span>
             ))}
           </nav>
-          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-            <p className="text-xs font-medium uppercase tracking-[0.2em] text-blue-300">
-              Phase 1
-            </p>
-            <h2 className="mt-2 text-xl font-semibold text-white">
-              Academy coming soon
-            </h2>
-            <p className="mt-3 text-sm leading-6 text-zinc-400">
-              Source indexing is in progress. Curriculum, practice planning,
-              animated lessons, assignments, and quizzes will appear here
-              after editorial review.
-            </p>
-          </section>
+
+          <AcademyEvidenceRecommendations
+            teamId={teamId}
+            currentUid={user.uid}
+            canCoach={canCoachTeam(team, user.uid)}
+          />
+
+          {primaryLessonView ? (
+            <>
+              <AcademyPublishedLesson view={primaryLessonView} />
+              <div className="my-8">
+                <AcademyPublishedQuiz
+                  lessonView={primaryLessonView}
+                  teamId={teamId}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="mb-8 rounded-xl border border-white/10 bg-white/[0.03] p-5 text-sm text-zinc-400">
+              No published Academy lessons are available yet. Curriculum content
+              appears here only after authorized package publication.
+            </div>
+          )}
+
+          <AcademyPlanGenerator />
         </>
       )}
     </TeamPageShell>

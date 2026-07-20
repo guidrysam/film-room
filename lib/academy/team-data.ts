@@ -12,7 +12,9 @@ export const TEAM_ACADEMY_COLLECTIONS = {
   assignments: "academyAssignments",
   quizAssignments: "academyQuizAssignments",
   goalEvidence: "academyGoalEvidence",
+  filmEvidence: "academyFilmEvidence",
   templates: "academyTemplates",
+  recommendationState: "academyRecommendationState",
 } as const;
 
 export const ACADEMY_PLAN_SUBCOLLECTIONS = [
@@ -48,7 +50,9 @@ export async function deleteAllTeamAcademyData(teamId: string): Promise<void> {
     TEAM_ACADEMY_COLLECTIONS.assignments,
     TEAM_ACADEMY_COLLECTIONS.quizAssignments,
     TEAM_ACADEMY_COLLECTIONS.goalEvidence,
+    TEAM_ACADEMY_COLLECTIONS.filmEvidence,
     TEAM_ACADEMY_COLLECTIONS.templates,
+    TEAM_ACADEMY_COLLECTIONS.recommendationState,
   ]) {
     await deleteCollection(
       collection(firestore, "teams", teamId, collectionName),

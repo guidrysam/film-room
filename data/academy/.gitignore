@@ -3,8 +3,13 @@
 /sources/*.json
 /source-index/*.json
 /editorial-queue/*.json
+/knowledge-candidates/*.json
+/catalog-editorial/*.json
+/catalog-editorial/*.jsonl
 
 # Keep directory placeholders in source control.
 !/sources/.gitkeep
 !/source-index/.gitkeep
 !/editorial-queue/.gitkeep
+!/knowledge-candidates/.gitkeep
+!/catalog-editorial/.gitkeep

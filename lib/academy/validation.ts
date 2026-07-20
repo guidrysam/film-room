@@ -3,8 +3,10 @@ import type {
   AcademyGoal,
   AcademyPracticeTemplate,
   AcademyPreset,
+  AcademyQuiz,
   AcademyQuizQuestion,
   AcademySourceDocument,
+  AcademyTacticalLesson,
 } from "@/lib/academy/types";
 
 export type AcademyValidationResult = {
@@ -27,6 +29,10 @@ function result(errors: string[], warnings: string[]): AcademyValidationResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isApprovedStatus(value: unknown): boolean {
+  return value === "approved" || value === "published";
 }
 
 function requiredString(
@@ -226,7 +232,7 @@ export function validateAcademyGoal(value: unknown): AcademyValidationResult {
   }
   if (!isRecord(value.editorial)) {
     errors.push(`${path}: editorial metadata is required`);
-  } else if (value.editorial.status === "approved") {
+  } else if (isApprovedStatus(value.editorial.status)) {
     if (!value.editorial.reviewedBy || !value.editorial.reviewedAt) {
       errors.push(`${path}: approved goals require human review metadata`);
     }
@@ -284,16 +290,104 @@ export function validateGoalCatalog(
   return result([...new Set(errors)], warnings);
 }
 
-export function validateAcademyDrill(value: unknown): AcademyValidationResult {
+export function validateAcademyActivity(
+  value: unknown,
+): AcademyValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   if (!isRecord(value)) {
-    return result(["drill: value must be an object"], warnings);
+    return result(["activity: value must be an object"], warnings);
   }
   const id = typeof value.id === "string" ? value.id : "(missing)";
-  const path = `drill:${id}`;
-  for (const key of ["id", "title", "shortDescription"]) {
+  const path = `activity:${id}`;
+  for (const key of ["id", "title", "summary", "description"]) {
     requiredString(value, key, path, errors);
+  }
+  if (!Number.isInteger(value.version) || Number(value.version) < 1) {
+    errors.push(`${path}: version must be a positive integer`);
+  }
+  for (const key of ["ageBands", "formats", "equipment", "searchTags"]) {
+    if (
+      !Array.isArray(value[key]) ||
+      (value[key] as unknown[]).some((item) => typeof item !== "string")
+    ) {
+      errors.push(`${path}: ${key} must be a string array`);
+    }
+  }
+  if (
+    ![
+      "warmup",
+      "technical",
+      "possession",
+      "small_sided_game",
+      "finishing",
+      "defending",
+      "transition",
+      "goalkeeper",
+      "conditioned_game",
+    ].includes(String(value.category))
+  ) {
+    errors.push(`${path}: category is invalid`);
+  }
+  if (
+    !["foundation", "developing", "advanced"].includes(
+      String(value.difficulty),
+    )
+  ) {
+    errors.push(`${path}: difficulty is invalid`);
+  }
+  if (
+    ![
+      "arrival",
+      "warm_up",
+      "technical",
+      "opposed",
+      "positioning_game",
+      "directional_game",
+      "game_training",
+      "small_sided_game",
+      "training_game",
+      "review",
+    ].includes(String(value.activityRole))
+  ) {
+    errors.push(`${path}: activityRole is invalid`);
+  }
+  if (
+    ![
+      "warmup",
+      "ball_mastery",
+      "technical_exercise",
+      "unopposed_technical",
+      "opposed_technical",
+      "rondo",
+      "possession_game",
+      "positional_game",
+      "directional_game",
+      "conditioned_game",
+      "small_sided_game",
+      "finishing",
+      "transition_game",
+      "goalkeeping",
+      "conditioning",
+      "team_building",
+      "tactical_walkthrough",
+    ].includes(String(value.activityType))
+  ) {
+    errors.push(`${path}: activityType is invalid`);
+  }
+  if (
+    !isRecord(value.field) ||
+    !["yards", "meters"].includes(String(value.field.unit))
+  ) {
+    errors.push(`${path}: field metadata with a valid unit is required`);
+  }
+  if (
+    !isRecord(value.ageRange) ||
+    !Number.isInteger(value.ageRange.min) ||
+    !Number.isInteger(value.ageRange.max) ||
+    Number(value.ageRange.min) > Number(value.ageRange.max)
+  ) {
+    errors.push(`${path}: ageRange must contain valid minimum and maximum ages`);
   }
   const steps = Array.isArray(value.steps) ? value.steps : [];
   if (steps.length < 4) errors.push(`${path}: at least four steps are required`);
@@ -385,18 +479,36 @@ export function validateAcademyDrill(value: unknown): AcademyValidationResult {
     }
   });
   for (const key of [
+    "objectives",
+    "setupInstructions",
+    "organization",
+    "howItWorks",
+    "resetInstructions",
     "coachingPoints",
     "progressions",
     "regressions",
     "commonMistakes",
+    "safetyNotes",
   ]) {
     if (!Array.isArray(value[key]) || (value[key] as unknown[]).length === 0) {
       errors.push(`${path}: ${key} must not be empty`);
     }
   }
+  for (const key of [
+    "relatedActivityIds",
+    "relatedLessonIds",
+    "relatedPracticeTemplateIds",
+    "relatedAssignmentIds",
+    "relatedQuizIds",
+    "evidenceTagIds",
+  ]) {
+    if (!Array.isArray(value[key])) {
+      errors.push(`${path}: ${key} must be an array`);
+    }
+  }
   if (!isRecord(value.editorial)) {
     errors.push(`${path}: editorial metadata is required`);
-  } else if (value.editorial.status === "approved") {
+  } else if (isApprovedStatus(value.editorial.status)) {
     if (!value.editorial.reviewedBy || !value.editorial.reviewedAt) {
       errors.push(`${path}: approved content requires human review metadata`);
     }
@@ -406,7 +518,7 @@ export function validateAcademyDrill(value: unknown): AcademyValidationResult {
   } else if (
     value.editorial &&
     isRecord(value.editorial) &&
-    value.editorial.status === "approved" &&
+    isApprovedStatus(value.editorial.status) &&
     value.safetyReview.status !== "safe"
   ) {
     errors.push(`${path}: approved drills require a safe safety review`);
@@ -432,6 +544,11 @@ export function validateAcademyDrill(value: unknown): AcademyValidationResult {
     errors,
   );
   return result(errors, warnings);
+}
+
+/** @deprecated Use validateAcademyActivity for canonical library objects. */
+export function validateAcademyDrill(value: unknown): AcademyValidationResult {
+  return validateAcademyActivity(value);
 }
 
 export function validatePracticeTemplate(
@@ -542,6 +659,91 @@ export function validateAssignmentTemplate(
   return result(errors, warnings);
 }
 
+export function validateTacticalLesson(
+  lesson: AcademyTacticalLesson,
+): AcademyValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const path = `lesson:${lesson.id || "(missing)"}`;
+  if (!lesson.id || !lesson.title.trim() || !lesson.summary.trim()) {
+    errors.push(`${path}: id, title, and summary are required`);
+  }
+  if (!Number.isInteger(lesson.version) || lesson.version < 1) {
+    errors.push(`${path}: version must be a positive integer`);
+  }
+  if (
+    !["foundation", "developing", "advanced"].includes(lesson.difficulty)
+  ) {
+    errors.push(`${path}: difficulty is invalid`);
+  }
+  if (!lesson.goalIds.length) {
+    errors.push(`${path}: at least one linked goal is required`);
+  }
+  if (!lesson.learningObjective.trim()) {
+    errors.push(`${path}: learning objective is required`);
+  }
+  for (const key of [
+    "successCriteria",
+    "coachingPoints",
+    "commonErrors",
+    "observableEvidence",
+    "introduction",
+    "coachQuestions",
+    "playerQuestions",
+    "activityIds",
+    "relatedAssignmentIds",
+    "relatedQuizIds",
+    "evidenceTagIds",
+  ] as const) {
+    if (!Array.isArray(lesson[key]) || lesson[key].length === 0) {
+      errors.push(`${path}: ${key} must not be empty`);
+    }
+  }
+  if (!lesson.progression.trim()) {
+    errors.push(`${path}: progression is required`);
+  }
+  if (!lesson.steps.length) {
+    errors.push(`${path}: at least one instructional step is required`);
+  }
+  if (!Array.isArray(lesson.sourceProvenance)) {
+    errors.push(`${path}: sourceProvenance must be an array`);
+  }
+  if (!lesson.editorial) {
+    errors.push(`${path}: editorial metadata is required`);
+  } else if (isApprovedStatus(lesson.editorial.status)) {
+    if (!lesson.editorial.reviewedBy || !lesson.editorial.reviewedAt) {
+      errors.push(`${path}: published lessons require human review metadata`);
+    }
+  }
+  return result(errors, warnings);
+}
+
+export function validateQuiz(quiz: AcademyQuiz): AcademyValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const path = `quiz:${quiz.id || "(missing)"}`;
+  if (!quiz.id || !quiz.title.trim() || !quiz.description.trim()) {
+    errors.push(`${path}: id, title, and description are required`);
+  }
+  if (!Number.isInteger(quiz.version) || quiz.version < 1) {
+    errors.push(`${path}: version must be a positive integer`);
+  }
+  if (!quiz.goalIds.length) {
+    errors.push(`${path}: at least one linked goal is required`);
+  }
+  if (!quiz.questionIds.length) {
+    errors.push(`${path}: at least one question is required`);
+  }
+  if (!quiz.editorial) {
+    errors.push(`${path}: editorial metadata is required`);
+  } else if (isApprovedStatus(quiz.editorial.status)) {
+    if (!quiz.editorial.reviewedBy || !quiz.editorial.reviewedAt) {
+      errors.push(`${path}: published quizzes require human review metadata`);
+    }
+  }
+  return result(errors, warnings);
+}
+
 export function validatePresetCatalog(
   presets: readonly AcademyPreset[],
 ): AcademyValidationResult {
@@ -559,7 +761,10 @@ export function validatePresetCatalog(
     if (!Number.isInteger(preset.version) || preset.version < 1) {
       errors.push(`academy preset:${preset.id}: version must be positive`);
     }
-    if (preset.editorial?.status === "approved" && !preset.editorial.reviewedBy) {
+    if (
+      isApprovedStatus(preset.editorial?.status) &&
+      !preset.editorial.reviewedBy
+    ) {
       errors.push(
         `academy preset:${preset.id}: approved preset requires a reviewer`,
       );

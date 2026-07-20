@@ -256,27 +256,49 @@ export type AcademyDrillStep = {
   objects: TacticsBoardObject[];
 };
 
-export type AcademyDrill = {
+export type AcademyActivityCategory =
+  | "warmup"
+  | "technical"
+  | "possession"
+  | "small_sided_game"
+  | "finishing"
+  | "defending"
+  | "transition"
+  | "goalkeeper"
+  | "conditioned_game";
+
+export type AcademyActivityType =
+  | "warmup"
+  | "ball_mastery"
+  | "technical_exercise"
+  | "unopposed_technical"
+  | "opposed_technical"
+  | "rondo"
+  | "possession_game"
+  | "positional_game"
+  | "directional_game"
+  | "conditioned_game"
+  | "small_sided_game"
+  | "finishing"
+  | "transition_game"
+  | "goalkeeping"
+  | "conditioning"
+  | "team_building"
+  | "tactical_walkthrough";
+
+export type AcademyActivity = {
   id: string;
   version: number;
   title: string;
-  shortDescription: string;
+  summary: string;
+  description: string;
+  category: AcademyActivityCategory;
+  activityType: AcademyActivityType;
   ageBands: string[];
+  ageRange: { min: number; max: number };
   difficulty: "foundation" | "developing" | "advanced";
   formats: PlayingFormat[];
   activityRole: PracticeActivityRole;
-  activityType:
-    | "ball_mastery"
-    | "unopposed_technical"
-    | "opposed_technical"
-    | "rondo"
-    | "positional_game"
-    | "directional_game"
-    | "small_sided_game"
-    | "finishing"
-    | "transition_game"
-    | "goalkeeping"
-    | "tactical_walkthrough";
   playerCount: { min: number; ideal?: number; max: number };
   goalkeeperCount?: { min: number; ideal?: number; max: number };
   durationMinutes: { min: number; default: number; max: number };
@@ -288,8 +310,15 @@ export type AcademyDrill = {
   };
   equipment: string[];
   goalIds: string[];
+  relatedActivityIds: string[];
+  relatedLessonIds: string[];
+  relatedPracticeTemplateIds: string[];
+  relatedAssignmentIds: string[];
+  relatedQuizIds: string[];
+  evidenceTagIds: string[];
   objectives: string[];
   setupInstructions: string[];
+  organization: string[];
   howItWorks: string[];
   resetInstructions: string[];
   coachingPoints: string[];
@@ -299,9 +328,13 @@ export type AcademyDrill = {
   steps: AcademyDrillStep[];
   sourceProvenance: SourceInfluence[];
   editorial: AcademyEditorialMetadata;
+  safetyNotes: string[];
   safetyReview: AcademySafetyReview;
   searchTags: string[];
 };
+
+/** @deprecated Use AcademyActivity for canonical library content. */
+export type AcademyDrill = AcademyActivity;
 
 export type AcademyTacticalLesson = {
   id: string;
@@ -310,13 +343,28 @@ export type AcademyTacticalLesson = {
   summary: string;
   ageBands: string[];
   formats: PlayingFormat[];
+  difficulty: "foundation" | "developing" | "advanced";
   goalIds: string[];
+  relatedGoalIds: string[];
   estimatedMinutes: number;
+  learningObjective: string;
+  successCriteria: string[];
+  coachingPoints: string[];
+  commonErrors: Array<{
+    title: string;
+    description: string;
+    correction: string;
+  }>;
+  observableEvidence: string[];
+  progression: string;
   introduction: string[];
   steps: AcademyDrillStep[];
   coachQuestions: string[];
   playerQuestions: string[];
-  relatedDrillIds: string[];
+  activityIds: string[];
+  relatedAssignmentIds: string[];
+  relatedQuizIds: string[];
+  evidenceTagIds: string[];
   sourceProvenance: SourceInfluence[];
   editorial: AcademyEditorialMetadata;
 };
@@ -378,12 +426,151 @@ export type SourceInfluence = {
     | "licensed_adaptation";
 };
 
+export type AcademyCanonicalObjectType =
+  | "development_goal"
+  | "lesson"
+  | "activity"
+  | "drill"
+  | "warmup"
+  | "small_sided_game"
+  | "conditioned_game"
+  | "practice"
+  | "seasonal_program"
+  | "coaching_cue"
+  | "common_error"
+  | "progression"
+  | "regression"
+  | "assignment"
+  | "quiz"
+  | "quiz_question"
+  | "lesson_package";
+
+export type AcademyCanonicalLifecycle =
+  | "draft"
+  | "needs_review"
+  | "approved"
+  | "published"
+  | "archived"
+  | "rejected";
+
+/** Coach/editor-facing workflow states used by Phase 3C CLI transitions. */
+export type AcademyWorkflowStatus =
+  | "draft"
+  | "needs_coach_review"
+  | "approved"
+  | "published"
+  | "rejected";
+
+export type AcademyEditorialAuditEntry = {
+  id: string;
+  objectId: string;
+  objectType: AcademyCanonicalObjectType;
+  previousStatus: AcademyWorkflowStatus;
+  newStatus: AcademyWorkflowStatus;
+  actor: string;
+  timestamp: string;
+  reason?: string;
+  note?: string;
+  objectVersion: number;
+};
+
+export type AcademyKnowledgeCandidate = {
+  id: string;
+  suggestedObjectTypes: AcademyCanonicalObjectType[];
+  workingTitle: string;
+  normalizedTitle: string;
+  identityFingerprint: string;
+  sourceProvenance: SourceInfluence[];
+  extractedSignals: {
+    ageTags: string[];
+    skillTags: string[];
+    tacticalTags: string[];
+    playerCountMin?: number;
+    playerCountMax?: number;
+    durationMinutes?: number;
+    equipment: string[];
+  };
+  status: "extracted" | "clustered" | "drafted" | "rejected";
+  potentialDuplicateCandidateIds: string[];
+  confidence: "low" | "medium" | "high";
+};
+
+export type AcademyDeduplicationReview = {
+  identityFingerprint: string;
+  decision: "needs_review" | "unique" | "merge_into";
+  mergeTargetId?: string;
+  comparedCanonicalIds: string[];
+  confidence: number;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  notes?: string[];
+};
+
+export type AcademyCanonicalVersionEntry = {
+  version: number;
+  changedAt: string;
+  changedBy: string;
+  summary: string;
+};
+
+/**
+ * Editorial envelope around any canonical Academy payload. Source provenance
+ * and editorial notes are private and are removed by the publication step.
+ */
+export type AcademyCanonicalRecord = {
+  id: string;
+  objectType: AcademyCanonicalObjectType;
+  version: number;
+  title: string;
+  lifecycle: AcademyCanonicalLifecycle;
+  payload: unknown;
+  sourceProvenance: SourceInfluence[];
+  sourceCandidateIds: string[];
+  editorialNotes: string[];
+  originality: {
+    originalWording: boolean;
+    originalDiagram: boolean;
+    attestedBy?: string;
+    attestedAt?: string;
+  };
+  deduplication: AcademyDeduplicationReview;
+  versionHistory: AcademyCanonicalVersionEntry[];
+  createdAt?: string;
+  updatedAt?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  publishedBy?: string;
+  publishedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+};
+
+export type PublishedAcademyObject = {
+  id: string;
+  objectType: AcademyCanonicalObjectType;
+  version: number;
+  title: string;
+  identityFingerprint: string;
+  payload: unknown;
+};
+
+export type PublishedAcademyCatalog = {
+  schemaVersion: 1;
+  catalogId: string;
+  catalogVersion: number;
+  objects: PublishedAcademyObject[];
+};
+
 export type AcademyEditorialStatus =
   | "draft"
   | "needs_animation"
   | "needs_revision"
   | "needs_coach_review"
   | "approved"
+  | "published"
   | "archived"
   | "rejected";
 
@@ -392,9 +579,34 @@ export type AcademyEditorialMetadata = {
   originalWording: boolean;
   originalDiagram: boolean;
   generatedWithAssistance?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  publishedBy?: string;
+  publishedAt?: string;
+  rejectedBy?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+  editorialNotes?: string[];
   warnings?: string[];
+};
+
+export type AcademyLessonPackageManifest = {
+  id: string;
+  version: number;
+  title: string;
+  summary: string;
+  primaryGoalId: string;
+  memberIds: string[];
+  lessonId: string;
+  activityIds: string[];
+  assignmentId: string;
+  quizId: string;
+  questionIds: string[];
+  editorial: AcademyEditorialMetadata;
 };
 
 export type AcademySafetyReview = {
@@ -481,12 +693,45 @@ export type AcademyQuiz = {
   editorial: AcademyEditorialMetadata;
 };
 
+/**
+ * Points at a Film Room moment. Game clock fields use seconds to match
+ * `GameTimelineEvent.t` and `HighlightMoment.gameTime`.
+ */
 export type AcademyFilmReference = {
   gameId: string;
   sourceId?: string;
-  clipOrMomentId?: string;
+  /** Timeline event id when the evidence was created from a mark/stat. */
+  timelineEventId?: string;
+  /** Highlight reel / draft id when the evidence references a highlight. */
   highlightId?: string;
-  gameTimeMs?: number;
+  /** Highlight moment id within that highlight draft. */
+  momentId?: string;
+  /** Canonical game clock seconds. */
+  gameTimeSec?: number;
+};
+
+/**
+ * Coach-attached bridge from a film moment to one or more development goals
+ * via canonical evidence tags. This is the primary teaching link; product
+ * content (lessons/drills) is recommended later from the resolved goals.
+ */
+export type AcademyFilmEvidenceAttachment = {
+  id: string;
+  teamId: string;
+  /** Catalog that defined the evidence tags at save time. */
+  catalogId: string;
+  catalogVersion: number;
+  playerIds?: string[];
+  personIds?: string[];
+  filmReference: AcademyFilmReference;
+  /** Canonical AcademyGameEvidenceTag ids. */
+  evidenceTagIds: string[];
+  /** Explicit goal overrides; otherwise derived from tags. */
+  goalIds?: string[];
+  note?: string;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt?: Timestamp;
 };
 
 export type AcademyGoalEvidence = {
@@ -504,6 +749,9 @@ export type AcademyGoalEvidence = {
     | "practice_attendance";
   referenceId?: string;
   filmReference?: AcademyFilmReference;
+  /** Optional link back to a film evidence attachment. */
+  filmEvidenceAttachmentId?: string;
+  evidenceTagIds?: string[];
   note?: string;
   rating?: 1 | 2 | 3 | 4 | 5;
   createdBy: string;
@@ -532,6 +780,99 @@ export type TeamAcademyPlan = {
   updatedAt: Timestamp;
 };
 
+export type AcademyPracticeEvidenceReference = {
+  evidenceId: string;
+  gameId: string;
+  timelineEventId?: string;
+  highlightId?: string;
+  momentId?: string;
+  gameTimeSec?: number;
+  evidenceTagIds: string[];
+};
+
+export type AcademyPublishedPracticeDraft = {
+  id: string;
+  teamId: string;
+  title: string;
+  status: "draft";
+  developmentGoalId: string;
+  lessonId: string;
+  publishedRelease: {
+    catalogId: string;
+    catalogVersion: number;
+    lessonVersion: number;
+  };
+  activitySequence: Array<{
+    activityId: string;
+    activityVersion: number;
+    order: number;
+    durationMinutes: number;
+  }>;
+  estimatedTotalDurationMinutes: number;
+  equipment: string[];
+  coachingPoints: string[];
+  supportingEvidence: AcademyPracticeEvidenceReference[];
+  coachNotes: string;
+  coachModifications: {
+    activityDurations?: Record<string, number>;
+    removedActivityIds?: string[];
+  };
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedBy: string;
+  updatedAt: Timestamp;
+  /** Existing academyPlans rules require a stable preset/release reference. */
+  academyPresetId: string;
+  academyPresetVersion: number;
+};
+
+export type AcademyPublishedAssignmentRecord = {
+  id: string;
+  teamId: string;
+  assignmentId: string;
+  assignmentVersion: number;
+  lessonId: string;
+  developmentGoalId: string;
+  audience: "players" | "team";
+  assignedPlayerIds: string[];
+  assignedBy: string;
+  assignedAt: Timestamp;
+  dueAt?: Timestamp;
+  completionByPlayerId: Record<
+    string,
+    {
+      status: "assigned" | "in_progress" | "completed" | "reviewed";
+      completedAt?: Timestamp;
+    }
+  >;
+  publishedRelease: {
+    catalogId: string;
+    catalogVersion: number;
+  };
+};
+
+export type AcademyQuizSubmissionRecord = {
+  id: string;
+  teamId: string;
+  quizId: string;
+  quizVersion: number;
+  lessonId: string;
+  developmentGoalId: string;
+  submittedBy: string;
+  playerId?: string;
+  submittedAt: Timestamp;
+  score: number;
+  correctCount: number;
+  questionCount: number;
+  status: "completed";
+  /** Scores demonstrate lesson understanding, not on-field mastery. */
+  interpretation: "knowledge_check_only";
+  publishedRelease: {
+    catalogId: string;
+    catalogVersion: number;
+  };
+};
+
 export type PracticeGenerationRequest = {
   academyPresetId: string;
   ageBand: string;
@@ -540,6 +881,8 @@ export type PracticeGenerationRequest = {
   goalkeeperCount: number;
   primaryGoalIds: string[];
   supportingGoalIds?: string[];
+  /** Optional film-evidence tag ids that should influence goal priority. */
+  evidenceTagIds?: string[];
   availableEquipment?: string[];
   fieldSize?: {
     length?: number;
@@ -565,6 +908,109 @@ export type GeneratedPracticePlan = {
   introduction: string[];
   reviewQuestions: string[];
   validationWarnings: string[];
+};
+
+export type AcademyPracticeSectionKind =
+  | "warm_up"
+  | "technical"
+  | "small_group"
+  | "conditioned_game"
+  | "scrimmage"
+  | "reflection";
+
+export type AcademyFieldSize = {
+  length: number;
+  width: number;
+  unit: "yards" | "meters";
+};
+
+/**
+ * Academy metadata layered over an existing built-in practice drill.
+ * `sourcePresetId` points at the canonical tactics preset; no drill is copied.
+ */
+export type AcademyDrillMetadata = {
+  id: string;
+  canonicalObjectId: string;
+  /** Present only for the original tactics-preset seed catalog. */
+  sourcePresetId?: string;
+  title: string;
+  developmentGoalIds: string[];
+  ageRange: { min: number; max: number };
+  difficulty: "foundation" | "developing" | "advanced";
+  equipment: string[];
+  players: {
+    minimumRoster: number;
+    groupSize: number;
+    goalkeeperCount: number;
+  };
+  minimumFieldSize: AcademyFieldSize;
+  durationMinutes: number;
+  setupInstructions: string[];
+  coachingCues: string[];
+  commonErrors: Array<{ error: string; correction?: string }>;
+  progressions: Array<{ title: string; description: string }>;
+  regressions: Array<{ title: string; description: string }>;
+  suitableSections: AcademyPracticeSectionKind[];
+  editorialStatus: "internal_draft" | "reviewed";
+};
+
+export type AcademyPracticeSection = {
+  id: string;
+  kind: AcademyPracticeSectionKind;
+  title: string;
+  durationMinutes: number;
+  developmentGoalIds: string[];
+  drillId?: string;
+  sourcePresetId?: string;
+  academyLessonIds: string[];
+  coachingPoints: string[];
+  setupInstructions: string[];
+  progressions: Array<{ title: string; description: string }>;
+  regressions: Array<{ title: string; description: string }>;
+  reflectionPrompts?: string[];
+};
+
+export type GeneratedAcademyPractice = {
+  id: string;
+  title: string;
+  ageBand: string;
+  durationMinutes: number;
+  rosterSize: number;
+  fieldSize?: AcademyFieldSize;
+  availableEquipment: string[];
+  primaryGoalIds: string[];
+  supportingGoalIds: string[];
+  sections: AcademyPracticeSection[];
+  recommendationWarnings: string[];
+  generatedBy: "deterministic";
+};
+
+export type AcademyGamePlanGenerationRequest = {
+  ageBand: string;
+  selectedGoalIds: string[];
+  opponentNotes?: string;
+  /** Confirmed evidence tags only; these resolve to goals before planning. */
+  previousGameEvidenceTagIds?: string[];
+  formationName?: string;
+};
+
+export type GeneratedAcademyGamePlan = {
+  id: string;
+  title: string;
+  ageBand: string;
+  selectedGoalIds: string[];
+  evidenceGoalIds: string[];
+  opponentNotes?: string;
+  pregameObjectives: string[];
+  coachingFocus: string[];
+  keyReminders: string[];
+  warmUpFocus: string[];
+  formationNotes?: string[];
+  transitionEmphasis: string[];
+  benchReminders: string[];
+  halftimeDiscussionPoints: string[];
+  postgameReflectionPrompts: string[];
+  generatedBy: "deterministic";
 };
 
 export type PlanningScope =

@@ -53,6 +53,7 @@ import VideoTransport from "@/components/VideoTransport";
 import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 import ImportTagPlays from "@/components/ImportTagPlays";
+import AcademyFilmEvidencePicker from "@/components/AcademyFilmEvidencePicker";
 
 export type GameReviewProps = {
   gameId: string;
@@ -200,9 +201,12 @@ export default function GameReview({
   const [editPlayerId, setEditPlayerId] = useState("");
   const [editTime, setEditTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
-  type ReviewTab = "tag" | "stat" | "highlight";
+  type ReviewTab = "tag" | "stat" | "highlight" | "develop";
   const [reviewTab, setReviewTab] = useState<ReviewTab>("tag");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const academyEnabled =
+    process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
+    process.env.NODE_ENV === "development";
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -237,6 +241,10 @@ export default function GameReview({
     const teamRole = team ? teamRoleFor(team, currentUid) : null;
     return canContributeGameSources(game, currentUid, teamRole);
   }, [game, team, currentUid]);
+
+  const canAttachAcademyEvidence = Boolean(
+    academyEnabled && canManageStats && game?.teamId,
+  );
 
   const gameStats = useMemo(() => listGameStatsFromEvents(events), [events]);
 
@@ -1388,6 +1396,19 @@ export default function GameReview({
                   >
                     Highlight
                   </button>
+                  {canAttachAcademyEvidence ? (
+                    <button
+                      type="button"
+                      onClick={() => setReviewTab("develop")}
+                      className={`rounded-md px-3 py-1.5 text-[11px] font-semibold transition ${
+                        reviewTab === "develop"
+                          ? "bg-blue-600/35 text-white"
+                          : "text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200"
+                      }`}
+                    >
+                      Develop
+                    </button>
+                  ) : null}
                 </div>
 
               {canEditSources && reviewTab === "tag" ? (
@@ -1722,6 +1743,15 @@ export default function GameReview({
                     </div>
                   ) : null}
                 </div>
+              ) : null}
+
+              {canAttachAcademyEvidence && reviewTab === "develop" ? (
+                <AcademyFilmEvidencePicker
+                  gameId={gameId}
+                  teamId={game!.teamId!}
+                  currentUid={currentUid}
+                  selectedEvent={selectedEvent}
+                />
               ) : null}
 
               {reviewTab === "highlight" ? (

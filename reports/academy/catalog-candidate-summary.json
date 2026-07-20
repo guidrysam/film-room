@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "candidateCount": 565,
+  "duplicateCandidateCount": 46,
+  "confidence": {
+    "high": 8,
+    "medium": 433,
+    "low": 124
+  },
+  "policy": {
+    "privateResearchOnly": true,
+    "createsPublishedObjects": false,
+    "humanReviewRequired": true
+  }
+}

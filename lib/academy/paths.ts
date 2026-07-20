@@ -11,6 +11,18 @@ export const ACADEMY_EDITORIAL_QUEUE_DIR = path.join(
   ACADEMY_ROOT,
   "editorial-queue",
 );
+export const ACADEMY_KNOWLEDGE_CANDIDATES_DIR = path.join(
+  ACADEMY_ROOT,
+  "knowledge-candidates",
+);
+export const ACADEMY_CANONICAL_EDITORIAL_DIR = path.join(
+  ACADEMY_ROOT,
+  "catalog-editorial",
+);
+export const ACADEMY_PUBLISHED_CATALOG_DIR = path.join(
+  ACADEMY_ROOT,
+  "catalog-published",
+);
 export const ACADEMY_GOALS_DIR = path.join(ACADEMY_ROOT, "goals");
 export const ACADEMY_DRILLS_DIR = path.join(ACADEMY_ROOT, "drills");
 export const ACADEMY_TACTICAL_LESSONS_DIR = path.join(
@@ -43,4 +55,16 @@ export function academySourceItemsPath(id: string): string {
 
 export function academyReportPath(filename: string): string {
   return path.join(ACADEMY_REPORTS_DIR, filename);
+}
+
+export function academyPublishedCatalogPath(): string {
+  return path.join(ACADEMY_PUBLISHED_CATALOG_DIR, "catalog.json");
+}
+
+export function academyEditorialAuditPath(): string {
+  return path.join(ACADEMY_CANONICAL_EDITORIAL_DIR, "audit.jsonl");
+}
+
+export function academyEditorialRecordPath(id: string): string {
+  return path.join(ACADEMY_CANONICAL_EDITORIAL_DIR, `${id}.json`);
 }

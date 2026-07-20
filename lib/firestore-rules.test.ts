@@ -828,6 +828,21 @@ describeRules("firestore rules (emulator)", () => {
           assignedBy: coachUid,
         }),
       );
+      const recommendationStateRef = doc(
+        coachDb,
+        "teams",
+        teamId,
+        "academyRecommendationState",
+        "recommendation-1",
+      );
+      await assertSucceeds(
+        setDoc(recommendationStateRef, {
+          teamId,
+          goalId: "u12-receive-open-body",
+          decision: "current_focus",
+          actor: coachUid,
+        }),
+      );
 
       const parentDb = testEnv!.authenticatedContext(parentUid).firestore();
       await assertSucceeds(
@@ -853,6 +868,23 @@ describeRules("firestore rules (emulator)", () => {
             "academyAssignments",
             "assignment-1",
           ),
+        ),
+      );
+      await assertFails(
+        setDoc(
+          doc(
+            parentDb,
+            "teams",
+            teamId,
+            "academyRecommendationState",
+            "recommendation-2",
+          ),
+          {
+            teamId,
+            goalId: "u12-receive-open-body",
+            decision: "dismissed",
+            actor: parentUid,
+          },
         ),
       );
     });

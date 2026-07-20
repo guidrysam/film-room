@@ -50,14 +50,17 @@ export default function GoalReviewClient({
   >({});
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
-      if (stored) {
-        setReviewStatuses(JSON.parse(stored) as Record<string, ReviewStatus>);
+    const timer = window.setTimeout(() => {
+      try {
+        const stored = window.localStorage.getItem(REVIEW_STORAGE_KEY);
+        if (stored) {
+          setReviewStatuses(JSON.parse(stored) as Record<string, ReviewStatus>);
+        }
+      } catch {
+        // A blocked or malformed local review cache must not hide canonical goals.
       }
-    } catch {
-      // A blocked or malformed local review cache must not hide canonical goals.
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const tagById = useMemo(
