@@ -39,6 +39,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Player skills ladders (Ball Mastery, etc.) — owner only.
+    match /users/{userId}/skillLadders/{ladderId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Player username registry — written only by Admin SDK (create-player-login).
     match /usernames/{username} {
       allow read, write: if false;

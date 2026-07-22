@@ -12,12 +12,19 @@ import {
 } from "@/lib/user-profile";
 import { listMyTeams, type Team } from "@/lib/teams";
 import { teamAcademyUrl, teamRosterUrl } from "@/lib/team-routes";
+import {
+  ballMasterySummary,
+  ensureBallMasteryAssignment,
+  type BallMasteryProgress,
+} from "@/lib/player-skills/progress";
 
 export default function PlayerHomePage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [skillsProgress, setSkillsProgress] =
+    useState<BallMasteryProgress | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -40,6 +47,11 @@ export default function PlayerHomePage() {
       } catch {
         setTeams([]);
       }
+      try {
+        setSkillsProgress(await ensureBallMasteryAssignment(user.uid));
+      } catch {
+        setSkillsProgress(null);
+      }
       setReady(true);
     })();
     return () => {
@@ -54,6 +66,10 @@ export default function PlayerHomePage() {
       </div>
     );
   }
+
+  const skillsLabel = skillsProgress
+    ? ballMasterySummary(skillsProgress).label
+    : "Start Ball Mastery";
 
   return (
     <div className="min-h-screen bg-zinc-950 px-4 py-10 text-zinc-50">
@@ -87,7 +103,21 @@ export default function PlayerHomePage() {
           </button>
         </div>
 
-        <section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-5">
+        <section className="mb-6 rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-400/15 to-transparent p-5">
+          <h2 className="text-lg font-semibold text-white">Ball mastery</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Your skills ladder — watch, practice, unlock the next level.
+          </p>
+          <p className="mt-3 text-sm font-medium text-cyan-100">{skillsLabel}</p>
+          <Link
+            href="/player/skills"
+            className="mt-4 inline-flex rounded-xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-zinc-950 hover:bg-cyan-300"
+          >
+            Open skills ladder
+          </Link>
+        </section>
+
+        <section className="mb-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <h2 className="text-lg font-semibold text-white">Your teams</h2>
           <p className="mt-1 text-sm text-zinc-400">
             Open Academy lessons, quizzes, and team pages.
