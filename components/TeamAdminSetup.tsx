@@ -93,7 +93,9 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
         </h2>
         <p className="mb-4 text-sm leading-relaxed text-zinc-400">
           Export your roster from TeamLinkt, then upload the CSV here to create
-          players and parent invite targets. No emails are sent automatically.
+          players and parent invite targets. After import, use{" "}
+          <strong className="font-medium text-zinc-200">Send invite</strong>{" "}
+          below to email parents from Film Room.
         </p>
         <TeamRosterImport team={team} currentUid={currentUid} />
         <div className="mt-4">

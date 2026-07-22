@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/components/AuthProvider";
 import { ensureParentInviteForTarget } from "@/lib/parent-invite-flow";
 import {
   combineParentInviteMessages,
@@ -81,13 +82,16 @@ export default function ParentInviteTargets({
   team,
   currentUid,
 }: ParentInviteTargetsProps) {
+  const { user } = useAuth();
   const canManage = canCoachTeam(team, currentUid);
   const [targets, setTargets] = useState<ParentInviteTarget[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copyAllBusy, setCopyAllBusy] = useState(false);
+  const [sendAllBusy, setSendAllBusy] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sentId, setSentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState("");
   const [manualTargetId, setManualTargetId] = useState<string | null>(null);
@@ -205,6 +209,79 @@ export default function ParentInviteTargets({
     }
   }, [eligibleTargets, buildInviteUrl, team.name, refresh]);
 
+  const sendInvites = useCallback(
+    async (targetIds: string[]) => {
+      if (!user) throw new Error("Sign in required.");
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/parent-invites/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ teamId: team.id, targetIds }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        sent?: number;
+        failed?: number;
+        results?: Array<{ targetId: string; ok: boolean; error?: string }>;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not send invite email.");
+      }
+      return payload;
+    },
+    [team.id, user],
+  );
+
+  const handleSendEmail = useCallback(
+    async (target: ParentInviteTarget) => {
+      setBusyId(target.id);
+      setError(null);
+      try {
+        const payload = await sendInvites([target.id]);
+        const result = payload.results?.[0];
+        if (!result?.ok) {
+          throw new Error(result?.error || "Could not send invite email.");
+        }
+        setSentId(target.id);
+        setTimeout(() => setSentId(null), 2000);
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not send invite.");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [sendInvites, refresh],
+  );
+
+  const handleSendAll = useCallback(async () => {
+    if (eligibleTargets.length === 0) return;
+    setSendAllBusy(true);
+    setError(null);
+    try {
+      const payload = await sendInvites(eligibleTargets.map((t) => t.id));
+      const failed = payload.failed ?? 0;
+      const sent = payload.sent ?? 0;
+      if (failed > 0 && sent === 0) {
+        const firstError = payload.results?.find((r) => !r.ok)?.error;
+        throw new Error(firstError || "Could not send invite emails.");
+      }
+      setSentId("all");
+      setTimeout(() => setSentId(null), 2000);
+      if (failed > 0) {
+        setError(`Sent ${sent}, failed ${failed}. Check emails and try again.`);
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send invites.");
+    } finally {
+      setSendAllBusy(false);
+    }
+  }, [eligibleTargets, sendInvites, refresh]);
+
   const handleOpenEmail = useCallback(
     async (target: ParentInviteTarget) => {
       setBusyId(target.id);
@@ -314,12 +391,24 @@ export default function ParentInviteTargets({
         <>
           <SummaryCard summary={summary} />
 
-          <div className="mb-4">
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void handleSendAll()}
+              disabled={sendAllBusy || eligibleTargets.length === 0}
+              className={`${primaryBtn} w-full sm:w-auto`}
+            >
+              {sentId === "all"
+                ? "Invites sent"
+                : sendAllBusy
+                  ? "Sending invites…"
+                  : "Send all invites from Film Room"}
+            </button>
             <button
               type="button"
               onClick={() => void handleCopyAllMessages()}
               disabled={copyAllBusy || eligibleTargets.length === 0}
-              className={`${primaryBtn} w-full sm:w-auto`}
+              className={`${ghostBtn} w-full sm:w-auto`}
             >
               {copiedId === "all:msg"
                 ? "Copied all messages"
@@ -327,10 +416,9 @@ export default function ParentInviteTargets({
                   ? "Preparing messages…"
                   : "Copy all invite messages"}
             </button>
-            <p className="mt-2 text-[10px] leading-snug text-zinc-500">
-              Open email or text opens your mail/Messages app with the invite
-              pre-filled — tap Send there. Automated blast sending is coming
-              next.
+            <p className="w-full text-[10px] leading-snug text-zinc-500">
+              Send emails to parents directly from Film Room. Copy / open email /
+              text remain available as backups.
             </p>
           </div>
 
@@ -371,9 +459,21 @@ export default function ParentInviteTargets({
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <button
                         type="button"
-                        onClick={() => void handleCopyLink(target)}
+                        onClick={() => void handleSendEmail(target)}
                         disabled={busyId === target.id}
                         className={primaryBtn}
+                      >
+                        {sentId === target.id
+                          ? "Sent"
+                          : busyId === target.id
+                            ? "Sending…"
+                            : "Send invite"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyLink(target)}
+                        disabled={busyId === target.id}
+                        className={ghostBtn}
                       >
                         {copiedId === `${target.id}:link`
                           ? "Copied"
