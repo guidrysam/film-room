@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { AcademyYouTubeSuggestion } from "@/lib/academy/youtube-search-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import SkillsYouTubePlayer from "@/components/SkillsYouTubePlayer";
 import {
   BALL_MASTERY_LEVELS,
@@ -10,13 +9,16 @@ import {
 } from "@/lib/player-skills/ball-mastery-ladder";
 import {
   ballMasterySummary,
-  clearLevelVideo,
   ensureBallMasteryAssignment,
   masterLevel,
-  pinLevelVideo,
   type BallMasteryProgress,
 } from "@/lib/player-skills/progress";
-import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import {
+  loadTeamBallMasteryLadder,
+  type TeamBallMasteryLadder,
+} from "@/lib/player-skills/team-ladder-videos";
+import { listMyTeams, type Team } from "@/lib/teams";
+import { loadUserProfile } from "@/lib/user-profile";
 
 type Props = {
   uid: string;
@@ -24,21 +26,18 @@ type Props = {
 
 const primaryBtn =
   "rounded-xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:opacity-40";
-const ghostBtn =
-  "rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-40";
-const inputClass =
-  "w-full rounded-xl border border-white/12 bg-black/30 px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-cyan-400/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/25";
 
+/**
+ * Player view: choose any lesson, watch the coach-selected video, mark mastered.
+ */
 export default function PlayerSkillsLadder({ uid }: Props) {
   const [progress, setProgress] = useState<BallMasteryProgress | null>(null);
-  const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<AcademyYouTubeSuggestion[]>(
-    [],
+  const [teamLadder, setTeamLadder] = useState<TeamBallMasteryLadder | null>(
+    null,
   );
-  const [discardedIds, setDiscardedIds] = useState<string[]>([]);
-  const [customUrl, setCustomUrl] = useState("");
+  const [team, setTeam] = useState<Team | null>(null);
+  const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [videoLoading, setVideoLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,25 +50,34 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     ? progress?.levels[selectedLevel.id]
     : undefined;
 
-  const summary = progress ? ballMasterySummary(progress) : null;
+  const selectedVideo = selectedLevel
+    ? teamLadder?.levels[selectedLevel.id]
+    : undefined;
 
-  const visibleSuggestions = useMemo(
-    () =>
-      suggestions.filter(
-        (video) =>
-          !discardedIds.includes(video.videoId) ||
-          video.videoId === selectedProgress?.videoId,
-      ),
-    [suggestions, discardedIds, selectedProgress?.videoId],
-  );
+  const summary = progress ? ballMasterySummary(progress) : null;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const next = await ensureBallMasteryAssignment(uid);
-      setProgress(next);
-      setSelectedLevelId((prev) => prev ?? next.currentLevelId);
+      const nextProgress = await ensureBallMasteryAssignment(uid);
+      setProgress(nextProgress);
+      setSelectedLevelId((prev) => prev ?? nextProgress.currentLevelId);
+
+      const profile = await loadUserProfile(uid);
+      const teams = await listMyTeams(uid);
+      const preferred =
+        teams.find((t) => t.id === profile?.linkedTeamId) ?? teams[0] ?? null;
+      setTeam(preferred);
+      if (preferred) {
+        setTeamLadder(await loadTeamBallMasteryLadder(preferred.id));
+      } else {
+        setTeamLadder({
+          ladderId: "ball-mastery",
+          levels: {},
+          updatedAt: null,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load skills.");
     } finally {
@@ -81,157 +89,12 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    setDiscardedIds([]);
-    setCustomUrl("");
-  }, [selectedLevel?.id]);
-
-  useEffect(() => {
-    if (!selectedLevel) {
-      setSuggestions([]);
-      return;
-    }
-    const pinnedId = selectedProgress?.videoId;
-    const skipAuto = selectedProgress?.skipAutoSuggest === true;
-    let cancelled = false;
-    setVideoLoading(true);
-    void fetch(
-      `/api/academy/youtube-search?q=${encodeURIComponent(selectedLevel.youtubeQuery)}`,
-    )
-      .then(async (response) => {
-        const payload = (await response.json()) as {
-          ok?: boolean;
-          error?: string;
-          videos?: AcademyYouTubeSuggestion[];
-        };
-        if (cancelled) return;
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload.error ?? "YouTube search failed.");
-        }
-        const videos = payload.videos ?? [];
-        setSuggestions(videos);
-        if (!pinnedId && !skipAuto && videos[0]) {
-          const pinned = await pinLevelVideo(
-            uid,
-            selectedLevel.id,
-            videos[0].videoId,
-            videos[0].title,
-          );
-          if (!cancelled) setProgress(pinned);
-        }
-        setError(null);
-      })
-      .catch((searchError: unknown) => {
-        if (cancelled) return;
-        setSuggestions([]);
-        setError(
-          searchError instanceof Error
-            ? searchError.message
-            : "Could not load video suggestions.",
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setVideoLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    selectedLevel,
-    selectedProgress?.videoId,
-    selectedProgress?.skipAutoSuggest,
-    uid,
-  ]);
-
-  async function onPickVideo(video: AcademyYouTubeSuggestion) {
-    if (!selectedLevel) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await pinLevelVideo(
-        uid,
-        selectedLevel.id,
-        video.videoId,
-        video.title,
-      );
-      setProgress(next);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save video.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onDiscardCurrent() {
-    if (!selectedLevel) return;
-    const currentId = selectedProgress?.videoId;
-    setBusy(true);
-    setError(null);
-    try {
-      if (currentId) {
-        setDiscardedIds((ids) =>
-          ids.includes(currentId) ? ids : [...ids, currentId],
-        );
-      }
-      const next = await clearLevelVideo(uid, selectedLevel.id);
-      setProgress(next);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not discard video.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onDiscardSuggestion(videoId: string) {
-    setDiscardedIds((ids) =>
-      ids.includes(videoId) ? ids : [...ids, videoId],
-    );
-    if (selectedProgress?.videoId === videoId && selectedLevel) {
-      setBusy(true);
-      try {
-        const next = await clearLevelVideo(uid, selectedLevel.id);
-        setProgress(next);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not discard video.");
-      } finally {
-        setBusy(false);
-      }
-    }
-  }
-
-  async function onAddCustom(event: FormEvent) {
-    event.preventDefault();
-    if (!selectedLevel) return;
-    const videoId = extractYouTubeVideoId(customUrl);
-    if (!videoId) {
-      setError("Paste a valid YouTube link or 11-character video id.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await pinLevelVideo(
-        uid,
-        selectedLevel.id,
-        videoId,
-        "Custom teaching video",
-      );
-      setProgress(next);
-      setCustomUrl("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save video.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function onMaster() {
     if (!selectedLevel) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await masterLevel(uid, selectedLevel.id);
-      setProgress(next);
+      setProgress(await masterLevel(uid, selectedLevel.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not master level.");
     } finally {
@@ -247,13 +110,6 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     );
   }
 
-  const videoId = selectedProgress?.videoId;
-  const selectedSuggestion =
-    visibleSuggestions.find((v) => v.videoId === videoId) ?? null;
-  const embedTitle =
-    selectedProgress?.videoTitle ??
-    selectedSuggestion?.title ??
-    "Practice video";
   const isMastered = selectedProgress?.status === "mastered";
 
   return (
@@ -266,8 +122,13 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           Skills ladder
         </h1>
         <p className="mt-2 text-sm text-zinc-400">
-          Pick any lesson, practice with Film Room controls, then mark it
-          mastered when you&apos;re ready.
+          Pick a lesson and practice with the video your coach chose.
+          {team ? (
+            <>
+              {" "}
+              Team: <span className="text-zinc-300">{team.name}</span>
+            </>
+          ) : null}
         </p>
         {summary ? (
           <p className="mt-3 text-sm font-medium text-cyan-100">
@@ -294,6 +155,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           {BALL_MASTERY_LEVELS.map((level) => {
             const state = progress.levels[level.id]?.status ?? "available";
             const selected = level.id === selectedLevelId;
+            const hasVideo = Boolean(teamLadder?.levels[level.id]?.videoId);
             return (
               <li key={level.id}>
                 <button
@@ -319,14 +181,18 @@ export default function PlayerSkillsLadder({ uid }: Props) {
                         ? "border-emerald-400/40 text-emerald-200"
                         : selected
                           ? "border-cyan-400/40 text-cyan-200"
-                          : "border-zinc-600 text-zinc-400"
+                          : hasVideo
+                            ? "border-zinc-500 text-zinc-300"
+                            : "border-zinc-700 text-zinc-500"
                     }`}
                   >
                     {state === "mastered"
                       ? "Mastered"
                       : selected
                         ? "Selected"
-                        : "Available"}
+                        : hasVideo
+                          ? "Ready"
+                          : "No video"}
                   </span>
                 </button>
               </li>
@@ -357,96 +223,25 @@ export default function PlayerSkillsLadder({ uid }: Props) {
             {selectedLevel.practicePrompt}
           </p>
 
-          {videoLoading ? (
-            <p className="mt-4 text-sm text-zinc-400">Finding a teaching video…</p>
-          ) : null}
-
-          {videoId ? (
+          {selectedVideo?.videoId ? (
             <div className="mt-4">
-              <SkillsYouTubePlayer videoId={videoId} title={embedTitle} />
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  className={ghostBtn}
-                  disabled={busy}
-                  onClick={() => void onDiscardCurrent()}
-                >
-                  Discard video
-                </button>
-              </div>
-            </div>
-          ) : !videoLoading ? (
-            <p className="mt-4 text-sm text-zinc-500">
-              No video selected — pick a suggestion or paste a YouTube link.
-            </p>
-          ) : null}
-
-          {visibleSuggestions.length > 0 ? (
-            <div className="mt-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Suggestions
-              </p>
-              <ul className="space-y-2">
-                {visibleSuggestions.map((video) => (
-                  <li
-                    key={video.videoId}
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
-                  >
-                    <p className="min-w-0 flex-1 text-xs text-zinc-300">
-                      {video.title}
-                    </p>
-                    <button
-                      type="button"
-                      disabled={busy || video.videoId === videoId}
-                      onClick={() => void onPickVideo(video)}
-                      className={`${ghostBtn} ${
-                        video.videoId === videoId
-                          ? "border-cyan-400/40 text-cyan-200"
-                          : ""
-                      }`}
-                    >
-                      {video.videoId === videoId ? "Selected" : "Use"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void onDiscardSuggestion(video.videoId)}
-                      className={ghostBtn}
-                    >
-                      Discard
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <form onSubmit={onAddCustom} className="mt-4 space-y-2">
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Add a specific YouTube video
-              </span>
-              <input
-                className={inputClass}
-                value={customUrl}
-                onChange={(e) => setCustomUrl(e.target.value)}
-                placeholder="Paste youtube.com or youtu.be link"
-                disabled={busy}
+              <SkillsYouTubePlayer
+                videoId={selectedVideo.videoId}
+                title={selectedVideo.videoTitle}
               />
-            </label>
-            <button
-              type="submit"
-              className={ghostBtn}
-              disabled={busy || !customUrl.trim()}
-            >
-              Use this video
-            </button>
-          </form>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-zinc-500">
+              {team
+                ? "Your coach hasn’t picked a video for this lesson yet."
+                : "Join a team so your coach can assign teaching videos."}
+            </p>
+          )}
 
           <button
             type="button"
             className={`${primaryBtn} mt-5 w-full`}
-            disabled={busy || isMastered}
+            disabled={busy || isMastered || !selectedVideo?.videoId}
             onClick={() => void onMaster()}
           >
             {isMastered

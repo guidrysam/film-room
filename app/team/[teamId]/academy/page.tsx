@@ -9,6 +9,7 @@ import AcademyEvidenceRecommendations, {
   AcademyPublishedQuiz,
 } from "@/components/AcademyEvidenceRecommendations";
 import TeamPageShell from "@/components/TeamPageShell";
+import TeamSkillsLadderCoach from "@/components/TeamSkillsLadderCoach";
 import {
   getPublishedLessonPackageView,
   listPublishedLessons,
@@ -20,6 +21,7 @@ import { canCoachTeam } from "@/lib/teams";
 const SECTIONS = [
   "Overview",
   "Curriculum",
+  "Skills Ladder",
   "Practice Plans",
   "Drill Library",
   "Tactical Lessons",
@@ -300,6 +302,17 @@ export default function TeamAcademyPage() {
                 and quiz.
               </p>
             </section>
+          ) : null}
+
+          {section === "Skills Ladder" ? (
+            canCoachTeam(team, user.uid) ? (
+              <TeamSkillsLadderCoach teamId={teamId} />
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 text-sm text-zinc-400">
+                Only coaches and admins can choose Ball Mastery teaching videos.
+                Players watch the selected videos in their Skills ladder.
+              </div>
+            )
           ) : null}
 
           {section === "Practice Plans" ? (
