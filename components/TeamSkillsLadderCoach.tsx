@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AcademyYouTubeSuggestion } from "@/lib/academy/youtube-search-query";
 import SkillsYouTubePlayer from "@/components/SkillsYouTubePlayer";
 import {
@@ -8,9 +8,10 @@ import {
   getBallMasteryLevel,
 } from "@/lib/player-skills/ball-mastery-ladder";
 import {
-  clearTeamLevelVideo,
   discardTeamLevelSuggestion,
+  ensureTeamLevelDefaultVideo,
   loadTeamBallMasteryLadder,
+  resolveLevelTeachingVideo,
   setTeamLevelSuggestions,
   setTeamLevelVideo,
   type TeamBallMasteryLadder,
@@ -94,12 +95,17 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     setCustomUrl("");
   }, [selectedLevelId]);
 
-  /** Load cached suggestions, or fetch once and persist. */
+  /** Load cached suggestions, or fetch once and persist (auto-selects first). */
   const ensureSuggestions = useCallback(
     async (forceRefresh: boolean) => {
       if (!selectedLevel || !ladder) return;
       const entry = ladder.levels[selectedLevel.id];
       if (!forceRefresh && entry?.suggestions.length) {
+        if (!entry.videoId) {
+          setLadder(
+            await ensureTeamLevelDefaultVideo(teamId, selectedLevel.id),
+          );
+        }
         return;
       }
       setVideoLoading(true);
@@ -141,6 +147,50 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     void ensureSuggestions(false);
   }, [selectedLevel, ladder, ensureSuggestions]);
 
+  /** Once per mount: fill any lessons that still have no suggestions/video. */
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!ladder || seededRef.current) return;
+    seededRef.current = true;
+    let cancelled = false;
+
+    async function seedMissingLevels() {
+      let current = ladder;
+      for (const level of BALL_MASTERY_LEVELS) {
+        if (cancelled) return;
+        const entry = current.levels[level.id];
+        if (entry?.videoId) continue;
+        if (entry?.suggestions.length) {
+          current = await ensureTeamLevelDefaultVideo(teamId, level.id);
+          if (!cancelled) setLadder(current);
+          continue;
+        }
+        try {
+          const response = await fetch(
+            `/api/academy/youtube-search?q=${encodeURIComponent(level.youtubeQuery)}`,
+          );
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            error?: string;
+            videos?: AcademyYouTubeSuggestion[];
+          };
+          if (!response.ok || !payload.ok) continue;
+          const videos = (payload.videos ?? []).map(toStoredSuggestion);
+          if (!videos.length) continue;
+          current = await setTeamLevelSuggestions(teamId, level.id, videos);
+          if (!cancelled) setLadder(current);
+        } catch {
+          // Leave this level for the coach to refresh manually.
+        }
+      }
+    }
+
+    void seedMissingLevels();
+    return () => {
+      cancelled = true;
+    };
+  }, [ladder, teamId]);
+
   async function onUse(video: TeamLadderSuggestion) {
     if (!selectedLevel) return;
     setBusy(true);
@@ -162,20 +212,17 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
   }
 
   async function onDiscardSelected() {
-    if (!selectedLevel) return;
+    if (!selectedLevel || !selectedVideoId) return;
     setBusy(true);
     setError(null);
     try {
-      const videoId = selectedVideoId;
-      let next = await clearTeamLevelVideo(teamId, selectedLevel.id);
-      if (videoId) {
-        next = await discardTeamLevelSuggestion(
+      setLadder(
+        await discardTeamLevelSuggestion(
           teamId,
           selectedLevel.id,
-          videoId,
-        );
-      }
-      setLadder(next);
+          selectedVideoId,
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not discard video.");
     } finally {
@@ -240,8 +287,9 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           Ball Mastery videos
         </h2>
         <p className="mt-1 text-sm text-zinc-400">
-          Suggestions are saved for the team until you refresh them. Players
-          only see the video you select.
+          The first suggestion is assigned automatically so players have a
+          video. Change it anytime with Use, Discard, or a custom link.
+          Suggestions stay until you refresh them.
         </p>
       </div>
 
@@ -253,7 +301,9 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
 
       <ul className="space-y-2">
         {BALL_MASTERY_LEVELS.map((level) => {
-          const hasVideo = Boolean(ladder.levels[level.id]?.videoId);
+          const hasVideo = Boolean(
+            resolveLevelTeachingVideo(ladder.levels[level.id]),
+          );
           const selected = level.id === selectedLevelId;
           return (
             <li key={level.id}>

@@ -15,6 +15,7 @@ import {
 } from "@/lib/player-skills/progress";
 import {
   loadTeamBallMasteryLadder,
+  resolveLevelTeachingVideo,
   type TeamBallMasteryLadder,
 } from "@/lib/player-skills/team-ladder-videos";
 import { listMyTeams, type Team } from "@/lib/teams";
@@ -51,8 +52,8 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     : undefined;
 
   const selectedVideo = selectedLevel
-    ? teamLadder?.levels[selectedLevel.id]
-    : undefined;
+    ? resolveLevelTeachingVideo(teamLadder?.levels[selectedLevel.id])
+    : null;
 
   const summary = progress ? ballMasterySummary(progress) : null;
 
@@ -155,7 +156,9 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           {BALL_MASTERY_LEVELS.map((level) => {
             const state = progress.levels[level.id]?.status ?? "available";
             const selected = level.id === selectedLevelId;
-            const hasVideo = Boolean(teamLadder?.levels[level.id]?.videoId);
+            const hasVideo = Boolean(
+              resolveLevelTeachingVideo(teamLadder?.levels[level.id]),
+            );
             return (
               <li key={level.id}>
                 <button
@@ -223,7 +226,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
             {selectedLevel.practicePrompt}
           </p>
 
-          {selectedVideo?.videoId ? (
+          {selectedVideo ? (
             <div className="mt-4">
               <SkillsYouTubePlayer
                 videoId={selectedVideo.videoId}
@@ -233,7 +236,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           ) : (
             <p className="mt-4 text-sm text-zinc-500">
               {team
-                ? "Your coach hasn’t picked a video for this lesson yet."
+                ? "Your coach hasn’t set up a video for this lesson yet."
                 : "Join a team so your coach can assign teaching videos."}
             </p>
           )}
@@ -241,7 +244,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           <button
             type="button"
             className={`${primaryBtn} mt-5 w-full`}
-            disabled={busy || isMastered || !selectedVideo?.videoId}
+            disabled={busy || isMastered || !selectedVideo}
             onClick={() => void onMaster()}
           >
             {isMastered

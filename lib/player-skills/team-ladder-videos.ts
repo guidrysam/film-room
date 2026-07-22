@@ -50,6 +50,48 @@ function emptyLevel(): TeamLadderLevelEntry {
   return { suggestions: [], discardedSuggestionIds: [] };
 }
 
+/** First suggestion the coach has not discarded. */
+export function firstAvailableSuggestion(
+  entry: TeamLadderLevelEntry | undefined,
+): TeamLadderSuggestion | null {
+  if (!entry) return null;
+  const discarded = new Set(entry.discardedSuggestionIds);
+  return (
+    entry.suggestions.find((video) => !discarded.has(video.videoId)) ?? null
+  );
+}
+
+/**
+ * Video shown to players: coach selection, else first non-discarded suggestion.
+ */
+export function resolveLevelTeachingVideo(
+  entry: TeamLadderLevelEntry | undefined,
+): { videoId: string; videoTitle: string } | null {
+  if (!entry) return null;
+  if (entry.videoId) {
+    return {
+      videoId: entry.videoId,
+      videoTitle: entry.videoTitle?.trim() || "Teaching video",
+    };
+  }
+  const fallback = firstAvailableSuggestion(entry);
+  if (!fallback) return null;
+  return { videoId: fallback.videoId, videoTitle: fallback.title };
+}
+
+function withDefaultSelection(
+  entry: TeamLadderLevelEntry,
+): TeamLadderLevelEntry {
+  if (entry.videoId) return entry;
+  const fallback = firstAvailableSuggestion(entry);
+  if (!fallback) return entry;
+  return {
+    ...entry,
+    videoId: fallback.videoId,
+    videoTitle: fallback.title,
+  };
+}
+
 function parseSuggestion(raw: unknown): TeamLadderSuggestion | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as Record<string, unknown>;
@@ -165,7 +207,7 @@ export async function setTeamLevelVideo(
   return writeLevels(teamId, levels);
 }
 
-/** Clear the coach-selected video; keep cached suggestions. */
+/** Clear the coach-selected video; keep cached suggestions and pick next default. */
 export async function clearTeamLevelVideo(
   teamId: string,
   levelId: string,
@@ -174,10 +216,10 @@ export async function clearTeamLevelVideo(
   const prev = current.levels[levelId] ?? emptyLevel();
   const levels = {
     ...current.levels,
-    [levelId]: {
+    [levelId]: withDefaultSelection({
       suggestions: prev.suggestions,
       discardedSuggestionIds: prev.discardedSuggestionIds,
-    },
+    }),
   };
   return writeLevels(teamId, levels);
 }
@@ -190,15 +232,40 @@ export async function setTeamLevelSuggestions(
 ): Promise<TeamBallMasteryLadder> {
   const current = await loadTeamBallMasteryLadder(teamId);
   const prev = current.levels[levelId] ?? emptyLevel();
+  const keepSelection =
+    prev.videoId && suggestions.some((s) => s.videoId === prev.videoId)
+      ? { videoId: prev.videoId, videoTitle: prev.videoTitle }
+      : {};
   const levels = {
     ...current.levels,
-    [levelId]: {
-      ...prev,
+    [levelId]: withDefaultSelection({
       suggestions,
       discardedSuggestionIds: [],
-    },
+      ...keepSelection,
+    }),
   };
   return writeLevels(teamId, levels);
+}
+
+/**
+ * If suggestions exist but no video is selected, persist the first available
+ * as the team teaching video (backfill for older caches).
+ */
+export async function ensureTeamLevelDefaultVideo(
+  teamId: string,
+  levelId: string,
+): Promise<TeamBallMasteryLadder> {
+  const current = await loadTeamBallMasteryLadder(teamId);
+  const prev = current.levels[levelId] ?? emptyLevel();
+  if (prev.videoId) return current;
+  const fallback = firstAvailableSuggestion(prev);
+  if (!fallback) return current;
+  return setTeamLevelVideo(
+    teamId,
+    levelId,
+    fallback.videoId,
+    fallback.title,
+  );
 }
 
 export async function discardTeamLevelSuggestion(
@@ -211,7 +278,7 @@ export async function discardTeamLevelSuggestion(
   const discardedSuggestionIds = prev.discardedSuggestionIds.includes(videoId)
     ? prev.discardedSuggestionIds
     : [...prev.discardedSuggestionIds, videoId];
-  const clearedSelection =
+  const base: TeamLadderLevelEntry =
     prev.videoId === videoId
       ? {
           suggestions: prev.suggestions,
@@ -223,7 +290,7 @@ export async function discardTeamLevelSuggestion(
         };
   const levels = {
     ...current.levels,
-    [levelId]: clearedSelection,
+    [levelId]: withDefaultSelection(base),
   };
   return writeLevels(teamId, levels);
 }
