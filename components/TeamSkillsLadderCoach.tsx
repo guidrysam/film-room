@@ -163,9 +163,10 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     if (!ladder || seededRef.current) return;
     seededRef.current = true;
     let cancelled = false;
+    const initialLadder: TeamBallMasteryLadder = ladder;
 
     async function seedMissingLevels() {
-      let current = ladder;
+      let current = initialLadder;
       for (const level of BALL_MASTERY_LEVELS) {
         if (cancelled) return;
         const entry = current.levels[level.id];
