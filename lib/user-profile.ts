@@ -69,7 +69,9 @@ export function userNeedsOnboarding(profile: UserProfile | null): boolean {
   return profile == null || profile.onboardingCompletedAt == null;
 }
 
-export function isPlayerAccount(profile: UserProfile | null): boolean {
+export function isPlayerAccount(
+  profile: UserProfile | null,
+): profile is UserProfile & { accountKind: "player" } {
   return profile?.accountKind === "player";
 }
 
