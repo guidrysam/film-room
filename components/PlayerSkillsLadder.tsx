@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { AcademyYouTubeSuggestion } from "@/lib/academy/youtube-search-query";
 import {
   BALL_MASTERY_LEVELS,
@@ -9,11 +9,13 @@ import {
 } from "@/lib/player-skills/ball-mastery-ladder";
 import {
   ballMasterySummary,
+  clearLevelVideo,
   ensureBallMasteryAssignment,
   masterLevel,
   pinLevelVideo,
   type BallMasteryProgress,
 } from "@/lib/player-skills/progress";
+import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 type Props = {
   uid: string;
@@ -23,6 +25,8 @@ const primaryBtn =
   "rounded-xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-300 disabled:opacity-40";
 const ghostBtn =
   "rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-40";
+const inputClass =
+  "w-full rounded-xl border border-white/12 bg-black/30 px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-cyan-400/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/25";
 
 function youtubeEmbedUrl(videoId: string): string {
   return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`;
@@ -33,6 +37,8 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   const [suggestions, setSuggestions] = useState<AcademyYouTubeSuggestion[]>(
     [],
   );
+  const [discardedIds, setDiscardedIds] = useState<string[]>([]);
+  const [customUrl, setCustomUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -48,6 +54,16 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     : undefined;
 
   const summary = progress ? ballMasterySummary(progress) : null;
+
+  const visibleSuggestions = useMemo(
+    () =>
+      suggestions.filter(
+        (video) =>
+          !discardedIds.includes(video.videoId) ||
+          video.videoId === activeProgress?.videoId,
+      ),
+    [suggestions, discardedIds, activeProgress?.videoId],
+  );
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -67,11 +83,17 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   }, [refresh]);
 
   useEffect(() => {
+    setDiscardedIds([]);
+    setCustomUrl("");
+  }, [activeLevel?.id]);
+
+  useEffect(() => {
     if (!activeLevel || progress?.status === "completed") {
       setSuggestions([]);
       return;
     }
     const pinnedId = activeProgress?.videoId;
+    const skipAuto = activeProgress?.skipAutoSuggest === true;
     let cancelled = false;
     setVideoLoading(true);
     void fetch(
@@ -89,7 +111,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
         }
         const videos = payload.videos ?? [];
         setSuggestions(videos);
-        if (!pinnedId && videos[0]) {
+        if (!pinnedId && !skipAuto && videos[0]) {
           const pinned = await pinLevelVideo(
             uid,
             activeLevel.id,
@@ -115,7 +137,13 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [activeLevel, activeProgress?.videoId, progress?.status, uid]);
+  }, [
+    activeLevel,
+    activeProgress?.videoId,
+    activeProgress?.skipAutoSuggest,
+    progress?.status,
+    uid,
+  ]);
 
   async function onPickVideo(video: AcademyYouTubeSuggestion) {
     if (!activeLevel) return;
@@ -129,6 +157,69 @@ export default function PlayerSkillsLadder({ uid }: Props) {
         video.title,
       );
       setProgress(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save video.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDiscardCurrent() {
+    if (!activeLevel) return;
+    const currentId = activeProgress?.videoId;
+    setBusy(true);
+    setError(null);
+    try {
+      if (currentId) {
+        setDiscardedIds((ids) =>
+          ids.includes(currentId) ? ids : [...ids, currentId],
+        );
+      }
+      const next = await clearLevelVideo(uid, activeLevel.id);
+      setProgress(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not discard video.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onDiscardSuggestion(videoId: string) {
+    setDiscardedIds((ids) =>
+      ids.includes(videoId) ? ids : [...ids, videoId],
+    );
+    if (activeProgress?.videoId === videoId && activeLevel) {
+      setBusy(true);
+      try {
+        const next = await clearLevelVideo(uid, activeLevel.id);
+        setProgress(next);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not discard video.");
+      } finally {
+        setBusy(false);
+      }
+    }
+  }
+
+  async function onAddCustom(event: FormEvent) {
+    event.preventDefault();
+    if (!activeLevel) return;
+    const videoId = extractYouTubeVideoId(customUrl);
+    if (!videoId) {
+      setError("Paste a valid YouTube link or 11-character video id.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await pinLevelVideo(
+        uid,
+        activeLevel.id,
+        videoId,
+        "Custom teaching video",
+      );
+      setProgress(next);
+      setCustomUrl("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save video.");
     } finally {
@@ -160,7 +251,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
 
   const videoId = activeProgress?.videoId;
   const selectedSuggestion =
-    suggestions.find((v) => v.videoId === videoId) ?? suggestions[0] ?? null;
+    visibleSuggestions.find((v) => v.videoId === videoId) ?? null;
   const embedTitle =
     activeProgress?.videoTitle ?? selectedSuggestion?.title ?? "Practice video";
 
@@ -242,42 +333,87 @@ export default function PlayerSkillsLadder({ uid }: Props) {
                   allowFullScreen
                 />
               </div>
-              <div className="border-t border-white/10 px-3 py-2 text-xs text-zinc-400">
-                {embedTitle}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-3 py-2">
+                <p className="min-w-0 flex-1 truncate text-xs text-zinc-400">
+                  {embedTitle}
+                </p>
+                <button
+                  type="button"
+                  className={ghostBtn}
+                  disabled={busy}
+                  onClick={() => void onDiscardCurrent()}
+                >
+                  Discard video
+                </button>
               </div>
             </div>
           ) : !videoLoading ? (
             <p className="mt-4 text-sm text-zinc-500">
-              No video yet — try another suggestion below or check back later.
+              No video selected — pick a suggestion or paste a YouTube link.
             </p>
           ) : null}
 
-          {suggestions.length > 1 ? (
+          {visibleSuggestions.length > 0 ? (
             <div className="mt-4">
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Other suggestions
+                Suggestions
               </p>
-              <div className="flex flex-wrap gap-2">
-                {suggestions.map((video) => (
-                  <button
+              <ul className="space-y-2">
+                {visibleSuggestions.map((video) => (
+                  <li
                     key={video.videoId}
-                    type="button"
-                    disabled={busy || video.videoId === videoId}
-                    onClick={() => void onPickVideo(video)}
-                    className={`${ghostBtn} ${
-                      video.videoId === videoId
-                        ? "border-cyan-400/40 text-cyan-200"
-                        : ""
-                    }`}
+                    className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
                   >
-                    {video.title.length > 42
-                      ? `${video.title.slice(0, 42)}…`
-                      : video.title}
-                  </button>
+                    <p className="min-w-0 flex-1 text-xs text-zinc-300">
+                      {video.title}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={busy || video.videoId === videoId}
+                      onClick={() => void onPickVideo(video)}
+                      className={`${ghostBtn} ${
+                        video.videoId === videoId
+                          ? "border-cyan-400/40 text-cyan-200"
+                          : ""
+                      }`}
+                    >
+                      {video.videoId === videoId ? "Selected" : "Use"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onDiscardSuggestion(video.videoId)}
+                      className={ghostBtn}
+                    >
+                      Discard
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
           ) : null}
+
+          <form onSubmit={onAddCustom} className="mt-4 space-y-2">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Add a specific YouTube video
+              </span>
+              <input
+                className={inputClass}
+                value={customUrl}
+                onChange={(e) => setCustomUrl(e.target.value)}
+                placeholder="Paste youtube.com or youtu.be link"
+                disabled={busy}
+              />
+            </label>
+            <button
+              type="submit"
+              className={ghostBtn}
+              disabled={busy || !customUrl.trim()}
+            >
+              Use this video
+            </button>
+          </form>
 
           <button
             type="button"

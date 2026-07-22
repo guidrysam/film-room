@@ -20,6 +20,8 @@ export type SkillLevelProgress = {
   status: SkillLevelStatus;
   videoId?: string;
   videoTitle?: string;
+  /** When true, do not auto-pin the first YouTube search result. */
+  skipAutoSuggest?: boolean;
   masteredAt?: Timestamp | null;
 };
 
@@ -79,6 +81,7 @@ function parseProgress(
         ...(typeof e.videoTitle === "string"
           ? { videoTitle: e.videoTitle }
           : {}),
+        ...(e.skipAutoSuggest === true ? { skipAutoSuggest: true } : {}),
         masteredAt:
           e.masteredAt instanceof Timestamp ? e.masteredAt : null,
       };
@@ -198,6 +201,7 @@ export async function pinLevelVideo(
       ...level,
       videoId,
       videoTitle,
+      skipAutoSuggest: false,
     },
   };
   await updateDoc(progressRef(uid), {
@@ -208,6 +212,34 @@ export async function pinLevelVideo(
   return {
     ...progress,
     status: progress.status === "assigned" ? "in_progress" : progress.status,
+    levels: nextLevels,
+  };
+}
+
+/** Remove the pinned video and stop auto-picking search suggestions. */
+export async function clearLevelVideo(
+  uid: string,
+  levelId: string,
+): Promise<BallMasteryProgress> {
+  const progress = await ensureBallMasteryAssignment(uid);
+  const level = progress.levels[levelId];
+  if (!level || level.status === "locked") {
+    throw new Error("That level is locked.");
+  }
+  const nextLevels = {
+    ...progress.levels,
+    [levelId]: {
+      status: level.status,
+      skipAutoSuggest: true,
+      ...(level.masteredAt ? { masteredAt: level.masteredAt } : {}),
+    },
+  };
+  await updateDoc(progressRef(uid), {
+    levels: nextLevels,
+    updatedAt: serverTimestamp(),
+  });
+  return {
+    ...progress,
     levels: nextLevels,
   };
 }
