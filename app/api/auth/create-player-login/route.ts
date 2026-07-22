@@ -167,6 +167,8 @@ export async function POST(request: Request) {
     );
     batch.update(adminFirestore.collection("teams").doc(teamId), {
       [`members.${created.uid}`]: "player",
+      memberUids: FieldValue.arrayUnion(created.uid),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     batch.update(
       adminFirestore

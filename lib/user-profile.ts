@@ -18,6 +18,8 @@ export type UserProfile = {
   parentUid?: string;
   username?: string;
   accountKind?: UserAccountKind;
+  linkedTeamId?: string;
+  linkedPlayerId?: string;
 };
 
 function userDoc(uid: string) {
@@ -52,6 +54,12 @@ export function parseUserProfile(
       : {}),
     ...(trimOrUndef(raw.parentUid) ? { parentUid: raw.parentUid as string } : {}),
     ...(trimOrUndef(raw.username) ? { username: raw.username as string } : {}),
+    ...(trimOrUndef(raw.linkedTeamId)
+      ? { linkedTeamId: raw.linkedTeamId as string }
+      : {}),
+    ...(trimOrUndef(raw.linkedPlayerId)
+      ? { linkedPlayerId: raw.linkedPlayerId as string }
+      : {}),
     accountKind,
   };
 }

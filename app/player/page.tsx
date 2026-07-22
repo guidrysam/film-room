@@ -43,7 +43,26 @@ export default function PlayerHomePage() {
       }
       setProfile(nextProfile);
       try {
-        setTeams(await listMyTeams(user.uid));
+        let nextTeams = await listMyTeams(user.uid);
+        if (
+          nextTeams.length === 0 &&
+          nextProfile.linkedTeamId &&
+          nextProfile.accountKind === "player"
+        ) {
+          try {
+            const idToken = await user.getIdToken();
+            const repair = await fetch("/api/auth/repair-player-team", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${idToken}` },
+            });
+            if (repair.ok) {
+              nextTeams = await listMyTeams(user.uid);
+            }
+          } catch {
+            // Keep empty teams; UI still shows skills ladder.
+          }
+        }
+        setTeams(nextTeams);
       } catch {
         setTeams([]);
       }
