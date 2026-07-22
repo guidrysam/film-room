@@ -51,6 +51,9 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     BALL_MASTERY_LEVELS[0]?.id ?? "",
   );
   const [customUrl, setCustomUrl] = useState("");
+  const [previewVideo, setPreviewVideo] = useState<TeamLadderSuggestion | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,6 +68,12 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     : undefined;
   const selectedVideoId = selectedEntry?.videoId;
   const selectedVideoTitle = selectedEntry?.videoTitle;
+
+  const playerVideoId = previewVideo?.videoId ?? selectedVideoId;
+  const playerVideoTitle =
+    previewVideo?.title ?? selectedVideoTitle ?? "Teaching video";
+  const isPreviewing =
+    Boolean(previewVideo) && previewVideo?.videoId !== selectedVideoId;
 
   const visibleSuggestions = useMemo(() => {
     if (!selectedEntry) return [];
@@ -93,6 +102,7 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
 
   useEffect(() => {
     setCustomUrl("");
+    setPreviewVideo(null);
   }, [selectedLevelId]);
 
   /** Load cached suggestions, or fetch once and persist (auto-selects first). */
@@ -204,6 +214,7 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           video.title,
         ),
       );
+      setPreviewVideo(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save video.");
     } finally {
@@ -238,6 +249,9 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
       setLadder(
         await discardTeamLevelSuggestion(teamId, selectedLevel.id, videoId),
       );
+      if (previewVideo?.videoId === videoId) {
+        setPreviewVideo(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not discard video.");
     } finally {
@@ -346,26 +360,56 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           </h3>
           <p className="mt-2 text-sm text-zinc-400">{selectedLevel.kidBrief}</p>
 
-          {selectedVideoId ? (
+          {playerVideoId ? (
             <div className="mt-4">
+              {isPreviewing ? (
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-400/25 bg-amber-400/10 px-3 py-2">
+                  <p className="text-xs text-amber-100">
+                    Preview only — not assigned to players yet.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className={ghostBtn}
+                      disabled={busy || !previewVideo}
+                      onClick={() => {
+                        if (previewVideo) void onUse(previewVideo);
+                      }}
+                    >
+                      Use this video
+                    </button>
+                    <button
+                      type="button"
+                      className={ghostBtn}
+                      disabled={busy}
+                      onClick={() => setPreviewVideo(null)}
+                    >
+                      Back to assigned
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <SkillsYouTubePlayer
-                videoId={selectedVideoId}
-                title={selectedVideoTitle ?? "Teaching video"}
+                videoId={playerVideoId}
+                title={playerVideoTitle}
               />
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  className={ghostBtn}
-                  disabled={busy}
-                  onClick={() => void onDiscardSelected()}
-                >
-                  Discard selected video
-                </button>
-              </div>
+              {selectedVideoId && !isPreviewing ? (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy}
+                    onClick={() => void onDiscardSelected()}
+                  >
+                    Discard selected video
+                  </button>
+                </div>
+              ) : null}
             </div>
           ) : (
             <p className="mt-4 text-sm text-zinc-500">
-              No video selected for this lesson yet.
+              No video selected for this lesson yet. Preview a suggestion
+              below.
             </p>
           )}
 
@@ -389,32 +433,74 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
 
           {visibleSuggestions.length > 0 ? (
             <ul className="mt-2 space-y-2">
-              {visibleSuggestions.map((video) => (
-                <li
-                  key={video.videoId}
-                  className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
-                >
-                  <p className="min-w-0 flex-1 text-xs text-zinc-300">
-                    {video.title}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={busy || video.videoId === selectedVideoId}
-                    onClick={() => void onUse(video)}
-                    className={ghostBtn}
+              {visibleSuggestions.map((video) => {
+                const isAssigned = video.videoId === selectedVideoId;
+                const isPreview = video.videoId === previewVideo?.videoId;
+                return (
+                  <li
+                    key={video.videoId}
+                    className={`rounded-xl border px-3 py-2 ${
+                      isPreview
+                        ? "border-cyan-400/40 bg-cyan-400/10"
+                        : "border-white/10 bg-black/30"
+                    }`}
                   >
-                    {video.videoId === selectedVideoId ? "Selected" : "Use"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void onDiscardSuggestion(video.videoId)}
-                    className={ghostBtn}
-                  >
-                    Discard
-                  </button>
-                </li>
-              ))}
+                    <div className="flex flex-wrap items-start gap-3">
+                      {video.thumbnailUrl ? (
+                        <button
+                          type="button"
+                          className="relative shrink-0 overflow-hidden rounded-lg border border-white/10"
+                          onClick={() => setPreviewVideo(video)}
+                          aria-label={`Preview ${video.title}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={video.thumbnailUrl}
+                            alt=""
+                            className="h-14 w-24 object-cover"
+                          />
+                        </button>
+                      ) : null}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-zinc-200">
+                          {video.title}
+                        </p>
+                        {video.channelTitle ? (
+                          <p className="mt-0.5 text-[11px] text-zinc-500">
+                            {video.channelTitle}
+                          </p>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setPreviewVideo(video)}
+                            className={ghostBtn}
+                          >
+                            {isPreview ? "Previewing" : "Preview"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy || isAssigned}
+                            onClick={() => void onUse(video)}
+                            className={ghostBtn}
+                          >
+                            {isAssigned ? "Selected" : "Use"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void onDiscardSuggestion(video.videoId)}
+                            className={ghostBtn}
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           ) : !videoLoading ? (
             <p className="mt-2 text-sm text-zinc-500">
