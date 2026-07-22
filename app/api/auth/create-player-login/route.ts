@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { adminAuth, adminFirestore } from "@/lib/firebase-admin";
+import { getAdminAuth, adminFirestore } from "@/lib/firebase-admin";
+import { verifyFirebaseIdTokenRest } from "@/lib/firebase-id-token";
 import {
   playerUsernameToAuthEmail,
   validatePlayerPassword,
@@ -18,6 +19,7 @@ type Body = {
 
 async function requireParentOrCoach(input: {
   uid: string;
+  email?: string;
   teamId: string;
   playerId: string;
 }): Promise<{ parentEmail: string; playerName: string }> {
@@ -55,8 +57,12 @@ async function requireParentOrCoach(input: {
     throw new Error("PLAYER_LOGIN_EXISTS");
   }
 
-  const parentUser = await adminAuth.getUser(input.uid);
-  const parentEmail = parentUser.email?.trim();
+  let parentEmail = input.email?.trim();
+  if (!parentEmail) {
+    const auth = await getAdminAuth();
+    const parentUser = await auth.getUser(input.uid);
+    parentEmail = parentUser.email?.trim();
+  }
   if (!parentEmail) throw new Error("PARENT_EMAIL_REQUIRED");
 
   return {
@@ -77,7 +83,7 @@ export async function POST(request: Request) {
     if (!token) {
       return NextResponse.json({ error: "Sign in required." }, { status: 401 });
     }
-    const decoded = await adminAuth.verifyIdToken(token);
+    const decoded = await verifyFirebaseIdTokenRest(token);
     const body = (await request.json()) as Body;
     const teamId = body.teamId?.trim() ?? "";
     const playerId = body.playerId?.trim() ?? "";
@@ -105,6 +111,7 @@ export async function POST(request: Request) {
 
     const { parentEmail, playerName } = await requireParentOrCoach({
       uid: decoded.uid,
+      email: decoded.email,
       teamId,
       playerId,
     });
@@ -123,7 +130,8 @@ export async function POST(request: Request) {
     const displayName =
       body.displayName?.trim() || playerName || username;
 
-    const created = await adminAuth.createUser({
+    const auth = await getAdminAuth();
+    const created = await auth.createUser({
       email: authEmail,
       password: body.password,
       displayName,

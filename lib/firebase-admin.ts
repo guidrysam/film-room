@@ -1,8 +1,8 @@
-import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
+import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { verifyFirebaseIdTokenRest } from "@/lib/firebase-id-token";
 
-function getOrCreateAdminApp() {
+function getOrCreateAdminApp(): App {
   const existing = getApps()[0];
   if (existing) return existing;
   const serialized = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
@@ -25,8 +25,13 @@ function getOrCreateAdminApp() {
 
 const adminApp = getOrCreateAdminApp();
 
-export const adminAuth = getAuth(adminApp);
 export const adminFirestore = getFirestore(adminApp);
+
+/** Lazy-load Auth — top-level `firebase-admin/auth` can crash on Vercel (ERR_REQUIRE_ESM). */
+export async function getAdminAuth() {
+  const { getAuth } = await import("firebase-admin/auth");
+  return getAuth(adminApp);
+}
 
 export type VerifiedTeamActor = {
   uid: string;
@@ -43,7 +48,8 @@ export async function requireVerifiedTeamActor(
     ? authorization.slice("Bearer ".length)
     : "";
   if (!token) throw new Error("AUTH_REQUIRED");
-  const decoded = await adminAuth.verifyIdToken(token);
+  // REST verify avoids loading firebase-admin/auth (jose/jwks ESM issue on Vercel).
+  const decoded = await verifyFirebaseIdTokenRest(token);
   const team = await adminFirestore.collection("teams").doc(teamId).get();
   if (!team.exists) throw new Error("TEAM_NOT_FOUND");
   const data = team.data() ?? {};

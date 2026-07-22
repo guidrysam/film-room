@@ -228,7 +228,9 @@ export default function ParentInviteTargets({
         results?: Array<{ targetId: string; ok: boolean; error?: string }>;
       };
       if (!response.ok) {
-        throw new Error(payload.error || "Could not send invite email.");
+        const detail =
+          payload.results?.find((r) => !r.ok)?.error || payload.error;
+        throw new Error(detail || `Could not send invite email (${response.status}).`);
       }
       return payload;
     },
