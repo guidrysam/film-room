@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { AcademyYouTubeSuggestion } from "@/lib/academy/youtube-search-query";
+import SkillsYouTubePlayer from "@/components/SkillsYouTubePlayer";
 import {
   BALL_MASTERY_LEVELS,
   getBallMasteryLevel,
@@ -28,12 +29,9 @@ const ghostBtn =
 const inputClass =
   "w-full rounded-xl border border-white/12 bg-black/30 px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-cyan-400/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/25";
 
-function youtubeEmbedUrl(videoId: string): string {
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`;
-}
-
 export default function PlayerSkillsLadder({ uid }: Props) {
   const [progress, setProgress] = useState<BallMasteryProgress | null>(null);
+  const [selectedLevelId, setSelectedLevelId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<AcademyYouTubeSuggestion[]>(
     [],
   );
@@ -44,13 +42,13 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const activeLevel = useMemo(() => {
-    if (!progress) return null;
-    return getBallMasteryLevel(progress.currentLevelId) ?? null;
-  }, [progress]);
+  const selectedLevel = useMemo(() => {
+    if (!selectedLevelId) return null;
+    return getBallMasteryLevel(selectedLevelId) ?? null;
+  }, [selectedLevelId]);
 
-  const activeProgress = activeLevel
-    ? progress?.levels[activeLevel.id]
+  const selectedProgress = selectedLevel
+    ? progress?.levels[selectedLevel.id]
     : undefined;
 
   const summary = progress ? ballMasterySummary(progress) : null;
@@ -60,9 +58,9 @@ export default function PlayerSkillsLadder({ uid }: Props) {
       suggestions.filter(
         (video) =>
           !discardedIds.includes(video.videoId) ||
-          video.videoId === activeProgress?.videoId,
+          video.videoId === selectedProgress?.videoId,
       ),
-    [suggestions, discardedIds, activeProgress?.videoId],
+    [suggestions, discardedIds, selectedProgress?.videoId],
   );
 
   const refresh = useCallback(async () => {
@@ -71,6 +69,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     try {
       const next = await ensureBallMasteryAssignment(uid);
       setProgress(next);
+      setSelectedLevelId((prev) => prev ?? next.currentLevelId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load skills.");
     } finally {
@@ -85,19 +84,19 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   useEffect(() => {
     setDiscardedIds([]);
     setCustomUrl("");
-  }, [activeLevel?.id]);
+  }, [selectedLevel?.id]);
 
   useEffect(() => {
-    if (!activeLevel || progress?.status === "completed") {
+    if (!selectedLevel) {
       setSuggestions([]);
       return;
     }
-    const pinnedId = activeProgress?.videoId;
-    const skipAuto = activeProgress?.skipAutoSuggest === true;
+    const pinnedId = selectedProgress?.videoId;
+    const skipAuto = selectedProgress?.skipAutoSuggest === true;
     let cancelled = false;
     setVideoLoading(true);
     void fetch(
-      `/api/academy/youtube-search?q=${encodeURIComponent(activeLevel.youtubeQuery)}`,
+      `/api/academy/youtube-search?q=${encodeURIComponent(selectedLevel.youtubeQuery)}`,
     )
       .then(async (response) => {
         const payload = (await response.json()) as {
@@ -114,7 +113,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
         if (!pinnedId && !skipAuto && videos[0]) {
           const pinned = await pinLevelVideo(
             uid,
-            activeLevel.id,
+            selectedLevel.id,
             videos[0].videoId,
             videos[0].title,
           );
@@ -138,21 +137,20 @@ export default function PlayerSkillsLadder({ uid }: Props) {
       cancelled = true;
     };
   }, [
-    activeLevel,
-    activeProgress?.videoId,
-    activeProgress?.skipAutoSuggest,
-    progress?.status,
+    selectedLevel,
+    selectedProgress?.videoId,
+    selectedProgress?.skipAutoSuggest,
     uid,
   ]);
 
   async function onPickVideo(video: AcademyYouTubeSuggestion) {
-    if (!activeLevel) return;
+    if (!selectedLevel) return;
     setBusy(true);
     setError(null);
     try {
       const next = await pinLevelVideo(
         uid,
-        activeLevel.id,
+        selectedLevel.id,
         video.videoId,
         video.title,
       );
@@ -165,8 +163,8 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   }
 
   async function onDiscardCurrent() {
-    if (!activeLevel) return;
-    const currentId = activeProgress?.videoId;
+    if (!selectedLevel) return;
+    const currentId = selectedProgress?.videoId;
     setBusy(true);
     setError(null);
     try {
@@ -175,7 +173,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           ids.includes(currentId) ? ids : [...ids, currentId],
         );
       }
-      const next = await clearLevelVideo(uid, activeLevel.id);
+      const next = await clearLevelVideo(uid, selectedLevel.id);
       setProgress(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not discard video.");
@@ -188,10 +186,10 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     setDiscardedIds((ids) =>
       ids.includes(videoId) ? ids : [...ids, videoId],
     );
-    if (activeProgress?.videoId === videoId && activeLevel) {
+    if (selectedProgress?.videoId === videoId && selectedLevel) {
       setBusy(true);
       try {
-        const next = await clearLevelVideo(uid, activeLevel.id);
+        const next = await clearLevelVideo(uid, selectedLevel.id);
         setProgress(next);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not discard video.");
@@ -203,7 +201,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
 
   async function onAddCustom(event: FormEvent) {
     event.preventDefault();
-    if (!activeLevel) return;
+    if (!selectedLevel) return;
     const videoId = extractYouTubeVideoId(customUrl);
     if (!videoId) {
       setError("Paste a valid YouTube link or 11-character video id.");
@@ -214,7 +212,7 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     try {
       const next = await pinLevelVideo(
         uid,
-        activeLevel.id,
+        selectedLevel.id,
         videoId,
         "Custom teaching video",
       );
@@ -228,11 +226,11 @@ export default function PlayerSkillsLadder({ uid }: Props) {
   }
 
   async function onMaster() {
-    if (!activeLevel) return;
+    if (!selectedLevel) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await masterLevel(uid, activeLevel.id);
+      const next = await masterLevel(uid, selectedLevel.id);
       setProgress(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not master level.");
@@ -249,11 +247,14 @@ export default function PlayerSkillsLadder({ uid }: Props) {
     );
   }
 
-  const videoId = activeProgress?.videoId;
+  const videoId = selectedProgress?.videoId;
   const selectedSuggestion =
     visibleSuggestions.find((v) => v.videoId === videoId) ?? null;
   const embedTitle =
-    activeProgress?.videoTitle ?? selectedSuggestion?.title ?? "Practice video";
+    selectedProgress?.videoTitle ??
+    selectedSuggestion?.title ??
+    "Practice video";
+  const isMastered = selectedProgress?.status === "mastered";
 
   return (
     <div className="space-y-6">
@@ -265,7 +266,8 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           Skills ladder
         </h1>
         <p className="mt-2 text-sm text-zinc-400">
-          Watch, practice, then master each level to unlock the next.
+          Pick any lesson, practice with Film Room controls, then mark it
+          mastered when you&apos;re ready.
         </p>
         {summary ? (
           <p className="mt-3 text-sm font-medium text-cyan-100">
@@ -286,36 +288,73 @@ export default function PlayerSkillsLadder({ uid }: Props) {
         </div>
       </div>
 
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-white">Lessons</h2>
+        <ul className="space-y-2">
+          {BALL_MASTERY_LEVELS.map((level) => {
+            const state = progress.levels[level.id]?.status ?? "available";
+            const selected = level.id === selectedLevelId;
+            return (
+              <li key={level.id}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedLevelId(level.id)}
+                  className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                    selected
+                      ? "border-cyan-400/45 bg-cyan-400/10"
+                      : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-zinc-200">
+                      {level.order}. {level.title}
+                    </p>
+                    <p className="truncate text-xs text-zinc-500">
+                      {level.kidBrief}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                      state === "mastered"
+                        ? "border-emerald-400/40 text-emerald-200"
+                        : selected
+                          ? "border-cyan-400/40 text-cyan-200"
+                          : "border-zinc-600 text-zinc-400"
+                    }`}
+                  >
+                    {state === "mastered"
+                      ? "Mastered"
+                      : selected
+                        ? "Selected"
+                        : "Available"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
       {error ? (
         <p className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-100">
           {error}
         </p>
       ) : null}
 
-      {progress.status === "completed" ? (
-        <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.08] p-5">
-          <h2 className="text-lg font-semibold text-white">
-            You finished Ball Mastery
-          </h2>
-          <p className="mt-2 text-sm text-zinc-300">
-            Keep practicing these moves in games and free play. Check back for
-            the next ladder soon.
-          </p>
-        </div>
-      ) : activeLevel ? (
+      {selectedLevel ? (
         <section className="rounded-2xl border border-white/10 bg-black/25 p-5">
           <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Level {activeLevel.order}
+            Level {selectedLevel.order}
           </p>
           <h2 className="mt-1 text-xl font-semibold text-white">
-            {activeLevel.title}
+            {selectedLevel.title}
           </h2>
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-            {activeLevel.kidBrief}
+            {selectedLevel.kidBrief}
           </p>
           <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-zinc-300">
             <span className="font-medium text-zinc-200">To master: </span>
-            {activeLevel.practicePrompt}
+            {selectedLevel.practicePrompt}
           </p>
 
           {videoLoading ? (
@@ -323,20 +362,9 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           ) : null}
 
           {videoId ? (
-            <div className="mt-4 overflow-hidden rounded-xl border border-white/10 bg-black">
-              <div className="aspect-video w-full">
-                <iframe
-                  title={embedTitle}
-                  src={youtubeEmbedUrl(videoId)}
-                  className="h-full w-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-3 py-2">
-                <p className="min-w-0 flex-1 truncate text-xs text-zinc-400">
-                  {embedTitle}
-                </p>
+            <div className="mt-4">
+              <SkillsYouTubePlayer videoId={videoId} title={embedTitle} />
+              <div className="mt-2 flex justify-end">
                 <button
                   type="button"
                   className={ghostBtn}
@@ -418,52 +446,17 @@ export default function PlayerSkillsLadder({ uid }: Props) {
           <button
             type="button"
             className={`${primaryBtn} mt-5 w-full`}
-            disabled={busy}
+            disabled={busy || isMastered}
             onClick={() => void onMaster()}
           >
-            {busy ? "Saving…" : "I practiced this — master level"}
+            {isMastered
+              ? "Already mastered"
+              : busy
+                ? "Saving…"
+                : "I practiced this — master level"}
           </button>
         </section>
       ) : null}
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold text-white">All levels</h2>
-        <ul className="space-y-2">
-          {BALL_MASTERY_LEVELS.map((level) => {
-            const state = progress.levels[level.id]?.status ?? "locked";
-            return (
-              <li
-                key={level.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-zinc-200">
-                    {level.order}. {level.title}
-                  </p>
-                  <p className="truncate text-xs text-zinc-500">
-                    {level.kidBrief}
-                  </p>
-                </div>
-                <span
-                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-                    state === "mastered"
-                      ? "border-emerald-400/40 text-emerald-200"
-                      : state === "active"
-                        ? "border-cyan-400/40 text-cyan-200"
-                        : "border-zinc-600 text-zinc-500"
-                  }`}
-                >
-                  {state === "mastered"
-                    ? "Mastered"
-                    : state === "active"
-                      ? "Current"
-                      : "Locked"}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
 
       <Link
         href="/player"

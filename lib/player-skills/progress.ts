@@ -11,10 +11,9 @@ import {
   BALL_MASTERY_LADDER_ID,
   BALL_MASTERY_LEVELS,
   getBallMasteryLevel,
-  getNextBallMasteryLevel,
 } from "@/lib/player-skills/ball-mastery-ladder";
 
-export type SkillLevelStatus = "locked" | "active" | "mastered";
+export type SkillLevelStatus = "available" | "mastered";
 
 export type SkillLevelProgress = {
   status: SkillLevelStatus;
@@ -47,11 +46,15 @@ function progressRef(uid: string) {
 function initialLevels(): Record<string, SkillLevelProgress> {
   const levels: Record<string, SkillLevelProgress> = {};
   for (const level of BALL_MASTERY_LEVELS) {
-    levels[level.id] = {
-      status: level.order === 1 ? "active" : "locked",
-    };
+    levels[level.id] = { status: "available" };
   }
   return levels;
+}
+
+function normalizeLevelStatus(raw: unknown): SkillLevelStatus {
+  if (raw === "mastered") return "mastered";
+  // Migrate legacy locked/active → available (free choice).
+  return "available";
 }
 
 function parseProgress(
@@ -69,12 +72,7 @@ function parseProgress(
     const entry = levelsRaw[level.id];
     if (entry && typeof entry === "object") {
       const e = entry as Record<string, unknown>;
-      const status =
-        e.status === "locked" || e.status === "active" || e.status === "mastered"
-          ? e.status
-          : level.order === 1
-            ? "active"
-            : "locked";
+      const status = normalizeLevelStatus(e.status);
       levels[level.id] = {
         status,
         ...(typeof e.videoId === "string" ? { videoId: e.videoId } : {}),
@@ -86,9 +84,7 @@ function parseProgress(
           e.masteredAt instanceof Timestamp ? e.masteredAt : null,
       };
     } else {
-      levels[level.id] = {
-        status: level.order === 1 ? "active" : "locked",
-      };
+      levels[level.id] = { status: "available" };
     }
   }
   const masteredLevelIds = Array.isArray(raw.masteredLevelIds)
@@ -139,7 +135,7 @@ export function ballMasterySummary(progress: BallMasteryProgress): {
     masteredCount,
     total,
     currentTitle,
-    label: `Level ${current?.order ?? masteredCount + 1} of ${total} · ${currentTitle}`,
+    label: `${masteredCount} of ${total} mastered · ${currentTitle}`,
   };
 }
 
@@ -192,8 +188,8 @@ export async function pinLevelVideo(
 ): Promise<BallMasteryProgress> {
   const progress = await ensureBallMasteryAssignment(uid);
   const level = progress.levels[levelId];
-  if (!level || level.status === "locked") {
-    throw new Error("That level is locked.");
+  if (!level) {
+    throw new Error("Unknown level progress.");
   }
   const nextLevels = {
     ...progress.levels,
@@ -223,8 +219,8 @@ export async function clearLevelVideo(
 ): Promise<BallMasteryProgress> {
   const progress = await ensureBallMasteryAssignment(uid);
   const level = progress.levels[levelId];
-  if (!level || level.status === "locked") {
-    throw new Error("That level is locked.");
+  if (!level) {
+    throw new Error("Unknown level progress.");
   }
   const nextLevels = {
     ...progress.levels,
@@ -253,25 +249,13 @@ export async function masterLevel(
   if (!levelDef) throw new Error("Unknown level.");
 
   const level = progress.levels[levelId];
-  if (!level || level.status === "locked") {
-    throw new Error("That level is locked.");
+  if (!level) {
+    throw new Error("Unknown level progress.");
   }
   if (level.status === "mastered") {
     return progress;
   }
-  if (progress.currentLevelId !== levelId && level.status !== "active") {
-    throw new Error("Finish your current level first.");
-  }
 
-  // Prior levels must be mastered
-  for (const prior of BALL_MASTERY_LEVELS) {
-    if (prior.order >= levelDef.order) break;
-    if (!progress.masteredLevelIds.includes(prior.id)) {
-      throw new Error("Master earlier levels first.");
-    }
-  }
-
-  const next = getNextBallMasteryLevel(levelId);
   const masteredLevelIds = progress.masteredLevelIds.includes(levelId)
     ? progress.masteredLevelIds
     : [...progress.masteredLevelIds, levelId];
@@ -285,19 +269,13 @@ export async function masterLevel(
     },
   };
 
-  let currentLevelId = progress.currentLevelId;
-  let status: BallMasteryProgress["status"] = "in_progress";
-
-  if (next) {
-    currentLevelId = next.id;
-    nextLevels[next.id] = {
-      ...nextLevels[next.id],
-      status: "active",
-    };
-  } else {
-    status = "completed";
-    currentLevelId = levelId;
-  }
+  const nextUnmastered = BALL_MASTERY_LEVELS.find(
+    (l) => nextLevels[l.id]?.status !== "mastered",
+  );
+  const status: BallMasteryProgress["status"] = nextUnmastered
+    ? "in_progress"
+    : "completed";
+  const currentLevelId = nextUnmastered?.id ?? levelId;
 
   await updateDoc(progressRef(uid), {
     levels: nextLevels,
