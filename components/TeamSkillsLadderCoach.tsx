@@ -9,9 +9,12 @@ import {
 } from "@/lib/player-skills/ball-mastery-ladder";
 import {
   clearTeamLevelVideo,
+  discardTeamLevelSuggestion,
   loadTeamBallMasteryLadder,
+  setTeamLevelSuggestions,
   setTeamLevelVideo,
   type TeamBallMasteryLadder,
+  type TeamLadderSuggestion,
 } from "@/lib/player-skills/team-ladder-videos";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
@@ -24,19 +27,28 @@ const ghostBtn =
 const inputClass =
   "w-full rounded-xl border border-white/12 bg-black/30 px-3 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:border-cyan-400/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/25";
 
+function toStoredSuggestion(
+  video: AcademyYouTubeSuggestion,
+): TeamLadderSuggestion {
+  return {
+    videoId: video.videoId,
+    title: video.title,
+    channelTitle: video.channelTitle,
+    thumbnailUrl: video.thumbnailUrl,
+    watchUrl: video.watchUrl,
+    embedUrl: video.embedUrl,
+  };
+}
+
 /**
  * Coach UI: pick / discard YouTube teaching videos for each Ball Mastery lesson.
- * Players only see the video the coach selected.
+ * Suggestions are cached on the team until the coach refreshes them.
  */
 export default function TeamSkillsLadderCoach({ teamId }: Props) {
   const [ladder, setLadder] = useState<TeamBallMasteryLadder | null>(null);
   const [selectedLevelId, setSelectedLevelId] = useState(
     BALL_MASTERY_LEVELS[0]?.id ?? "",
   );
-  const [suggestions, setSuggestions] = useState<AcademyYouTubeSuggestion[]>(
-    [],
-  );
-  const [discardedIds, setDiscardedIds] = useState<string[]>([]);
   const [customUrl, setCustomUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(false);
@@ -47,19 +59,20 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     () => getBallMasteryLevel(selectedLevelId) ?? null,
     [selectedLevelId],
   );
-  const selectedVideo = selectedLevel
+  const selectedEntry = selectedLevel
     ? ladder?.levels[selectedLevel.id]
     : undefined;
+  const selectedVideoId = selectedEntry?.videoId;
+  const selectedVideoTitle = selectedEntry?.videoTitle;
 
-  const visibleSuggestions = useMemo(
-    () =>
-      suggestions.filter(
-        (video) =>
-          !discardedIds.includes(video.videoId) ||
-          video.videoId === selectedVideo?.videoId,
-      ),
-    [suggestions, discardedIds, selectedVideo?.videoId],
-  );
+  const visibleSuggestions = useMemo(() => {
+    if (!selectedEntry) return [];
+    const discarded = new Set(selectedEntry.discardedSuggestionIds);
+    return selectedEntry.suggestions.filter(
+      (video) =>
+        !discarded.has(video.videoId) || video.videoId === selectedVideoId,
+    );
+  }, [selectedEntry, selectedVideoId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -78,51 +91,57 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
   }, [refresh]);
 
   useEffect(() => {
-    setDiscardedIds([]);
     setCustomUrl("");
   }, [selectedLevelId]);
 
-  useEffect(() => {
-    if (!selectedLevel) {
-      setSuggestions([]);
-      return;
-    }
-    let cancelled = false;
-    setVideoLoading(true);
-    void fetch(
-      `/api/academy/youtube-search?q=${encodeURIComponent(selectedLevel.youtubeQuery)}`,
-    )
-      .then(async (response) => {
+  /** Load cached suggestions, or fetch once and persist. */
+  const ensureSuggestions = useCallback(
+    async (forceRefresh: boolean) => {
+      if (!selectedLevel || !ladder) return;
+      const entry = ladder.levels[selectedLevel.id];
+      if (!forceRefresh && entry?.suggestions.length) {
+        return;
+      }
+      setVideoLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(
+          `/api/academy/youtube-search?q=${encodeURIComponent(selectedLevel.youtubeQuery)}`,
+        );
         const payload = (await response.json()) as {
           ok?: boolean;
           error?: string;
           videos?: AcademyYouTubeSuggestion[];
         };
-        if (cancelled) return;
         if (!response.ok || !payload.ok) {
           throw new Error(payload.error ?? "YouTube search failed.");
         }
-        setSuggestions(payload.videos ?? []);
-        setError(null);
-      })
-      .catch((searchError: unknown) => {
-        if (cancelled) return;
-        setSuggestions([]);
+        const videos = (payload.videos ?? []).map(toStoredSuggestion);
+        const next = await setTeamLevelSuggestions(
+          teamId,
+          selectedLevel.id,
+          videos,
+        );
+        setLadder(next);
+      } catch (searchError: unknown) {
         setError(
           searchError instanceof Error
             ? searchError.message
             : "Could not load video suggestions.",
         );
-      })
-      .finally(() => {
-        if (!cancelled) setVideoLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedLevel]);
+      } finally {
+        setVideoLoading(false);
+      }
+    },
+    [ladder, selectedLevel, teamId],
+  );
 
-  async function onUse(video: AcademyYouTubeSuggestion) {
+  useEffect(() => {
+    if (!selectedLevel || !ladder) return;
+    void ensureSuggestions(false);
+  }, [selectedLevel, ladder, ensureSuggestions]);
+
+  async function onUse(video: TeamLadderSuggestion) {
     if (!selectedLevel) return;
     setBusy(true);
     setError(null);
@@ -144,16 +163,19 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
 
   async function onDiscardSelected() {
     if (!selectedLevel) return;
-    const currentId = selectedVideo?.videoId;
     setBusy(true);
     setError(null);
     try {
-      if (currentId) {
-        setDiscardedIds((ids) =>
-          ids.includes(currentId) ? ids : [...ids, currentId],
+      const videoId = selectedVideoId;
+      let next = await clearTeamLevelVideo(teamId, selectedLevel.id);
+      if (videoId) {
+        next = await discardTeamLevelSuggestion(
+          teamId,
+          selectedLevel.id,
+          videoId,
         );
       }
-      setLadder(await clearTeamLevelVideo(teamId, selectedLevel.id));
+      setLadder(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not discard video.");
     } finally {
@@ -162,18 +184,17 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
   }
 
   async function onDiscardSuggestion(videoId: string) {
-    setDiscardedIds((ids) =>
-      ids.includes(videoId) ? ids : [...ids, videoId],
-    );
-    if (selectedVideo?.videoId === videoId && selectedLevel) {
-      setBusy(true);
-      try {
-        setLadder(await clearTeamLevelVideo(teamId, selectedLevel.id));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not discard video.");
-      } finally {
-        setBusy(false);
-      }
+    if (!selectedLevel) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setLadder(
+        await discardTeamLevelSuggestion(teamId, selectedLevel.id, videoId),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not discard video.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -219,8 +240,8 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           Ball Mastery videos
         </h2>
         <p className="mt-1 text-sm text-zinc-400">
-          Choose the teaching video for each lesson. Players only see the video
-          you select — they can&apos;t change it.
+          Suggestions are saved for the team until you refresh them. Players
+          only see the video you select.
         </p>
       </div>
 
@@ -275,11 +296,11 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           </h3>
           <p className="mt-2 text-sm text-zinc-400">{selectedLevel.kidBrief}</p>
 
-          {selectedVideo?.videoId ? (
+          {selectedVideoId ? (
             <div className="mt-4">
               <SkillsYouTubePlayer
-                videoId={selectedVideo.videoId}
-                title={selectedVideo.videoTitle}
+                videoId={selectedVideoId}
+                title={selectedVideoTitle ?? "Teaching video"}
               />
               <div className="mt-2 flex justify-end">
                 <button
@@ -288,7 +309,7 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
                   disabled={busy}
                   onClick={() => void onDiscardSelected()}
                 >
-                  Discard video
+                  Discard selected video
                 </button>
               </div>
             </div>
@@ -298,46 +319,57 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
             </p>
           )}
 
-          {videoLoading ? (
-            <p className="mt-4 text-sm text-zinc-400">Searching YouTube…</p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Suggestions
+            </p>
+            <button
+              type="button"
+              className={ghostBtn}
+              disabled={busy || videoLoading}
+              onClick={() => void ensureSuggestions(true)}
+            >
+              {videoLoading ? "Searching…" : "Refresh suggestions"}
+            </button>
+          </div>
+
+          {videoLoading && !visibleSuggestions.length ? (
+            <p className="mt-2 text-sm text-zinc-400">Searching YouTube…</p>
           ) : null}
 
           {visibleSuggestions.length > 0 ? (
-            <div className="mt-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Suggestions
-              </p>
-              <ul className="space-y-2">
-                {visibleSuggestions.map((video) => (
-                  <li
-                    key={video.videoId}
-                    className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+            <ul className="mt-2 space-y-2">
+              {visibleSuggestions.map((video) => (
+                <li
+                  key={video.videoId}
+                  className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2"
+                >
+                  <p className="min-w-0 flex-1 text-xs text-zinc-300">
+                    {video.title}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busy || video.videoId === selectedVideoId}
+                    onClick={() => void onUse(video)}
+                    className={ghostBtn}
                   >
-                    <p className="min-w-0 flex-1 text-xs text-zinc-300">
-                      {video.title}
-                    </p>
-                    <button
-                      type="button"
-                      disabled={busy || video.videoId === selectedVideo?.videoId}
-                      onClick={() => void onUse(video)}
-                      className={ghostBtn}
-                    >
-                      {video.videoId === selectedVideo?.videoId
-                        ? "Selected"
-                        : "Use"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void onDiscardSuggestion(video.videoId)}
-                      className={ghostBtn}
-                    >
-                      Discard
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                    {video.videoId === selectedVideoId ? "Selected" : "Use"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void onDiscardSuggestion(video.videoId)}
+                    className={ghostBtn}
+                  >
+                    Discard
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : !videoLoading ? (
+            <p className="mt-2 text-sm text-zinc-500">
+              No suggestions yet — tap Refresh suggestions.
+            </p>
           ) : null}
 
           <form onSubmit={onAddCustom} className="mt-4 space-y-2">
