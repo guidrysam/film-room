@@ -162,6 +162,15 @@ export default function DashboardPage() {
           >
             Sign in with Google
           </button>
+          <p className="mb-6 text-sm text-zinc-400">
+            Player?{" "}
+            <Link
+              href="/player/sign-in"
+              className="font-medium text-cyan-300 hover:text-cyan-200"
+            >
+              Sign in with username
+            </Link>
+          </p>
           <Link href="/" className={linkBack}>
             ← Back to home
           </Link>

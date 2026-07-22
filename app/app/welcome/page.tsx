@@ -56,10 +56,16 @@ function WelcomePageInner() {
           <button
             type="button"
             onClick={() => void signInWithGoogle().catch(() => {})}
-            className="mb-6 w-full rounded-xl border border-white/10 bg-white py-3 text-sm font-semibold text-zinc-950"
+            className="mb-4 w-full rounded-xl border border-white/10 bg-white py-3 text-sm font-semibold text-zinc-950"
           >
             Sign in with Google
           </button>
+          <Link
+            href="/player/sign-in"
+            className="mb-6 block w-full rounded-xl border border-cyan-400/30 bg-cyan-400/10 py-3 text-center text-sm font-semibold text-cyan-100"
+          >
+            Player username sign-in
+          </Link>
           <Link href="/" className={linkBack}>
             ← Back to home
           </Link>

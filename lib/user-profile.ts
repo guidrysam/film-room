@@ -5,12 +5,19 @@ import {
   type SignupRole,
 } from "@/lib/signup-roles";
 
+export type UserAccountKind = "standard" | "player";
+
 export type UserProfile = {
   uid: string;
   email?: string;
   displayName?: string;
   signupRoles: SignupRole[];
   onboardingCompletedAt: Timestamp | null;
+  /** Household / contact email (parent). Auth email may be synthetic for players. */
+  parentEmail?: string;
+  parentUid?: string;
+  username?: string;
+  accountKind?: UserAccountKind;
 };
 
 function userDoc(uid: string) {
@@ -27,6 +34,8 @@ export function parseUserProfile(
   uid: string,
   raw: Record<string, unknown>,
 ): UserProfile {
+  const accountKind =
+    raw.accountKind === "player" ? "player" : ("standard" as UserAccountKind);
   return {
     uid,
     ...(trimOrUndef(raw.email) ? { email: raw.email as string } : {}),
@@ -38,11 +47,22 @@ export function parseUserProfile(
       raw.onboardingCompletedAt instanceof Timestamp
         ? raw.onboardingCompletedAt
         : null,
+    ...(trimOrUndef(raw.parentEmail)
+      ? { parentEmail: raw.parentEmail as string }
+      : {}),
+    ...(trimOrUndef(raw.parentUid) ? { parentUid: raw.parentUid as string } : {}),
+    ...(trimOrUndef(raw.username) ? { username: raw.username as string } : {}),
+    accountKind,
   };
 }
 
 export function userNeedsOnboarding(profile: UserProfile | null): boolean {
+  if (profile?.accountKind === "player") return false;
   return profile == null || profile.onboardingCompletedAt == null;
+}
+
+export function isPlayerAccount(profile: UserProfile | null): boolean {
+  return profile?.accountKind === "player";
 }
 
 export async function loadUserProfile(uid: string): Promise<UserProfile | null> {
@@ -75,6 +95,7 @@ export async function completeUserOnboarding(
   const payload: Record<string, unknown> = {
     signupRoles: roles,
     onboardingCompletedAt: serverTimestamp(),
+    accountKind: "standard",
     ...(trimOrUndef(input.email) ? { email: input.email!.trim() } : {}),
     ...(trimOrUndef(input.displayName)
       ? { displayName: input.displayName!.trim() }
@@ -87,6 +108,7 @@ export async function completeUserOnboarding(
     uid: input.uid,
     signupRoles: roles,
     onboardingCompletedAt: null,
+    accountKind: "standard",
     ...(trimOrUndef(input.email) ? { email: input.email!.trim() } : {}),
     ...(trimOrUndef(input.displayName)
       ? { displayName: input.displayName!.trim() }

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import CreatePlayerLoginForm from "@/components/CreatePlayerLoginForm";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { statTypeLabel } from "@/lib/game-stats";
 import {
@@ -140,6 +141,29 @@ export default function LinkedPlayerProfileView({
             </ul>
           ) : null}
         </section>
+
+        {group.entries[0] ? (
+          <section className={`${panelClass} mb-5`}>
+            <CreatePlayerLoginForm
+              teamId={group.entries[0].teamId}
+              playerId={group.entries[0].playerId}
+              playerName={group.displayName}
+              alreadyLinked={group.entries.some((entry) =>
+                Boolean(entry.linkedUid),
+              )}
+              onCreated={() => void refresh()}
+            />
+            <p className="mt-3 text-xs text-zinc-500">
+              Player sign-in:{" "}
+              <Link
+                href="/player/sign-in"
+                className="text-cyan-300 hover:text-cyan-200"
+              >
+                /player/sign-in
+              </Link>
+            </p>
+          </section>
+        ) : null}
 
         <section className={`${panelClass} mb-5`}>
           <h2 className="mb-3 text-sm font-semibold text-white">Teams</h2>

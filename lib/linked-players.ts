@@ -22,6 +22,7 @@ export type LinkedPlayerEntry = {
   jerseyNumber?: string;
   eventLabel?: string;
   personId?: string;
+  linkedUid?: string;
 };
 
 export type LinkedPlayerGroup = {
@@ -81,6 +82,7 @@ function entryFromPlayer(team: Team, player: Player): LinkedPlayerEntry {
     ...(team.importBatchLabel ? { eventLabel: team.importBatchLabel } : {}),
     ...(player.jerseyNumber ? { jerseyNumber: player.jerseyNumber } : {}),
     ...(player.personId ? { personId: player.personId } : {}),
+    ...(player.linkedUid ? { linkedUid: player.linkedUid } : {}),
   };
 }
 
