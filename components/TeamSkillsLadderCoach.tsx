@@ -1,12 +1,16 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@/components/AuthProvider";
 import type { AcademyYouTubeSuggestion } from "@/lib/academy/youtube-search-query";
 import SkillsYouTubePlayer from "@/components/SkillsYouTubePlayer";
 import {
   BALL_MASTERY_LEVELS,
   getBallMasteryLevel,
+  type BallMasteryLevel,
 } from "@/lib/player-skills/ball-mastery-ladder";
+import { ensureLadderDrillGame } from "@/lib/player-skills/ladder-drill-game";
 import {
   discardTeamLevelSuggestion,
   ensureTeamLevelDefaultVideo,
@@ -17,6 +21,7 @@ import {
   type TeamBallMasteryLadder,
   type TeamLadderSuggestion,
 } from "@/lib/player-skills/team-ladder-videos";
+import { teamFilmRoomRoute } from "@/lib/team-film-room";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 
 type Props = {
@@ -44,8 +49,11 @@ function toStoredSuggestion(
 /**
  * Coach UI: pick / discard YouTube teaching videos for each Ball Mastery lesson.
  * Suggestions are cached on the team until the coach refreshes them.
+ * Mark in Review / Open Film Room create a reusable team game for the drill.
  */
 export default function TeamSkillsLadderCoach({ teamId }: Props) {
+  const router = useRouter();
+  const { user } = useAuth();
   const [ladder, setLadder] = useState<TeamBallMasteryLadder | null>(null);
   const [selectedLevelId, setSelectedLevelId] = useState(
     BALL_MASTERY_LEVELS[0]?.id ?? "",
@@ -57,6 +65,9 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
   const [loading, setLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [openingAction, setOpeningAction] = useState<"mark" | "room" | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const selectedLevel = useMemo(
@@ -287,6 +298,51 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     }
   }
 
+  async function openDrill(
+    level: BallMasteryLevel,
+    mode: "mark" | "room",
+    video?: { videoId: string; videoTitle: string },
+    opts?: { persistLink?: boolean },
+  ) {
+    if (!user) {
+      setError("Sign in as a coach to open this drill.");
+      return;
+    }
+    const teaching =
+      video ?? resolveLevelTeachingVideo(ladder?.levels[level.id]);
+    if (!teaching) {
+      setError("Pick a video for this lesson first.");
+      return;
+    }
+    setOpeningAction(mode);
+    setError(null);
+    try {
+      const { gameId } = await ensureLadderDrillGame({
+        uid: user.uid,
+        teamId,
+        level,
+        videoId: teaching.videoId,
+        videoTitle: teaching.videoTitle,
+        entry: ladder?.levels[level.id],
+        persistLink: opts?.persistLink,
+      });
+      if (opts?.persistLink !== false) {
+        setLadder(await loadTeamBallMasteryLadder(teamId));
+      }
+      if (mode === "mark") {
+        router.push(`/game/${gameId}/review`);
+      } else {
+        router.push(teamFilmRoomRoute(gameId));
+      }
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not open drill film room.",
+      );
+    } finally {
+      setOpeningAction(null);
+    }
+  }
+
   if (loading || !ladder) {
     return (
       <p className="text-sm text-zinc-400">
@@ -295,6 +351,11 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
     );
   }
 
+  const teachingVideo = selectedLevel
+    ? resolveLevelTeachingVideo(ladder.levels[selectedLevel.id])
+    : null;
+  const filmBusy = openingAction !== null;
+
   return (
     <div className="space-y-5">
       <div>
@@ -302,9 +363,8 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
           Ball Mastery videos
         </h2>
         <p className="mt-1 text-sm text-zinc-400">
-          The first suggestion is assigned automatically so players have a
-          video. Change it anytime with Use, Discard, or a custom link.
-          Suggestions stay until you refresh them.
+          Assign teaching videos, then mark moments in Review or open a Team
+          Film Room for any drill. Suggestions stay until you refresh them.
         </p>
       </div>
 
@@ -394,7 +454,42 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
                 videoId={playerVideoId}
                 title={playerVideoTitle}
               />
-              {selectedVideoId && !isPreviewing ? (
+              {teachingVideo && !isPreviewing ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy || filmBusy || !user}
+                    onClick={() =>
+                      void openDrill(selectedLevel, "mark", teachingVideo)
+                    }
+                  >
+                    {openingAction === "mark"
+                      ? "Opening Review…"
+                      : "Mark in Review"}
+                  </button>
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy || filmBusy || !user}
+                    onClick={() =>
+                      void openDrill(selectedLevel, "room", teachingVideo)
+                    }
+                  >
+                    {openingAction === "room"
+                      ? "Opening Film Room…"
+                      : "Open Team Film Room"}
+                  </button>
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy || filmBusy}
+                    onClick={() => void onDiscardSelected()}
+                  >
+                    Discard selected video
+                  </button>
+                </div>
+              ) : selectedVideoId && !isPreviewing ? (
                 <div className="mt-2 flex justify-end">
                   <button
                     type="button"
@@ -403,6 +498,50 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
                     onClick={() => void onDiscardSelected()}
                   >
                     Discard selected video
+                  </button>
+                </div>
+              ) : null}
+              {isPreviewing && previewVideo && selectedLevel ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy || filmBusy || !user}
+                    onClick={() =>
+                      void openDrill(
+                        selectedLevel,
+                        "mark",
+                        {
+                          videoId: previewVideo.videoId,
+                          videoTitle: previewVideo.title,
+                        },
+                        { persistLink: false },
+                      )
+                    }
+                  >
+                    {openingAction === "mark"
+                      ? "Opening Review…"
+                      : "Mark this preview"}
+                  </button>
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={busy || filmBusy || !user}
+                    onClick={() =>
+                      void openDrill(
+                        selectedLevel,
+                        "room",
+                        {
+                          videoId: previewVideo.videoId,
+                          videoTitle: previewVideo.title,
+                        },
+                        { persistLink: false },
+                      )
+                    }
+                  >
+                    {openingAction === "room"
+                      ? "Opening Film Room…"
+                      : "Film Room with preview"}
                   </button>
                 </div>
               ) : null}

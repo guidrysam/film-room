@@ -24,6 +24,10 @@ export type TeamLadderLevelEntry = {
   /** Coach-selected video shown to players. */
   videoId?: string;
   videoTitle?: string;
+  /** Team game used for Review marks + Team Film Room for this drill. */
+  reviewGameId?: string;
+  /** YouTube id the reviewGameId was created for (invalidate on video change). */
+  reviewVideoId?: string;
   /** Cached YouTube suggestions — kept until coach refreshes. */
   suggestions: TeamLadderSuggestion[];
   /** Suggestion ids the coach discarded (persist across visits). */
@@ -85,11 +89,38 @@ function withDefaultSelection(
   if (entry.videoId) return entry;
   const fallback = firstAvailableSuggestion(entry);
   if (!fallback) return entry;
+  const keepReview =
+    entry.reviewGameId && entry.reviewVideoId === fallback.videoId
+      ? {
+          reviewGameId: entry.reviewGameId,
+          reviewVideoId: entry.reviewVideoId,
+        }
+      : {};
   return {
-    ...entry,
+    suggestions: entry.suggestions,
+    discardedSuggestionIds: entry.discardedSuggestionIds,
     videoId: fallback.videoId,
     videoTitle: fallback.title,
+    ...keepReview,
   };
+}
+
+/** Keep review game link only when it still matches this YouTube id. */
+function reviewLinkForVideo(
+  entry: TeamLadderLevelEntry,
+  videoId: string | undefined,
+): Pick<TeamLadderLevelEntry, "reviewGameId" | "reviewVideoId"> {
+  if (
+    videoId &&
+    entry.reviewGameId &&
+    entry.reviewVideoId === videoId
+  ) {
+    return {
+      reviewGameId: entry.reviewGameId,
+      reviewVideoId: entry.reviewVideoId,
+    };
+  }
+  return {};
 }
 
 function parseSuggestion(raw: unknown): TeamLadderSuggestion | null {
@@ -130,6 +161,12 @@ function parseLevelEntry(raw: unknown): TeamLadderLevelEntry {
       : {}),
     ...(typeof e.videoTitle === "string" && e.videoTitle.trim()
       ? { videoTitle: e.videoTitle.trim() }
+      : {}),
+    ...(typeof e.reviewGameId === "string" && e.reviewGameId.trim()
+      ? { reviewGameId: e.reviewGameId.trim() }
+      : {}),
+    ...(typeof e.reviewVideoId === "string" && e.reviewVideoId.trim()
+      ? { reviewVideoId: e.reviewVideoId.trim() }
       : {}),
     suggestions,
     discardedSuggestionIds,
@@ -199,9 +236,31 @@ export async function setTeamLevelVideo(
   const levels = {
     ...current.levels,
     [levelId]: {
-      ...prev,
+      suggestions: prev.suggestions,
+      discardedSuggestionIds: prev.discardedSuggestionIds,
       videoId,
       videoTitle,
+      ...reviewLinkForVideo(prev, videoId),
+    },
+  };
+  return writeLevels(teamId, levels);
+}
+
+/** Link a Review / Team Film Room game to this ladder level. */
+export async function setTeamLevelReviewGame(
+  teamId: string,
+  levelId: string,
+  reviewGameId: string,
+  reviewVideoId: string,
+): Promise<TeamBallMasteryLadder> {
+  const current = await loadTeamBallMasteryLadder(teamId);
+  const prev = current.levels[levelId] ?? emptyLevel();
+  const levels = {
+    ...current.levels,
+    [levelId]: {
+      ...prev,
+      reviewGameId,
+      reviewVideoId,
     },
   };
   return writeLevels(teamId, levels);
@@ -234,7 +293,11 @@ export async function setTeamLevelSuggestions(
   const prev = current.levels[levelId] ?? emptyLevel();
   const keepSelection =
     prev.videoId && suggestions.some((s) => s.videoId === prev.videoId)
-      ? { videoId: prev.videoId, videoTitle: prev.videoTitle }
+      ? {
+          videoId: prev.videoId,
+          videoTitle: prev.videoTitle,
+          ...reviewLinkForVideo(prev, prev.videoId),
+        }
       : {};
   const levels = {
     ...current.levels,
@@ -285,8 +348,12 @@ export async function discardTeamLevelSuggestion(
           discardedSuggestionIds,
         }
       : {
-          ...prev,
+          suggestions: prev.suggestions,
           discardedSuggestionIds,
+          ...(prev.videoId
+            ? { videoId: prev.videoId, videoTitle: prev.videoTitle }
+            : {}),
+          ...reviewLinkForVideo(prev, prev.videoId),
         };
   const levels = {
     ...current.levels,
