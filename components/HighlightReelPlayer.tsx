@@ -12,6 +12,7 @@ import {
 } from "react";
 import YouTube, { type YouTubePlayer } from "react-youtube";
 import ReelInterstitial from "@/components/ReelInterstitial";
+import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import type { ReelStep } from "@/lib/highlight-draft";
 import {
   REEL_TITLE_HOLD_MS,
@@ -30,6 +31,7 @@ import {
   reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
 import { computeKenBurnsScale } from "@/lib/highlight-ken-burns";
+import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 
 const POLL_MS = 150;
 const SEEK_SETTLE_MS = 900;
@@ -127,18 +129,7 @@ const HighlightReelPlayer = forwardRef<
       height: "100%",
       playerVars: {
         autoplay: 0,
-        enablejsapi: 1,
-        modestbranding: 1,
-        rel: 0,
-        playsinline: 1,
-        controls: 0,
-        disablekb: 1,
-        fs: 0,
-        iv_load_policy: 3,
-        cc_load_policy: 0,
-        ...(typeof window !== "undefined"
-          ? { origin: window.location.origin }
-          : {}),
+        ...YOUTUBE_CHROMELESS_PLAYER_VARS,
       },
     }),
     [],
@@ -157,6 +148,7 @@ const HighlightReelPlayer = forwardRef<
     }
   }, []);
 
+  /** Park on the first segment without cue/load thrash (matches Review embed). */
   const cueIdlePreview = useCallback(
     (player: YouTubePlayer) => {
       if (playingRef.current) return;
@@ -165,15 +157,14 @@ const HighlightReelPlayer = forwardRef<
       const videoId = videoIdForSource(step.sourceId);
       if (!videoId) return;
       const start = Math.max(0, step.sourceStartTime);
-      const yt = player as YouTubePlayerWithCue;
       try {
         if (loadedVideoIdRef.current === videoId) {
           player.seekTo?.(start, true);
-          player.pauseVideo?.();
-        } else {
-          yt.cueVideoById?.({ videoId, startSeconds: start });
-          loadedVideoIdRef.current = videoId;
+          return;
         }
+        const yt = player as YouTubePlayerWithCue;
+        yt.cueVideoById?.({ videoId, startSeconds: start });
+        loadedVideoIdRef.current = videoId;
       } catch {
         /* player not ready */
       }
@@ -667,12 +658,12 @@ const HighlightReelPlayer = forwardRef<
         className="relative aspect-video w-full overflow-hidden bg-black"
       >
         {firstVideoId ? (
-          <div className="absolute inset-0 overflow-hidden">
+          <YoutubeChromelessStage className="absolute inset-0 overflow-hidden bg-black">
             <div
               className="h-full w-full"
               style={{
                 transform:
-                  kenBurnsScale !== 1
+                  playing && kenBurnsScale !== 1
                     ? `scale(${kenBurnsScale})`
                     : undefined,
                 transformOrigin: "center center",
@@ -681,8 +672,7 @@ const HighlightReelPlayer = forwardRef<
               <YouTube
                 key={firstVideoId}
                 videoId={firstVideoId}
-                className="h-full w-full"
-                iframeClassName="h-full w-full pointer-events-none"
+                className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
                 opts={youtubeOpts}
                 onReady={(e) => {
                   playerRef.current = e.target;
@@ -698,8 +688,7 @@ const HighlightReelPlayer = forwardRef<
                 onStateChange={handleYoutubeStateChange}
               />
             </div>
-            <div className="pointer-events-none absolute inset-0 z-10" aria-hidden />
-          </div>
+          </YoutubeChromelessStage>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
             Add a segment to preview the reel.
