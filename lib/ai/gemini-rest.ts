@@ -64,6 +64,10 @@ export async function geminiGenerateObject<T>(input: {
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: input.responseJsonSchema,
+      maxOutputTokens: 8192,
+      ...(input.youtubeVideoId
+        ? { mediaResolution: "MEDIA_RESOLUTION_HIGH" }
+        : {}),
     },
   };
 

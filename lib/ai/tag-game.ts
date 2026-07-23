@@ -19,22 +19,28 @@ export type TagGameInput = {
 
 const SYSTEM = `You tag youth soccer (football) game film for a coach review timeline.
 
-PRIMARY (always try): kickoff/start, half_end, half_start, full_time, goals.
+Watch the FULL video timeline (not just kickoff/goals). Work half-by-half and keep tagging as play develops.
 
-EXTENDED (include when confidence ≥ ~0.6 and visually clear):
-- shot — attempt on goal (on or off target)
-- save — goalkeeper or last-ditch block of a shot
-- corner — corner kick awarded / taken
-- defensive_stop — clear tackle, interception, or block that ends a dangerous attack
-- offensive_opportunity — clear chance created (through ball, 1v1, overload in final third) even if no shot
-- turnover — possession lost in a meaningful way (giveaway under pressure, misplaced pass that flips attack)
+PRIMARY (always include when visible):
+- kickoff / half_start, half_end, full_time
+- every goal (both teams)
 
-Use coach_mark only for other high-value moments that do not fit above.
+EXTENDED — include generously when you can see them (confidence ≥ ~0.45 is fine; coaches will approve/reject):
+- shot — any attempt toward goal (on or off target), including blocked shots that leave the shooter
+- save — goalkeeper or desperate block of a shot
+- corner — corner kick awarded or taken
+- defensive_stop — tackle, interception, or clear block that ends a dangerous attack
+- offensive_opportunity — clear chance (through ball, 1v1, overload in final third) even without a shot
+- turnover — meaningful possession loss that flips the attack
+
+Use coach_mark only for other high-value teaching moments that do not fit above.
 Timestamps are seconds from the start of THIS video file (not game clock).
-Be conservative: omit uncertain events. Prefer fewer high-confidence drafts over noisy play-by-play.
+For a typical 60–90 minute youth match, expect STRUCTURE + ALL goals + a dense set of EXTENDED events (often 25–80 drafts total). Prefer missing fewer clear shots/corners/saves over being sparse.
+Do NOT emit routine passes, throw-ins, or every stoppage — only coach-useful moments.
 For goals/shots/corners, set opponent=true when the event belongs to the away/opponent side if distinguishable.
-If visual evidence is thin (metadata/captions only), set lowEvidence=true on drafts and keep EXTENDED sparse.
-Optionally set suggestedKickoffOffsetSec if recording starts before kickoff (seconds of pre-game footage before kickoff).`;
+If a moment is a bit uncertain, still include it with a lower confidence and/or lowEvidence=true rather than omitting it.
+Optionally set suggestedKickoffOffsetSec if recording starts before kickoff (seconds of pre-game footage before kickoff).
+Sort drafts by ascending tSec.`;
 
 export async function runTagGameAnalysis(
   input: TagGameInput,
@@ -49,6 +55,11 @@ export async function runTagGameAnalysis(
       ? input.rosterNames.slice(0, 40).join(", ")
       : "(unknown)";
 
+  const durationHint =
+    typeof input.durationSec === "number" && input.durationSec > 0
+      ? `Scan the full ${Math.round(input.durationSec / 60)} minutes.`
+      : "Scan the full match duration.";
+
   const textPrompt = [
     `Sport: ${input.sport?.trim() || "soccer"}`,
     `Title: ${input.title?.trim() || "(none)"}`,
@@ -59,7 +70,7 @@ export async function runTagGameAnalysis(
       ? `Description:\n${input.description.trim().slice(0, 2000)}`
       : "",
     "",
-    "Return structured JSON drafts for PRIMARY + clear EXTENDED events (shots, saves, corners, defensive stops, offensive opportunities, turnovers).",
+    `${durationHint} Return PRIMARY structure + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers throughout — not goals alone.`,
   ]
     .filter(Boolean)
     .join("\n");
