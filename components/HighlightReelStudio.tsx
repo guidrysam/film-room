@@ -753,9 +753,9 @@ export default function HighlightReelStudio({
         ) : null}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
         {/* Preview + share */}
-        <div className={panel}>
+        <div className={`${panel} lg:sticky lg:top-4 lg:self-start`}>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Preview
