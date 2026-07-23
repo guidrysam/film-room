@@ -252,14 +252,22 @@ export default function ClubHubPage() {
           <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
             <h2 className="text-sm font-semibold text-white">Invite to club</h2>
             <p className="mt-1 text-xs text-zinc-400">
-              Coaches join the club first, then you assign them to teams.
-              Parents join the club to see kids across teams once linked on a
+              Invite club admins to help run the club, coaches to assign to
+              teams, or parents to follow kids across teams once linked on a
               roster.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 className={primaryBtn}
+                disabled={inviteBusy}
+                onClick={() => void makeInvite("club_admin")}
+              >
+                Invite admin
+              </button>
+              <button
+                type="button"
+                className={ghostBtn}
                 disabled={inviteBusy}
                 onClick={() => void makeInvite("club_coach")}
               >

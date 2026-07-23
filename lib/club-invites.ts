@@ -18,11 +18,11 @@ import {
 } from "firebase/firestore";
 
 /**
- * Club invite links — join as club_coach or club_parent.
+ * Club invite links — join as club_admin, club_coach, or club_parent.
  * Layout: clubInvites/{code}
  */
 
-export type ClubInviteRole = Exclude<ClubMemberRole, "club_admin">;
+export type ClubInviteRole = ClubMemberRole;
 
 export type ClubInvite = {
   code: string;
@@ -36,7 +36,11 @@ export type ClubInvite = {
   active: boolean;
 };
 
-const INVITE_ROLES: ClubInviteRole[] = ["club_coach", "club_parent"];
+const INVITE_ROLES: ClubInviteRole[] = [
+  "club_admin",
+  "club_coach",
+  "club_parent",
+];
 
 function clubInvitesCol() {
   return collection(firestore, "clubInvites");

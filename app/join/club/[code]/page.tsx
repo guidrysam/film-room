@@ -23,6 +23,11 @@ const ROLE_COPY: Record<
   ClubInvite["role"],
   { title: string; blurb: string }
 > = {
+  club_admin: {
+    title: "Club admin",
+    blurb:
+      "Help run this club: manage teams, import rosters, and invite coaches and parents.",
+  },
   club_coach: {
     title: "Club coach",
     blurb:
@@ -82,7 +87,11 @@ export default function JoinClubPage() {
     try {
       const { clubId, role } = await redeemClubInvite(code, user.uid);
       const preselected =
-        role === "club_parent" ? "parent" : ("coach" as const);
+        role === "club_parent"
+          ? "parent"
+          : role === "club_admin"
+            ? "club_operator"
+            : ("coach" as const);
       const next = await pathAfterAuthOrWelcome(
         user.uid,
         clubHubUrl(clubId),

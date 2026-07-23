@@ -98,7 +98,8 @@ service cloud.firestore {
       return clubJoinInviteData().active == true
         && clubJoinInviteData().clubId == clubId
         && isClubAdmin(clubId, clubJoinInviteData().createdBy)
-        && (clubJoinInviteData().role == 'club_coach' ||
+        && (clubJoinInviteData().role == 'club_admin' ||
+            clubJoinInviteData().role == 'club_coach' ||
             clubJoinInviteData().role == 'club_parent')
         && (!('expiresAt' in clubJoinInviteData()) ||
             clubJoinInviteData().expiresAt > request.time);
@@ -111,7 +112,7 @@ service cloud.firestore {
       allow delete: if request.auth != null &&
                        resource.data.ownerId == request.auth.uid;
 
-      // Self-join via club invite.
+      // Self-join via club invite (admin / coach / parent).
       allow update: if request.auth != null
         && !(request.auth.uid in resource.data.members)
         && request.resource.data.diff(resource.data).affectedKeys()
@@ -123,9 +124,10 @@ service cloud.firestore {
              .difference(resource.data.memberUids.toSet()).hasOnly([request.auth.uid])
         && resource.data.memberUids.toSet()
              .difference(request.resource.data.memberUids.toSet()).size() == 0
-        && request.resource.data.members[request.auth.uid] != 'club_admin'
-        && (request.resource.data.members[request.auth.uid] == 'club_coach' ||
+        && (request.resource.data.members[request.auth.uid] == 'club_admin' ||
+            request.resource.data.members[request.auth.uid] == 'club_coach' ||
             request.resource.data.members[request.auth.uid] == 'club_parent')
+        && request.resource.data.members[request.auth.uid] == clubJoinInviteData().role
         && 'joinCode' in request.resource.data
         && clubJoinInviteValid(clubId);
     }
@@ -135,7 +137,8 @@ service cloud.firestore {
       allow create: if request.auth != null
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.clubId is string
-        && (request.resource.data.role == 'club_coach' ||
+        && (request.resource.data.role == 'club_admin' ||
+            request.resource.data.role == 'club_coach' ||
             request.resource.data.role == 'club_parent')
         && request.resource.data.active is bool
         && isClubAdminOf(request.resource.data.clubId);
