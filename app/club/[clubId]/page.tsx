@@ -9,11 +9,13 @@ import TeamCreateManual from "@/components/TeamCreateManual";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
   assignCoachToClubTeam,
+  attachTeamToClub,
   canManageClub,
   getClub,
   getClubMembers,
   isClubMember,
   listClubTeams,
+  listUnattachedTeamsForUser,
   type Club,
   type ClubMemberEntry,
 } from "@/lib/clubs";
@@ -39,6 +41,7 @@ export default function ClubHubPage() {
 
   const [club, setClub] = useState<Club | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [unattached, setUnattached] = useState<Team[]>([]);
   const [members, setMembers] = useState<ClubMemberEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +50,7 @@ export default function ClubHubPage() {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [assignBusy, setAssignBusy] = useState<string | null>(null);
+  const [attachBusy, setAttachBusy] = useState<string | null>(null);
   const [assignTeamId, setAssignTeamId] = useState("");
 
   const refresh = useCallback(async () => {
@@ -63,12 +67,14 @@ export default function ClubHubPage() {
         return;
       }
       setClub(next);
-      const [clubTeams, clubMembers] = await Promise.all([
+      const [clubTeams, clubMembers, orphans] = await Promise.all([
         listClubTeams(clubId),
         getClubMembers(clubId),
+        listUnattachedTeamsForUser(user.uid),
       ]);
       setTeams(clubTeams);
       setMembers(clubMembers);
+      setUnattached(orphans);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load club.");
     } finally {
@@ -160,6 +166,45 @@ export default function ClubHubPage() {
       setError(e instanceof Error ? e.message : "Could not assign coach.");
     } finally {
       setAssignBusy(null);
+    }
+  }
+
+  async function onAttachTeam(teamId: string) {
+    if (!user) return;
+    setAttachBusy(teamId);
+    setError(null);
+    try {
+      await attachTeamToClub({
+        actorUid: user.uid,
+        clubId,
+        teamId,
+      });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not attach team.");
+    } finally {
+      setAttachBusy(null);
+    }
+  }
+
+  async function onAttachAll() {
+    if (!user || unattached.length === 0) return;
+    setAttachBusy("all");
+    setError(null);
+    try {
+      for (const team of unattached) {
+        await attachTeamToClub({
+          actorUid: user.uid,
+          clubId,
+          teamId: team.id,
+        });
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not attach teams.");
+      await refresh();
+    } finally {
+      setAttachBusy(null);
     }
   }
 
@@ -257,7 +302,8 @@ export default function ClubHubPage() {
 
           {teams.length === 0 ? (
             <p className="text-sm text-zinc-500">
-              No teams yet. Import a TeamLinkt CSV or add a team manually.
+              No teams in this club yet. Connect teams you already have below,
+              or import a TeamLinkt CSV / add a team.
             </p>
           ) : (
             <ul className="space-y-2">
@@ -275,6 +321,53 @@ export default function ClubHubPage() {
             </ul>
           )}
         </section>
+
+        {isAdmin && unattached.length > 0 ? (
+          <section className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-5">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-white">
+                Connect existing teams
+              </h2>
+              <button
+                type="button"
+                className={primaryBtn}
+                disabled={attachBusy !== null}
+                onClick={() => void onAttachAll()}
+              >
+                {attachBusy === "all" ? "Connecting…" : "Connect all"}
+              </button>
+            </div>
+            <p className="mb-3 text-xs text-zinc-400">
+              These teams are yours but not under a club yet (from before club
+              setup). Connect them to {club.name}.
+            </p>
+            <ul className="space-y-2">
+              {unattached.map((team) => (
+                <li
+                  key={team.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-zinc-100">{team.name}</p>
+                    {team.importBatchLabel ? (
+                      <p className="text-[11px] text-zinc-500">
+                        {team.importBatchLabel}
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={attachBusy !== null}
+                    onClick={() => void onAttachTeam(team.id)}
+                  >
+                    {attachBusy === team.id ? "Connecting…" : "Connect to club"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {isAdmin ? (
           <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">

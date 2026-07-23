@@ -16,7 +16,9 @@ import { formatFirestoreWriteError } from "@/lib/firestore-errors";
 import {
   getTeam,
   listMyTeams,
+  updateTeam,
   updateTeamMember,
+  canManageTeam,
   type Team,
 } from "@/lib/teams";
 
@@ -308,4 +310,39 @@ export async function assignCoachToClubTeam(opts: {
     throw new Error("Invite them as a club coach before assigning teams.");
   }
   await updateTeamMember(opts.teamId, opts.coachUid, "coach");
+}
+
+/**
+ * Attach an existing team (that you admin) to this club.
+ */
+export async function attachTeamToClub(opts: {
+  actorUid: string;
+  clubId: string;
+  teamId: string;
+}): Promise<void> {
+  const club = await getClub(opts.clubId);
+  if (!club) throw new Error("Club not found.");
+  if (!canManageClub(club, opts.actorUid)) {
+    throw new Error("Only club admins can attach teams.");
+  }
+  const team = await getTeam(opts.teamId);
+  if (!team) throw new Error("Team not found.");
+  if (!canManageTeam(team, opts.actorUid)) {
+    throw new Error("You must be a team admin to move this team into the club.");
+  }
+  if (team.clubId === opts.clubId) return;
+  if (team.clubId && team.clubId !== opts.clubId) {
+    throw new Error("That team already belongs to another club.");
+  }
+  await updateTeam(opts.teamId, { clubId: opts.clubId });
+}
+
+/** Teams you admin that are not yet under any club. */
+export async function listUnattachedTeamsForUser(
+  uid: string,
+): Promise<Team[]> {
+  const mine = await listMyTeams(uid);
+  return mine
+    .filter((t) => canManageTeam(t, uid) && !t.clubId?.trim())
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
