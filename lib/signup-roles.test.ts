@@ -21,7 +21,7 @@ describe("signup-roles", () => {
   });
 
   it("suggests paths by role", () => {
-    assert.equal(postOnboardingPath(["club_operator"]), "/team/new");
+    assert.equal(postOnboardingPath(["club_operator"]), "/club/new");
     assert.equal(postOnboardingPath(["parent"]), "/game-cap");
     assert.equal(postOnboardingPath(["coach", "parent"]), "/app");
   });

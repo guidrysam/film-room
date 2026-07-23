@@ -889,4 +889,58 @@ describeRules("firestore rules (emulator)", () => {
       );
     });
   });
+
+  describe("clubs", () => {
+    it("allows authenticated user to create a club", async () => {
+      const uid = "club-admin-1";
+      const db = testEnv!.authenticatedContext(uid).firestore();
+      await assertSucceeds(
+        setDoc(doc(db, "clubs", "club-1"), {
+          name: "CMFC",
+          ownerId: uid,
+          members: { [uid]: "club_admin" },
+          memberUids: [uid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        }),
+      );
+    });
+
+    it("lets club admin read and update club teams", async () => {
+      const adminUid = "club-admin-2";
+      const otherUid = "outsider-2";
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, "clubs", "club-2"), {
+          name: "CMFC",
+          ownerId: adminUid,
+          members: { [adminUid]: "club_admin" },
+          memberUids: [adminUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+        await setDoc(doc(db, "teams", "team-club-2"), {
+          name: "U12",
+          ownerId: "coach-owner",
+          clubId: "club-2",
+          members: { "coach-owner": "admin" },
+          memberUids: ["coach-owner"],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+      });
+
+      const adminDb = testEnv!.authenticatedContext(adminUid).firestore();
+      await assertSucceeds(getDoc(doc(adminDb, "teams", "team-club-2")));
+      await assertSucceeds(
+        updateDoc(doc(adminDb, "teams", "team-club-2"), {
+          name: "U12 Girls",
+          updatedAt: Timestamp.now(),
+        }),
+      );
+
+      const outsiderDb = testEnv!.authenticatedContext(otherUid).firestore();
+      await assertFails(getDoc(doc(outsiderDb, "teams", "team-club-2")));
+    });
+  });
 });

@@ -53,9 +53,13 @@ export default function NewTeamPage() {
           </p>
           <h1 className="text-xl font-semibold text-white">Create team</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Create manually or import a TeamLinkt roster CSV for a new event or
-            season. Each import creates fresh teams; players are linked by name
-            across events.
+            Prefer starting from a club when you run multiple teams. Or create a
+            single team here and import a roster from Team Setup.
+          </p>
+          <p className="mt-2 text-sm">
+            <Link href="/club/new" className="text-blue-300 hover:underline">
+              Create a club instead →
+            </Link>
           </p>
         </div>
 

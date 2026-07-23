@@ -5,6 +5,7 @@ import {
   type PersonRosterAppearance,
 } from "@/lib/person-profile";
 import { gameReviewUrl } from "@/lib/player-profile";
+import { listMyClubs, listClubTeams, loadClubForTeam } from "@/lib/clubs";
 import {
   canViewTeam,
   listMyTeams,
@@ -86,15 +87,28 @@ function entryFromPlayer(team: Team, player: Player): LinkedPlayerEntry {
   };
 }
 
-/** Group roster rows linked to a parent across all teams they belong to. */
+/** Group roster rows linked to a parent across memberships and club teams. */
 export async function listMyLinkedPlayerGroups(
   parentUid: string,
 ): Promise<LinkedPlayerGroup[]> {
-  const teams = await listMyTeams(parentUid);
-  const entries: LinkedPlayerEntry[] = [];
+  const byTeamId = new Map<string, Team>();
+  for (const team of await listMyTeams(parentUid)) {
+    byTeamId.set(team.id, team);
+  }
+  for (const club of await listMyClubs(parentUid)) {
+    try {
+      for (const team of await listClubTeams(club.id)) {
+        byTeamId.set(team.id, team);
+      }
+    } catch {
+      /* club teams may be unreadable */
+    }
+  }
 
-  for (const team of teams) {
-    if (!canViewTeam(team, parentUid)) continue;
+  const entries: LinkedPlayerEntry[] = [];
+  for (const team of byTeamId.values()) {
+    const club = await loadClubForTeam(team);
+    if (!canViewTeam(team, parentUid, club)) continue;
     const players = await listTeamPlayers(team.id);
     for (const player of players) {
       if (!playerLinkedToParent(player, parentUid)) continue;

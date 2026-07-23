@@ -6,6 +6,8 @@ import {
   postOnboardingPath,
   type SignupRole,
 } from "@/lib/signup-roles";
+import { primaryClubIdForUser } from "@/lib/clubs";
+import { clubHubUrl } from "@/lib/club-routes";
 import { completeUserOnboarding } from "@/lib/user-profile";
 
 const panelClass =
@@ -70,7 +72,12 @@ export default function SignupOnboarding({
         email,
         displayName,
       });
-      onComplete(postOnboardingPath(selectedList));
+      let path = postOnboardingPath(selectedList);
+      if (path === "/club/new") {
+        const existing = await primaryClubIdForUser(uid);
+        if (existing) path = clubHubUrl(existing);
+      }
+      onComplete(path);
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Could not save your preferences.",

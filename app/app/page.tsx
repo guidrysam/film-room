@@ -8,7 +8,9 @@ import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import BatchEventInvite from "@/components/BatchEventInvite";
 import { listAccessibleGames } from "@/lib/accessible-games";
 import type { Game } from "@/lib/games";
-import { listMyTeams, teamRoleFor, type Team } from "@/lib/teams";
+import { listMyClubs, listTeamsVisibleViaClubs, type Club } from "@/lib/clubs";
+import { clubHubUrl, clubNewUrl } from "@/lib/club-routes";
+import { teamRoleFor, type Team } from "@/lib/teams";
 import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
 import { myPlayersUrl, playersListUrl, teamRosterUrl } from "@/lib/team-routes";
@@ -43,6 +45,7 @@ export default function DashboardPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [batches, setBatches] = useState<ImportBatch[]>([]);
+  const [clubs, setClubs] = useState<Club[]>([]);
   const [showArchived, setShowArchived] = useState(false);
 
   const refreshGames = useCallback(async () => {
@@ -61,12 +64,14 @@ export default function DashboardPage() {
     if (!user) return;
     setTeamsLoading(true);
     try {
-      const [teamRows, batchRows] = await Promise.all([
-        listMyTeams(user.uid),
+      const [teamRows, batchRows, clubRows] = await Promise.all([
+        listTeamsVisibleViaClubs(user.uid),
         listMyImportBatches(user.uid),
+        listMyClubs(user.uid),
       ]);
       setTeams(teamRows);
       setBatches(batchRows);
+      setClubs(clubRows);
     } catch (error) {
       console.error("[dashboard:teams:error]", error);
     } finally {
@@ -220,6 +225,42 @@ export default function DashboardPage() {
         <section className={`${panelClass} mb-6`}>
           <div className="mb-3 flex items-center justify-between gap-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+              Your clubs
+            </p>
+            <Link href={clubNewUrl()} className={ghostBtn}>
+              Create club
+            </Link>
+          </div>
+          {teamsLoading ? (
+            <p className="text-sm text-zinc-400">Loading…</p>
+          ) : clubs.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
+              Clubs hold your teams.{" "}
+              <Link href={clubNewUrl()} className="text-blue-300 hover:underline">
+                Create a club
+              </Link>{" "}
+              to import rosters and invite coaches.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {clubs.map((club) => (
+                <li key={club.id}>
+                  <Link
+                    href={clubHubUrl(club.id)}
+                    className="flex items-center justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 text-sm hover:bg-white/[0.04]"
+                  >
+                    <span className="font-medium text-zinc-100">{club.name}</span>
+                    <span className="text-xs text-zinc-500">Open →</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className={`${panelClass} mb-6`}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Your teams
             </p>
             <div className="flex items-center gap-2">
@@ -254,10 +295,14 @@ export default function DashboardPage() {
                   ? (
                     <>
                       No teams yet.{" "}
-                      <Link href="/team/new" className="text-blue-300 hover:underline">
-                        Create a team
+                      <Link href={clubNewUrl()} className="text-blue-300 hover:underline">
+                        Create a club
                       </Link>{" "}
-                      to organize games, roster, and season.
+                      or{" "}
+                      <Link href="/team/new" className="text-blue-300 hover:underline">
+                        a single team
+                      </Link>
+                      .
                     </>
                   )
                   : "All events are archived. Use Show archived to view them."}

@@ -37,7 +37,7 @@ const ROLE_COPY: Record<
   parent: {
     title: "Parent",
     blurb:
-      "Upload video from your phone to help build the synced team game in Game Cap.",
+      "Join this team (and its club when linked) to upload video and follow your player.",
     badge: "border-amber-500/40 bg-amber-950/40 text-amber-200",
   },
   player: {

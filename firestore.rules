@@ -60,6 +60,89 @@ service cloud.firestore {
       allow read: if isPublicSharedSession();
     }
 
+    // ---- Clubs --------------------------------------------------------
+    function clubData(clubId) {
+      return get(/databases/$(database)/documents/clubs/$(clubId)).data;
+    }
+    function clubRoleOf(clubId, uid) {
+      return clubData(clubId).members[uid];
+    }
+    function isClubAdmin(clubId, uid) {
+      return clubData(clubId).ownerId == uid ||
+             clubRoleOf(clubId, uid) == 'club_admin';
+    }
+    function isClubMember(clubId, uid) {
+      return clubData(clubId).ownerId == uid || clubRoleOf(clubId, uid) != null;
+    }
+    function isClubAdminOf(clubId) {
+      return request.auth != null && isClubAdmin(clubId, request.auth.uid);
+    }
+    function isValidNewClubCreate() {
+      return request.auth != null &&
+             request.resource.data.ownerId == request.auth.uid &&
+             request.resource.data.members is map &&
+             request.resource.data.memberUids is list &&
+             request.resource.data.members[request.auth.uid] == 'club_admin' &&
+             request.resource.data.memberUids.hasAll([request.auth.uid]);
+    }
+    function canReadClubResource() {
+      return request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.memberUids
+      );
+    }
+    function clubJoinInviteData() {
+      return get(/databases/$(database)/documents/clubInvites/$(request.resource.data.joinCode)).data;
+    }
+    function clubJoinInviteValid(clubId) {
+      return clubJoinInviteData().active == true
+        && clubJoinInviteData().clubId == clubId
+        && isClubAdmin(clubId, clubJoinInviteData().createdBy)
+        && (clubJoinInviteData().role == 'club_coach' ||
+            clubJoinInviteData().role == 'club_parent')
+        && (!('expiresAt' in clubJoinInviteData()) ||
+            clubJoinInviteData().expiresAt > request.time);
+    }
+
+    match /clubs/{clubId} {
+      allow read: if canReadClubResource();
+      allow create: if isValidNewClubCreate();
+      allow update: if request.auth != null && isClubAdmin(clubId, request.auth.uid);
+      allow delete: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
+
+      // Self-join via club invite.
+      allow update: if request.auth != null
+        && !(request.auth.uid in resource.data.members)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['members', 'memberUids', 'updatedAt', 'joinCode'])
+        && request.resource.data.members.diff(resource.data.members)
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.memberUids.hasAll([request.auth.uid])
+        && request.resource.data.memberUids.toSet()
+             .difference(resource.data.memberUids.toSet()).hasOnly([request.auth.uid])
+        && resource.data.memberUids.toSet()
+             .difference(request.resource.data.memberUids.toSet()).size() == 0
+        && request.resource.data.members[request.auth.uid] != 'club_admin'
+        && (request.resource.data.members[request.auth.uid] == 'club_coach' ||
+            request.resource.data.members[request.auth.uid] == 'club_parent')
+        && 'joinCode' in request.resource.data
+        && clubJoinInviteValid(clubId);
+    }
+
+    match /clubInvites/{code} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.clubId is string
+        && (request.resource.data.role == 'club_coach' ||
+            request.resource.data.role == 'club_parent')
+        && request.resource.data.active is bool
+        && isClubAdminOf(request.resource.data.clubId);
+      allow update, delete: if request.auth != null
+        && resource.data.createdBy == request.auth.uid;
+    }
+
     // ---- Teams --------------------------------------------------------
     function teamData(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -67,11 +150,29 @@ service cloud.firestore {
     function teamRoleOf(teamId, uid) {
       return teamData(teamId).members[uid];
     }
+    function teamHasClub(teamId) {
+      return teamData(teamId).keys().hasAny(['clubId'])
+        && teamData(teamId).clubId is string
+        && teamData(teamId).clubId.size() > 0;
+    }
+    function isClubAdminForTeam(teamId, uid) {
+      return teamHasClub(teamId) && isClubAdmin(teamData(teamId).clubId, uid);
+    }
+    function isClubParentForTeam(teamId, uid) {
+      return teamHasClub(teamId) &&
+             (clubRoleOf(teamData(teamId).clubId, uid) == 'club_parent' ||
+              isClubAdmin(teamData(teamId).clubId, uid));
+    }
     function isTeamMember(teamId, uid) {
-      return teamData(teamId).ownerId == uid || teamRoleOf(teamId, uid) != null;
+      return teamData(teamId).ownerId == uid ||
+             teamRoleOf(teamId, uid) != null ||
+             isClubAdminForTeam(teamId, uid) ||
+             isClubParentForTeam(teamId, uid);
     }
     function isTeamAdmin(teamId, uid) {
-      return teamData(teamId).ownerId == uid || teamRoleOf(teamId, uid) == 'admin';
+      return teamData(teamId).ownerId == uid ||
+             teamRoleOf(teamId, uid) == 'admin' ||
+             isClubAdminForTeam(teamId, uid);
     }
     function isTeamCoach(teamId, uid) {
       let role = teamRoleOf(teamId, uid);
@@ -79,7 +180,10 @@ service cloud.firestore {
     }
     function canTeamContributeSources(teamId, uid) {
       let role = teamRoleOf(teamId, uid);
-      return isTeamAdmin(teamId, uid) || role == 'coach' || role == 'parent';
+      return isTeamAdmin(teamId, uid) ||
+             role == 'coach' ||
+             role == 'parent' ||
+             isClubParentForTeam(teamId, uid);
     }
     function isTeamCoachOf(tid) {
       return request.auth != null && isTeamCoach(tid, request.auth.uid);
@@ -99,7 +203,10 @@ service cloud.firestore {
     function canReadTeamResource() {
       return request.auth != null && (
         resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.memberUids
+        request.auth.uid in resource.data.memberUids ||
+        (resource.data.clubId is string &&
+         resource.data.clubId.size() > 0 &&
+         isClubMember(resource.data.clubId, request.auth.uid))
       );
     }
     function parentInviteEmailMatchesAuth() {

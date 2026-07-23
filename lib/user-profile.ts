@@ -1,4 +1,4 @@
-import { doc, getDoc, serverTimestamp, setDoc, Timestamp } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 import {
   normalizeSignupRoles,
@@ -6,6 +6,11 @@ import {
 } from "@/lib/signup-roles";
 
 export type UserAccountKind = "standard" | "player";
+
+export type LinkedTeamPlayerLink = {
+  teamId: string;
+  playerId: string;
+};
 
 export type UserProfile = {
   uid: string;
@@ -20,6 +25,8 @@ export type UserProfile = {
   accountKind?: UserAccountKind;
   linkedTeamId?: string;
   linkedPlayerId?: string;
+  /** All roster links for a player account (multi-team). */
+  linkedTeamLinks?: LinkedTeamPlayerLink[];
 };
 
 function userDoc(uid: string) {
@@ -32,12 +39,43 @@ function trimOrUndef(v: unknown): string | undefined {
   return t === "" ? undefined : t;
 }
 
+function parseLinkedTeamLinks(raw: unknown): LinkedTeamPlayerLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LinkedTeamPlayerLink[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const teamId =
+      typeof row.teamId === "string" ? row.teamId.trim() : "";
+    const playerId =
+      typeof row.playerId === "string" ? row.playerId.trim() : "";
+    if (!teamId || !playerId) continue;
+    const key = `${teamId}:${playerId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ teamId, playerId });
+  }
+  return out;
+}
+
 export function parseUserProfile(
   uid: string,
   raw: Record<string, unknown>,
 ): UserProfile {
   const accountKind =
     raw.accountKind === "player" ? "player" : ("standard" as UserAccountKind);
+  const linkedTeamLinks = parseLinkedTeamLinks(raw.linkedTeamLinks);
+  const linkedTeamId = trimOrUndef(raw.linkedTeamId);
+  const linkedPlayerId = trimOrUndef(raw.linkedPlayerId);
+  // Backfill single link into array when only legacy fields exist.
+  if (
+    linkedTeamLinks.length === 0 &&
+    linkedTeamId &&
+    linkedPlayerId
+  ) {
+    linkedTeamLinks.push({ teamId: linkedTeamId, playerId: linkedPlayerId });
+  }
   return {
     uid,
     ...(trimOrUndef(raw.email) ? { email: raw.email as string } : {}),
@@ -54,12 +92,9 @@ export function parseUserProfile(
       : {}),
     ...(trimOrUndef(raw.parentUid) ? { parentUid: raw.parentUid as string } : {}),
     ...(trimOrUndef(raw.username) ? { username: raw.username as string } : {}),
-    ...(trimOrUndef(raw.linkedTeamId)
-      ? { linkedTeamId: raw.linkedTeamId as string }
-      : {}),
-    ...(trimOrUndef(raw.linkedPlayerId)
-      ? { linkedPlayerId: raw.linkedPlayerId as string }
-      : {}),
+    ...(linkedTeamId ? { linkedTeamId } : {}),
+    ...(linkedPlayerId ? { linkedPlayerId } : {}),
+    ...(linkedTeamLinks.length > 0 ? { linkedTeamLinks } : {}),
     accountKind,
   };
 }
@@ -124,4 +159,25 @@ export async function completeUserOnboarding(
       ? { displayName: input.displayName!.trim() }
       : {}),
   };
+}
+
+/**
+ * Add another team roster link for a player account (multi-team).
+ * Keeps linkedTeamId/linkedPlayerId as the most recent primary link.
+ */
+export async function appendPlayerTeamLink(
+  playerUid: string,
+  link: LinkedTeamPlayerLink,
+): Promise<void> {
+  const teamId = link.teamId.trim();
+  const playerId = link.playerId.trim();
+  if (!teamId || !playerId) {
+    throw new Error("teamId and playerId are required.");
+  }
+  await updateDoc(userDoc(playerUid), {
+    linkedTeamId: teamId,
+    linkedPlayerId: playerId,
+    linkedTeamLinks: arrayUnion({ teamId, playerId }),
+    updatedAt: serverTimestamp(),
+  });
 }

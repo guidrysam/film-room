@@ -297,6 +297,8 @@ export type ClubImportOptions = {
   importBatchLabel?: string;
   /** Link roster rows to persistent person records (default true). */
   linkPersons?: boolean;
+  /** Attach created/updated teams to this club. */
+  clubId?: string;
 };
 
 export type ClubImportTeamInput = {
@@ -330,7 +332,10 @@ function stubTeam(
   teamId: string,
   name: string,
   uid: string,
-  extra?: Pick<Team, "importBatchId" | "importBatchLabel" | "programName">,
+  extra?: Pick<
+    Team,
+    "importBatchId" | "importBatchLabel" | "programName" | "clubId"
+  >,
 ): Team {
   return {
     id: teamId,
@@ -345,6 +350,7 @@ function stubTeam(
       ? { importBatchLabel: extra.importBatchLabel }
       : {}),
     ...(extra?.programName ? { programName: extra.programName } : {}),
+    ...(extra?.clubId ? { clubId: extra.clubId } : {}),
   };
 }
 
@@ -407,6 +413,7 @@ export async function importClubRoster(
 
   const batchId = opts?.importBatchId?.trim();
   const batchLabel = opts?.importBatchLabel?.trim();
+  const clubId = opts?.clubId?.trim();
 
   for (const team of teams) {
     const programName = team.teamName.trim();
@@ -435,6 +442,7 @@ export async function importClubRoster(
             importBatchLabel: batchLabel,
             season: batchLabel,
             ...(team.sport?.trim() ? { sport: team.sport.trim() } : {}),
+            ...(clubId ? { clubId } : {}),
           });
         } catch (error) {
           throw formatFirestoreWriteError(
@@ -449,6 +457,7 @@ export async function importClubRoster(
             importBatchId: batchId,
             importBatchLabel: batchLabel,
             programName,
+            ...(clubId ? { clubId } : {}),
           }),
         ];
       }
@@ -464,6 +473,7 @@ export async function importClubRoster(
             name: programName,
             ...(team.sport?.trim() ? { sport: team.sport.trim() } : {}),
             ...(team.season?.trim() ? { season: team.season.trim() } : {}),
+            ...(clubId ? { clubId } : {}),
           });
         } catch (error) {
           throw formatFirestoreWriteError(
@@ -472,7 +482,10 @@ export async function importClubRoster(
           );
         }
         teamCreated = true;
-        existingTeams = [...existingTeams, stubTeam(teamId, programName, uid)];
+        existingTeams = [
+          ...existingTeams,
+          stubTeam(teamId, programName, uid, clubId ? { clubId } : undefined),
+        ];
       }
     }
 

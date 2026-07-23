@@ -29,7 +29,7 @@ export const SIGNUP_ROLE_OPTIONS: SignupRoleOption[] = [
     id: "club_operator",
     title: "Club admin / media",
     blurb:
-      "Import rosters, set up teams, attach film, and invite coaches and parents.",
+      "Create your club, import rosters, set up teams, and invite coaches and parents.",
   },
   {
     id: "coach",
@@ -84,7 +84,7 @@ export function signupRoleFromTeamInviteRole(
 /** Suggested landing path after onboarding completes. */
 export function postOnboardingPath(roles: SignupRole[]): string {
   if (roles.includes("club_operator") && roles.length === 1) {
-    return "/team/new";
+    return "/club/new";
   }
   if (roles.includes("parent") && !roles.includes("coach")) {
     return "/game-cap";

@@ -197,6 +197,7 @@ export function normalizeCreateTeamInput(input: {
   name: string;
   sport?: string;
   season?: string;
+  clubId?: string;
 }): CreateTeamInput | { error: string } {
   const name = input.name.trim();
   if (!name) return { error: "Give the team a name." };
@@ -204,6 +205,7 @@ export function normalizeCreateTeamInput(input: {
     name,
     ...(trimOrUndef(input.sport) ? { sport: input.sport!.trim() } : {}),
     ...(trimOrUndef(input.season) ? { season: input.season!.trim() } : {}),
+    ...(trimOrUndef(input.clubId) ? { clubId: input.clubId!.trim() } : {}),
   };
 }
 
@@ -405,9 +407,41 @@ export function teamRoleFor(team: Team, uid: string): TeamMemberRole | null {
   return team.members[uid] ?? null;
 }
 
-export function canManageTeam(team: Team, uid: string): boolean {
+/** Optional club doc used to cascade club_admin permissions onto teams. */
+export type TeamClubContext = {
+  id: string;
+  ownerId: string;
+  members: Record<string, string>;
+};
+
+function isClubAdminContext(
+  club: TeamClubContext | null | undefined,
+  team: Team,
+  uid: string,
+): boolean {
+  if (!club || !uid || team.clubId !== club.id) return false;
+  return club.ownerId === uid || club.members[uid] === "club_admin";
+}
+
+function isClubParentContext(
+  club: TeamClubContext | null | undefined,
+  team: Team,
+  uid: string,
+): boolean {
+  if (!club || !uid || team.clubId !== club.id) return false;
+  return (
+    club.members[uid] === "club_parent" || isClubAdminContext(club, team, uid)
+  );
+}
+
+export function canManageTeam(
+  team: Team,
+  uid: string,
+  club?: TeamClubContext | null,
+): boolean {
   if (!uid) return false;
-  return team.ownerId === uid || team.members[uid] === "admin";
+  if (team.ownerId === uid || team.members[uid] === "admin") return true;
+  return isClubAdminContext(club, team, uid);
 }
 
 /** Only the team owner may permanently delete the team (MVP). */
@@ -465,24 +499,42 @@ export async function deleteTeam(teamId: string, uid: string): Promise<void> {
   await deleteDoc(doc(teamsCol(), teamId));
 }
 
-export function canCoachTeam(team: Team, uid: string): boolean {
+export function canCoachTeam(
+  team: Team,
+  uid: string,
+  club?: TeamClubContext | null,
+): boolean {
   if (!uid) return false;
   const role = team.members[uid];
-  return canManageTeam(team, uid) || role === "coach";
+  return canManageTeam(team, uid, club) || role === "coach";
 }
 
 /** Admin, coach, and parent can attach sources (Game Cap contribution). */
-export function canContributeTeam(team: Team, uid: string): boolean {
+export function canContributeTeam(
+  team: Team,
+  uid: string,
+  club?: TeamClubContext | null,
+): boolean {
   if (!uid) return false;
   const role = team.members[uid];
   return (
-    canManageTeam(team, uid) || role === "coach" || role === "parent"
+    canManageTeam(team, uid, club) ||
+    role === "coach" ||
+    role === "parent" ||
+    isClubParentContext(club, team, uid)
   );
 }
 
-export function canViewTeam(team: Team, uid: string): boolean {
+export function canViewTeam(
+  team: Team,
+  uid: string,
+  club?: TeamClubContext | null,
+): boolean {
   if (!uid) return false;
-  return team.ownerId === uid || team.members[uid] != null;
+  if (team.ownerId === uid || team.members[uid] != null) return true;
+  return (
+    isClubAdminContext(club, team, uid) || isClubParentContext(club, team, uid)
+  );
 }
 
 export async function getTeamMembers(

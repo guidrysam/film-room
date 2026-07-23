@@ -26,10 +26,13 @@ import type {
   RosterImportPreviewSummary,
 } from "@/lib/roster-import";
 import { listMyTeams, type Team } from "@/lib/teams";
+import { clubHubUrl } from "@/lib/club-routes";
 import { teamSetupUrl } from "@/lib/team-routes";
 
 export type TeamCreateFromCsvProps = {
   uid: string;
+  /** When set, imported teams are attached to this club. */
+  clubId?: string;
 };
 
 type ImportScope = "new" | "existing";
@@ -68,7 +71,10 @@ function SyncCounts({
   );
 }
 
-export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
+export default function TeamCreateFromCsv({
+  uid,
+  clubId,
+}: TeamCreateFromCsvProps) {
   const { preview, bundle, onPreviewChange: syncPreview } =
     useRosterCsvImportPreview();
   const [nameOverrides, setNameOverrides] = useState<Record<number, string>>({});
@@ -258,6 +264,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
           importBatchId: batchId,
           importBatchLabel: effectiveEventLabel,
           linkPersons: true,
+          ...(clubId?.trim() ? { clubId: clubId.trim() } : {}),
         },
       );
       setResult(clubResult);
@@ -268,6 +275,7 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
     }
   }, [
     uid,
+    clubId,
     importableTeams,
     everyTeamNamed,
     canImport,
@@ -330,6 +338,14 @@ export default function TeamCreateFromCsv({ uid }: TeamCreateFromCsvProps) {
             </li>
           ))}
         </ul>
+        {clubId?.trim() ? (
+          <Link
+            href={clubHubUrl(clubId.trim())}
+            className="mt-3 inline-block text-sm text-blue-300 hover:underline"
+          >
+            ← Back to club
+          </Link>
+        ) : null}
       </div>
     );
   }

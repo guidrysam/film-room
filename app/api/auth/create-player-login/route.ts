@@ -162,6 +162,7 @@ export async function POST(request: Request) {
         onboardingCompletedAt: FieldValue.serverTimestamp(),
         linkedTeamId: teamId,
         linkedPlayerId: playerId,
+        linkedTeamLinks: [{ teamId, playerId }],
       },
       { merge: true },
     );

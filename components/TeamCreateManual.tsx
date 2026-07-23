@@ -7,6 +7,8 @@ import { teamSetupUrl } from "@/lib/team-routes";
 
 export type TeamCreateManualProps = {
   uid: string;
+  /** When set, the new team is attached to this club. */
+  clubId?: string;
 };
 
 const inputClass =
@@ -15,7 +17,10 @@ const inputClass =
 const primaryBtn =
   "inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 disabled:cursor-not-allowed disabled:opacity-50";
 
-export default function TeamCreateManual({ uid }: TeamCreateManualProps) {
+export default function TeamCreateManual({
+  uid,
+  clubId,
+}: TeamCreateManualProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [sport, setSport] = useState("");
@@ -24,7 +29,12 @@ export default function TeamCreateManual({ uid }: TeamCreateManualProps) {
   const [error, setError] = useState<string | null>(null);
 
   const handleCreate = useCallback(async () => {
-    const normalized = normalizeCreateTeamInput({ name, sport, season });
+    const normalized = normalizeCreateTeamInput({
+      name,
+      sport,
+      season,
+      ...(clubId?.trim() ? { clubId: clubId.trim() } : {}),
+    });
     if ("error" in normalized) {
       setError(normalized.error);
       return;
@@ -42,7 +52,7 @@ export default function TeamCreateManual({ uid }: TeamCreateManualProps) {
       setError(message);
       setCreating(false);
     }
-  }, [uid, name, sport, season, router]);
+  }, [uid, name, sport, season, clubId, router]);
 
   return (
     <div className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]">
