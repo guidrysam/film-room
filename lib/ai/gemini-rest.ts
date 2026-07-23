@@ -1,10 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
-import {
-  DEFAULT_AI_TAG_MODEL,
-  resolveAiModelId,
-} from "@/lib/ai/google-model";
+import { DEFAULT_AI_TAG_MODEL } from "@/lib/ai/google-model";
 import {
   aiTagResultSchema,
   type AiTagResult,
@@ -18,9 +15,9 @@ function apiKey(): string {
   return key;
 }
 
-function modelResourceName(preferred?: string | null): string {
-  const id = resolveAiModelId(preferred, DEFAULT_AI_TAG_MODEL);
-  return id.startsWith("models/") ? id : `models/${id}`;
+function modelResourceName(): string {
+  // Hard-pin: do not read AI_TAG_MODEL (was still causing retired 1.5 errors).
+  return `models/${DEFAULT_AI_TAG_MODEL}`;
 }
 
 type GeminiPart =
@@ -39,15 +36,16 @@ type GeminiGenerateResponse = {
  * Avoids AI SDK / env surprises that were still hitting retired gemini-1.5-flash.
  */
 export async function geminiGenerateObject<T>(input: {
+  /** Ignored — model is hard-pinned to DEFAULT_AI_TAG_MODEL. */
   modelId?: string | null;
   system: string;
   userText: string;
   youtubeVideoId?: string;
   schema: z.ZodType<T>;
-  /** JSON Schema object for responseJsonSchema (Gemini structured output). */
+  /** JSON Schema object for Gemini responseSchema structured output. */
   responseJsonSchema: Record<string, unknown>;
 }): Promise<{ object: T; modelId: string }> {
-  const modelPath = modelResourceName(input.modelId);
+  const modelPath = modelResourceName();
   const modelId = modelPath.replace(/^models\//, "");
   const parts: GeminiPart[] = [{ text: input.userText }];
   if (input.youtubeVideoId) {
@@ -65,7 +63,7 @@ export async function geminiGenerateObject<T>(input: {
     contents: [{ role: "user", parts }],
     generationConfig: {
       responseMimeType: "application/json",
-      responseJsonSchema: input.responseJsonSchema,
+      responseSchema: input.responseJsonSchema,
     },
   };
 
@@ -78,8 +76,8 @@ export async function geminiGenerateObject<T>(input: {
   if (!res.ok) {
     const msg =
       json.error?.message ||
-      `Gemini HTTP ${res.status} for ${modelPath}`;
-    throw new Error(msg);
+      `Gemini HTTP ${res.status}`;
+    throw new Error(`[${modelPath}] ${msg}`);
   }
   const text = json.candidates?.[0]?.content?.parts
     ?.map((p) => p.text ?? "")
@@ -172,7 +170,6 @@ export async function geminiTagGame(input: {
   youtubeVideoId?: string;
 }): Promise<{ object: AiTagResult; modelId: string }> {
   return geminiGenerateObject({
-    modelId: process.env.AI_TAG_MODEL,
     system: input.system,
     userText: input.userText,
     youtubeVideoId: input.youtubeVideoId,

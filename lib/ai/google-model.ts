@@ -1,17 +1,20 @@
-/** Current stable Flash for video/tag work. Never use retired 1.5 for new keys. */
-export const DEFAULT_AI_TAG_MODEL = "gemini-2.5-flash";
+/** Current stable Flash for video/tag work (new API keys reject Gemini 2.5). */
+export const DEFAULT_AI_TAG_MODEL = "gemini-3.5-flash";
 
 const ALLOWED_MODELS = new Set([
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-latest",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-2.5-pro",
-  "gemini-2.0-flash",
-  "gemini-flash-latest",
 ]);
 
 /**
- * Resolve model id from env, upgrading retired Gemini 1.x ids and
- * rejecting unknown / unsafe overrides.
+ * Resolve model id from env, upgrading retired / new-user-blocked Gemini ids
+ * and rejecting unknown overrides.
  */
 export function resolveAiModelId(
   preferred?: string | null,
@@ -19,9 +22,15 @@ export function resolveAiModelId(
 ): string {
   let raw = (preferred ?? "").trim() || fallback;
   raw = raw.replace(/^models\//i, "");
-  if (/gemini-1(\.|$)/i.test(raw) || /^gemini-pro$/i.test(raw)) {
+  // 1.x retired; 2.0 shut down; 2.5 blocked for many new API keys.
+  if (
+    /gemini-1(\.|$)/i.test(raw) ||
+    /^gemini-pro$/i.test(raw) ||
+    /gemini-2\.0/i.test(raw) ||
+    /gemini-2\.5/i.test(raw)
+  ) {
     console.warn(
-      `[ai] Ignoring retired model "${raw}"; using ${fallback} instead.`,
+      `[ai] Ignoring retired/blocked model "${raw}"; using ${fallback} instead.`,
     );
     return fallback;
   }

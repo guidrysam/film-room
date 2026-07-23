@@ -7,15 +7,18 @@ import {
 
 describe("resolveAiModelId", () => {
   it("keeps current flash ids", () => {
-    assert.equal(resolveAiModelId("gemini-2.5-flash"), "gemini-2.5-flash");
+    assert.equal(resolveAiModelId("gemini-3.5-flash"), "gemini-3.5-flash");
+    assert.equal(resolveAiModelId("gemini-3.6-flash"), "gemini-3.6-flash");
     assert.equal(resolveAiModelId(null), DEFAULT_AI_TAG_MODEL);
   });
 
-  it("upgrades retired 1.x ids", () => {
+  it("upgrades retired and new-user-blocked ids", () => {
     assert.equal(resolveAiModelId("gemini-1.5-flash"), DEFAULT_AI_TAG_MODEL);
     assert.equal(
       resolveAiModelId("models/gemini-1.5-flash"),
       DEFAULT_AI_TAG_MODEL,
     );
+    assert.equal(resolveAiModelId("gemini-2.5-flash"), DEFAULT_AI_TAG_MODEL);
+    assert.equal(resolveAiModelId("gemini-2.0-flash"), DEFAULT_AI_TAG_MODEL);
   });
 });
