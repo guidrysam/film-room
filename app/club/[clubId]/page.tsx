@@ -45,6 +45,7 @@ export default function ClubHubPage() {
   const [addMode, setAddMode] = useState<AddMode>("none");
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
   const [assignBusy, setAssignBusy] = useState<string | null>(null);
   const [assignTeamId, setAssignTeamId] = useState("");
 
@@ -96,10 +97,36 @@ export default function ClubHubPage() {
     [members],
   );
 
+  async function copyInviteUrl(url: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        return true;
+      }
+    } catch {
+      /* Safari often blocks clipboard after async work */
+    }
+    try {
+      const input = document.createElement("input");
+      input.value = url;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(input);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
   async function makeInvite(role: ClubInviteRole) {
     if (!club || !user) return;
     setInviteBusy(true);
     setError(null);
+    setInviteCopied(false);
     try {
       const code = await createClubInvite(club, user.uid, role);
       const path = clubInviteJoinPath(code);
@@ -108,7 +135,8 @@ export default function ClubHubPage() {
           ? `${window.location.origin}${path}`
           : path;
       setInviteUrl(url);
-      await navigator.clipboard?.writeText(url);
+      const copied = await copyInviteUrl(url);
+      setInviteCopied(copied);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create invite.");
     } finally {
@@ -283,9 +311,26 @@ export default function ClubHubPage() {
               </button>
             </div>
             {inviteUrl ? (
-              <p className="mt-3 break-all rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2 text-xs text-emerald-100">
-                Invite copied: {inviteUrl}
-              </p>
+              <div className="mt-3 space-y-2 rounded-lg border border-emerald-500/25 bg-emerald-950/20 px-3 py-2">
+                <p className="text-xs text-emerald-100">
+                  {inviteCopied
+                    ? "Invite link copied. Share it with them."
+                    : "Invite ready — copy the link below to share."}
+                </p>
+                <p className="break-all text-xs text-emerald-50/90">{inviteUrl}</p>
+                <button
+                  type="button"
+                  className={ghostBtn}
+                  onClick={() => {
+                    void (async () => {
+                      const ok = await copyInviteUrl(inviteUrl);
+                      setInviteCopied(ok);
+                    })();
+                  }}
+                >
+                  {inviteCopied ? "Copied" : "Copy link"}
+                </button>
+              </div>
             ) : null}
           </section>
         ) : null}
