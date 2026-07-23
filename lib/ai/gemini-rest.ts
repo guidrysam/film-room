@@ -102,7 +102,7 @@ export const TAG_RESULT_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     drafts: {
       type: "array",
-      maxItems: 120,
+      // Do not set maxItems — Gemini returns INVALID_ARGUMENT for it.
       items: {
         type: "object",
         properties: {
@@ -147,7 +147,6 @@ export const SYNC_RESULT_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     drafts: {
       type: "array",
-      maxItems: 20,
       items: {
         type: "object",
         properties: {

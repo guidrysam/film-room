@@ -1,5 +1,5 @@
 /** Current stable Flash for video/tag work (new API keys reject Gemini 2.5). */
-export const DEFAULT_AI_TAG_MODEL = "gemini-3.5-flash";
+export const DEFAULT_AI_TAG_MODEL = "gemini-3.6-flash";
 
 const ALLOWED_MODELS = new Set([
   "gemini-3.6-flash",

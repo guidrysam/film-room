@@ -10,6 +10,7 @@ describe("resolveAiModelId", () => {
     assert.equal(resolveAiModelId("gemini-3.5-flash"), "gemini-3.5-flash");
     assert.equal(resolveAiModelId("gemini-3.6-flash"), "gemini-3.6-flash");
     assert.equal(resolveAiModelId(null), DEFAULT_AI_TAG_MODEL);
+    assert.equal(DEFAULT_AI_TAG_MODEL, "gemini-3.6-flash");
   });
 
   it("upgrades retired and new-user-blocked ids", () => {
