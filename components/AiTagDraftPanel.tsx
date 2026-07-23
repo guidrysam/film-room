@@ -55,6 +55,18 @@ function kindLabel(kind: AiTagKind): string {
       return "Full time";
     case "goal":
       return "Goal";
+    case "shot":
+      return "Shot";
+    case "save":
+      return "Save";
+    case "corner":
+      return "Corner";
+    case "defensive_stop":
+      return "Defensive stop";
+    case "offensive_opportunity":
+      return "Offensive opportunity";
+    case "turnover":
+      return "Turnover";
     default:
       return kind;
   }
@@ -264,7 +276,7 @@ export default function AiTagDraftPanel({
       await addGameEvent(
         game.id,
         {
-          type: row.kind === "goal" ? "coach_mark" : "coach_mark",
+          type: "coach_mark",
           t: Math.max(0, Math.round(row.tSec)),
           label,
           sourceId: primary?.id,
@@ -272,7 +284,13 @@ export default function AiTagDraftPanel({
             aiKind: row.kind,
             confidence: row.confidence,
             ...(row.opponent ? { opponent: true } : {}),
-            ...(row.kind === "goal" ? { statType: "goal" } : {}),
+            ...(row.kind === "goal"
+              ? { statType: "goal" }
+              : row.kind === "shot"
+                ? { statType: "shot" }
+                : row.kind === "save"
+                  ? { statType: "save" }
+                  : {}),
             ...(row.lowEvidence ? { lowEvidence: true } : {}),
           },
           createdBy: currentUid,
@@ -342,8 +360,7 @@ export default function AiTagDraftPanel({
       </div>
 
       <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-        Tag one primary angle (kickoff, half, end, goals), then skim-sync other
-        parent cams. Credits debit on success.
+        Tag one primary angle (structure + goals, plus clear shots/saves/corners/stops/chances/turnovers), then skim-sync other parent cams. Credits debit on success.
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
@@ -364,13 +381,9 @@ export default function AiTagDraftPanel({
       </div>
 
       {!purchaseEnabled ? (
-        <p className="mb-3 text-[10px] leading-snug text-amber-200/90">
-          Purchase is off. Club admins can grant test credits from the club hub
-          or{" "}
-          <code className="text-amber-100">
-            npx tsx scripts/ai/grant-test-credits.ts
-          </code>
-          .
+        <p className="mb-3 text-[10px] leading-snug text-zinc-500">
+          Test mode — purchase is off. Club admins can grant credits from the
+          club hub.
         </p>
       ) : null}
 
@@ -451,7 +464,9 @@ export default function AiTagDraftPanel({
                 >
                   <span className="block text-xs font-medium text-white">
                     {kindLabel(d.kind)}
-                    {isPrimaryTagKind(d.kind) ? "" : " · bonus"}
+                    {isPrimaryTagKind(d.kind)
+                      ? ""
+                      : " · extended"}
                     {d.lowEvidence ? " · low evidence" : ""}
                   </span>
                   <span className="block font-mono text-[10px] text-zinc-500">

@@ -1,12 +1,12 @@
 import "server-only";
 
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateObject } from "ai";
 import {
   aiSyncResultSchema,
   type AiSyncResult,
   type AiTagDraft,
 } from "@/lib/ai/tag-schema";
+import { createGoogleTagModel } from "@/lib/ai/google-model";
 
 export type SyncAngleSource = {
   sourceId: string;
@@ -23,17 +23,6 @@ export type SyncAnglesInput = {
   angles: SyncAngleSource[];
   sport?: string;
 };
-
-function googleModel(modelId: string) {
-  const apiKey =
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ||
-    process.env.AI_GATEWAY_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("MISSING_AI_API_KEY");
-  }
-  const google = createGoogleGenerativeAI({ apiKey });
-  return google(modelId);
-}
 
 function youtubeWatchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
@@ -54,11 +43,9 @@ export async function runSyncAnglesAnalysis(
     return { drafts: [], notes: "No secondary angles." };
   }
 
-  const modelId =
-    process.env.AI_SYNC_MODEL?.trim() ||
-    process.env.AI_TAG_MODEL?.trim() ||
-    "gemini-2.5-flash";
-  const model = googleModel(modelId);
+  const { model } = createGoogleTagModel(
+    process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
+  );
 
   const landmarksText = input.landmarks
     .slice(0, 20)

@@ -53,8 +53,8 @@ async function main(): Promise<void> {
 
   const bonus =
     modeKey === "advanced" || modeKey === "pro"
-      ? "Include high-confidence bonus events (shot, save, coach_mark) when clear."
-      : "Only primary events: kickoff, half_end, half_start, full_time, goal.";
+      ? "Include extended events when clear: shot, save, corner, defensive_stop, offensive_opportunity, turnover, coach_mark."
+      : "Primary: kickoff, half_end, half_start, full_time, goal. Also include clear extended events (shot, save, corner, defensive_stop, offensive_opportunity, turnover) when confidence is high.";
 
   const started = Date.now();
   console.log(`Mode: ${mode.label} (${mode.model})`);

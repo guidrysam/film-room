@@ -1,11 +1,11 @@
 import "server-only";
 
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateObject } from "ai";
 import {
   aiTagResultSchema,
   type AiTagResult,
 } from "@/lib/ai/tag-schema";
+import { createGoogleTagModel } from "@/lib/ai/google-model";
 
 export type TagGameInput = {
   videoId: string;
@@ -19,36 +19,33 @@ export type TagGameInput = {
   allowYoutubeUrl?: boolean;
 };
 
-function googleModel(modelId: string) {
-  const apiKey =
-    process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() ||
-    process.env.AI_GATEWAY_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error("MISSING_AI_API_KEY");
-  }
-  const google = createGoogleGenerativeAI({ apiKey });
-  return google(modelId);
-}
-
 function youtubeWatchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
 const SYSTEM = `You tag youth soccer (football) game film for a coach review timeline.
-Primary events only (required focus): kickoff/start, half_end, half_start, full_time, goals.
-Bonus kinds (shot, save, coach_mark) only if high confidence.
+
+PRIMARY (always try): kickoff/start, half_end, half_start, full_time, goals.
+
+EXTENDED (include when confidence ≥ ~0.6 and visually clear):
+- shot — attempt on goal (on or off target)
+- save — goalkeeper or last-ditch block of a shot
+- corner — corner kick awarded / taken
+- defensive_stop — clear tackle, interception, or block that ends a dangerous attack
+- offensive_opportunity — clear chance created (through ball, 1v1, overload in final third) even if no shot
+- turnover — possession lost in a meaningful way (giveaway under pressure, misplaced pass that flips attack)
+
+Use coach_mark only for other high-value moments that do not fit above.
 Timestamps are seconds from the start of THIS video file (not game clock).
-Be conservative: omit uncertain events. Prefer fewer high-confidence drafts.
-For goals, set opponent=true when the scoring team appears to be the away/opponent side if distinguishable; otherwise omit.
-If visual evidence is thin (metadata/captions only), set lowEvidence=true on drafts.
+Be conservative: omit uncertain events. Prefer fewer high-confidence drafts over noisy play-by-play.
+For goals/shots/corners, set opponent=true when the event belongs to the away/opponent side if distinguishable.
+If visual evidence is thin (metadata/captions only), set lowEvidence=true on drafts and keep EXTENDED sparse.
 Optionally set suggestedKickoffOffsetSec if recording starts before kickoff (seconds of pre-game footage before kickoff).`;
 
 export async function runTagGameAnalysis(
   input: TagGameInput,
 ): Promise<AiTagResult> {
-  const modelId =
-    process.env.AI_TAG_MODEL?.trim() || "gemini-2.5-flash";
-  const model = googleModel(modelId);
+  const { model } = createGoogleTagModel(process.env.AI_TAG_MODEL);
 
   const privacy = (input.privacyStatus ?? "").toLowerCase();
   const useYoutubeUrl =
@@ -70,7 +67,7 @@ export async function runTagGameAnalysis(
       ? `Description:\n${input.description.trim().slice(0, 2000)}`
       : "",
     "",
-    "Return structured drafts for primary timeline events.",
+    "Return structured drafts for PRIMARY + clear EXTENDED events (shots, saves, corners, defensive stops, offensive opportunities, turnovers).",
   ]
     .filter(Boolean)
     .join("\n");

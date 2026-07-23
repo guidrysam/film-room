@@ -8,6 +8,10 @@ export const aiTagKindSchema = z.enum([
   "goal",
   "shot",
   "save",
+  "corner",
+  "defensive_stop",
+  "offensive_opportunity",
+  "turnover",
   "coach_mark",
 ]);
 
@@ -26,7 +30,7 @@ export const aiTagDraftSchema = z.object({
 export type AiTagDraft = z.infer<typeof aiTagDraftSchema>;
 
 export const aiTagResultSchema = z.object({
-  drafts: z.array(aiTagDraftSchema).max(80),
+  drafts: z.array(aiTagDraftSchema).max(120),
   notes: z.string().max(500).optional(),
   suggestedKickoffOffsetSec: z.number().finite().optional(),
 });
@@ -50,6 +54,7 @@ export const aiSyncResultSchema = z.object({
 
 export type AiSyncResult = z.infer<typeof aiSyncResultSchema>;
 
+/** Must-try structure + scoring. */
 export const PRIMARY_TAG_KINDS: AiTagKind[] = [
   "kickoff",
   "half_end",
@@ -58,6 +63,20 @@ export const PRIMARY_TAG_KINDS: AiTagKind[] = [
   "goal",
 ];
 
+/** High-value extended events — include when confidence is solid. */
+export const EXTENDED_TAG_KINDS: AiTagKind[] = [
+  "shot",
+  "save",
+  "corner",
+  "defensive_stop",
+  "offensive_opportunity",
+  "turnover",
+];
+
 export function isPrimaryTagKind(kind: string): boolean {
   return (PRIMARY_TAG_KINDS as string[]).includes(kind);
+}
+
+export function isExtendedTagKind(kind: string): boolean {
+  return (EXTENDED_TAG_KINDS as string[]).includes(kind);
 }
