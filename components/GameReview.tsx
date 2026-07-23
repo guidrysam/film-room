@@ -54,6 +54,7 @@ import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 import ImportTagPlays from "@/components/ImportTagPlays";
 import AcademyFilmEvidencePicker from "@/components/AcademyFilmEvidencePicker";
+import AiTagDraftPanel from "@/components/AiTagDraftPanel";
 
 export type GameReviewProps = {
   gameId: string;
@@ -1190,6 +1191,25 @@ export default function GameReview({
                   currentDisplayName={currentDisplayName}
                   canEdit={canEditSources}
                   onImported={() => void refreshEvents()}
+                />
+              ) : null}
+
+              {!isFullscreen && game ? (
+                <AiTagDraftPanel
+                  game={game}
+                  sources={playableSources}
+                  currentUid={currentUid}
+                  currentDisplayName={currentDisplayName}
+                  canEdit={canEditSources}
+                  selectedSourceId={selectedSourceId}
+                  onSeekGameTime={(tSec) => {
+                    setSelectedGameTime(tSec);
+                    void applySeekForGameTime(tSec, selectedSource);
+                  }}
+                  onRefresh={() => {
+                    void refresh();
+                    void refreshEvents();
+                  }}
                 />
               ) : null}
             </div>

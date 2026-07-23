@@ -44,6 +44,16 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Orphan-team AI credit wallet — Admin SDK writes; owner read.
+    match /users/{userId}/billing/{docId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+    match /users/{userId}/creditLedger/{entryId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
     // Player username registry — written only by Admin SDK (create-player-login).
     match /usernames/{username} {
       allow read, write: if false;
@@ -130,6 +140,20 @@ service cloud.firestore {
         && request.resource.data.members[request.auth.uid] == clubJoinInviteData().role
         && 'joinCode' in request.resource.data
         && clubJoinInviteValid(clubId);
+
+      // AI credits — Admin SDK writes only; club admin/coach may read balance + ledger.
+      match /billing/{docId} {
+        allow read: if request.auth != null &&
+                       (isClubAdmin(clubId, request.auth.uid) ||
+                        clubRoleOf(clubId, request.auth.uid) == 'club_coach');
+        allow write: if false;
+      }
+      match /creditLedger/{entryId} {
+        allow read: if request.auth != null &&
+                       (isClubAdmin(clubId, request.auth.uid) ||
+                        clubRoleOf(clubId, request.auth.uid) == 'club_coach');
+        allow write: if false;
+      }
     }
 
     match /clubInvites/{code} {
@@ -736,6 +760,14 @@ service cloud.firestore {
         allow update, delete: if request.auth != null &&
                                  (isOwner(gameId, request.auth.uid) ||
                                   resource.data.createdBy == request.auth.uid);
+      }
+
+      // AI tag/sync job drafts — Admin SDK writes; coaches may read.
+      match /aiTagJobs/{jobId} {
+        allow read: if request.auth != null &&
+                       (canReadGameFromParent(gameId, request.auth.uid) ||
+                        canWriteGameEvent(gameId, request.auth.uid));
+        allow write: if false;
       }
     }
 

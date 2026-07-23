@@ -19,6 +19,7 @@ import {
   type Club,
   type ClubMemberEntry,
 } from "@/lib/clubs";
+import ClubCreditsCard from "@/components/ClubCreditsCard";
 import {
   clubInviteJoinPath,
   createClubInvite,
@@ -265,6 +266,8 @@ export default function ClubHubPage() {
             {error}
           </p>
         ) : null}
+
+        <ClubCreditsCard clubId={clubId} canManage={isAdmin} />
 
         <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
