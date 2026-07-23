@@ -155,6 +155,7 @@ export async function POST(request: Request) {
       drafts: result.drafts,
       notes: result.notes,
       suggestedKickoffOffsetSec: result.suggestedKickoffOffsetSec,
+      modelId: "modelId" in result ? result.modelId : undefined,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "error";

@@ -1,11 +1,9 @@
 import "server-only";
 
-import { generateObject } from "ai";
 import {
-  aiTagResultSchema,
-  type AiTagResult,
-} from "@/lib/ai/tag-schema";
-import { createGoogleTagModel } from "@/lib/ai/google-model";
+  geminiTagGame,
+} from "@/lib/ai/gemini-rest";
+import type { AiTagResult } from "@/lib/ai/tag-schema";
 
 export type TagGameInput = {
   videoId: string;
@@ -18,10 +16,6 @@ export type TagGameInput = {
   /** Prefer Gemini YouTube URL when public. */
   allowYoutubeUrl?: boolean;
 };
-
-function youtubeWatchUrl(videoId: string): string {
-  return `https://www.youtube.com/watch?v=${videoId}`;
-}
 
 const SYSTEM = `You tag youth soccer (football) game film for a coach review timeline.
 
@@ -44,9 +38,7 @@ Optionally set suggestedKickoffOffsetSec if recording starts before kickoff (sec
 
 export async function runTagGameAnalysis(
   input: TagGameInput,
-): Promise<AiTagResult> {
-  const { model } = createGoogleTagModel(process.env.AI_TAG_MODEL);
-
+): Promise<AiTagResult & { modelId?: string }> {
   const privacy = (input.privacyStatus ?? "").toLowerCase();
   const useYoutubeUrl =
     input.allowYoutubeUrl !== false &&
@@ -67,47 +59,32 @@ export async function runTagGameAnalysis(
       ? `Description:\n${input.description.trim().slice(0, 2000)}`
       : "",
     "",
-    "Return structured drafts for PRIMARY + clear EXTENDED events (shots, saves, corners, defensive stops, offensive opportunities, turnovers).",
+    "Return structured JSON drafts for PRIMARY + clear EXTENDED events (shots, saves, corners, defensive stops, offensive opportunities, turnovers).",
   ]
     .filter(Boolean)
     .join("\n");
 
-  try {
-    if (useYoutubeUrl && input.videoId) {
-      const result = await generateObject({
-        model,
-        schema: aiTagResultSchema,
+  if (useYoutubeUrl && input.videoId) {
+    try {
+      const { object, modelId } = await geminiTagGame({
         system: SYSTEM,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: textPrompt },
-              {
-                type: "file",
-                data: new URL(youtubeWatchUrl(input.videoId)),
-                mediaType: "video/mp4",
-              },
-            ],
-          },
-        ],
+        userText: textPrompt,
+        youtubeVideoId: input.videoId,
       });
-      return result.object;
+      return { ...object, modelId };
+    } catch (err) {
+      console.warn("[ai/tag-game] YouTube URL path failed, falling back:", err);
     }
-  } catch (err) {
-    // Fall through to metadata-only if YouTube URL path fails (unlisted/private/API).
-    console.warn("[ai/tag-game] YouTube URL path failed, falling back:", err);
   }
 
-  const result = await generateObject({
-    model,
-    schema: aiTagResultSchema,
+  const { object, modelId } = await geminiTagGame({
     system: `${SYSTEM}\nYou do NOT have video pixels. Use title/description/duration only. Mark lowEvidence=true on all drafts. Only emit events you can justify from text.`,
-    prompt: textPrompt,
+    userText: textPrompt,
   });
 
   return {
-    ...result.object,
-    drafts: result.object.drafts.map((d) => ({ ...d, lowEvidence: true })),
+    ...object,
+    modelId,
+    drafts: object.drafts.map((d) => ({ ...d, lowEvidence: true })),
   };
 }

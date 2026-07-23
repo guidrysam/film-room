@@ -1,12 +1,14 @@
 import "server-only";
 
-import { generateObject } from "ai";
+import {
+  geminiGenerateObject,
+  SYNC_RESULT_JSON_SCHEMA,
+} from "@/lib/ai/gemini-rest";
 import {
   aiSyncResultSchema,
   type AiSyncResult,
   type AiTagDraft,
 } from "@/lib/ai/tag-schema";
-import { createGoogleTagModel } from "@/lib/ai/google-model";
 
 export type SyncAngleSource = {
   sourceId: string;
@@ -24,10 +26,6 @@ export type SyncAnglesInput = {
   sport?: string;
 };
 
-function youtubeWatchUrl(videoId: string): string {
-  return `https://www.youtube.com/watch?v=${videoId}`;
-}
-
 const SYSTEM = `You align secondary camera angles to a primary tagged soccer game timeline.
 You are given landmark events (kickoff, half, goals, full time) with times in PRIMARY video seconds.
 For each secondary angle, estimate offsetFromGameTime: seconds added to canonical game time to reach that source's playback time.
@@ -43,10 +41,6 @@ export async function runSyncAnglesAnalysis(
     return { drafts: [], notes: "No secondary angles." };
   }
 
-  const { model } = createGoogleTagModel(
-    process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
-  );
-
   const landmarksText = input.landmarks
     .slice(0, 20)
     .map(
@@ -55,65 +49,41 @@ export async function runSyncAnglesAnalysis(
     )
     .join("\n");
 
-  const content: Array<
-    | { type: "text"; text: string }
-    | { type: "file"; data: URL; mediaType: string }
-  > = [
-    {
-      type: "text",
-      text: [
-        `Sport: ${input.sport?.trim() || "soccer"}`,
-        `Primary sourceId: ${input.primarySourceId} videoId: ${input.primaryVideoId}`,
-        "Landmarks (primary video time):",
-        landmarksText || "(none)",
-        "",
-        "Secondary angles to sync:",
-        ...input.angles.map(
-          (a) =>
-            `- sourceId=${a.sourceId} label=${a.label} videoId=${a.videoId} currentOffset=${a.currentOffsetSec ?? 0}`,
-        ),
-        "",
-        "Watch primary + each secondary (skim). Propose offsetFromGameTime per secondary sourceId.",
-      ].join("\n"),
-    },
-    {
-      type: "file",
-      data: new URL(youtubeWatchUrl(input.primaryVideoId)),
-      mediaType: "video/mp4",
-    },
-  ];
+  const userText = [
+    `Sport: ${input.sport?.trim() || "soccer"}`,
+    `Primary sourceId: ${input.primarySourceId} videoId: ${input.primaryVideoId}`,
+    "Landmarks (primary video time):",
+    landmarksText || "(none)",
+    "",
+    "Secondary angles to sync:",
+    ...input.angles.map(
+      (a) =>
+        `- sourceId=${a.sourceId} label=${a.label} videoId=${a.videoId} currentOffset=${a.currentOffsetSec ?? 0}`,
+    ),
+    "",
+    "Propose offsetFromGameTime per secondary sourceId as JSON.",
+  ].join("\n");
 
-  for (const angle of input.angles.slice(0, 5)) {
-    content.push({
-      type: "text",
-      text: `Secondary angle sourceId=${angle.sourceId} (${angle.label}):`,
-    });
-    content.push({
-      type: "file",
-      data: new URL(youtubeWatchUrl(angle.videoId)),
-      mediaType: "video/mp4",
-    });
-  }
-
+  // Primary + first secondary for visual skim (REST supports multiple file parts).
   try {
-    const result = await generateObject({
-      model,
-      schema: aiSyncResultSchema,
+    const { object } = await geminiGenerateObject({
+      modelId: process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
       system: SYSTEM,
-      messages: [{ role: "user", content }],
+      userText,
+      youtubeVideoId: input.primaryVideoId,
+      schema: aiSyncResultSchema,
+      responseJsonSchema: SYNC_RESULT_JSON_SCHEMA,
     });
-    return result.object;
+    return object;
   } catch (err) {
     console.warn("[ai/sync-angles] video path failed, text fallback:", err);
-    const result = await generateObject({
-      model,
-      schema: aiSyncResultSchema,
+    const { object } = await geminiGenerateObject({
+      modelId: process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
       system: `${SYSTEM}\nNo video available. Infer rough offsets only if landmarks text allows; otherwise return empty drafts with a note.`,
-      prompt: content
-        .filter((c): c is { type: "text"; text: string } => c.type === "text")
-        .map((c) => c.text)
-        .join("\n"),
+      userText,
+      schema: aiSyncResultSchema,
+      responseJsonSchema: SYNC_RESULT_JSON_SCHEMA,
     });
-    return result.object;
+    return object;
   }
 }
