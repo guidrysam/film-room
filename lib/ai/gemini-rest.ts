@@ -65,8 +65,10 @@ export async function geminiGenerateObject<T>(input: {
       responseMimeType: "application/json",
       responseSchema: input.responseJsonSchema,
       maxOutputTokens: 8192,
+      // LOW = 70 tok/frame — required for ~60–90m film under the 1M context cap.
+      // HIGH (280 tok/frame) overflows long YouTube games and forces text fallback.
       ...(input.youtubeVideoId
-        ? { mediaResolution: "MEDIA_RESOLUTION_HIGH" }
+        ? { mediaResolution: "MEDIA_RESOLUTION_LOW" }
         : {}),
     },
   };

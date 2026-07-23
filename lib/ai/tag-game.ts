@@ -85,6 +85,13 @@ export async function runTagGameAnalysis(
       return { ...object, modelId };
     } catch (err) {
       console.warn("[ai/tag-game] YouTube URL path failed, falling back:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      // Prefer failing loudly on token overflow so we don't charge for text-only junk.
+      if (/token count exceeds|maximum number of tokens/i.test(msg)) {
+        throw new Error(
+          "This game film is too long for one AI pass at current settings. Try again after the next deploy, or tag a shorter clip.",
+        );
+      }
     }
   }
 
