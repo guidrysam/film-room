@@ -211,6 +211,8 @@ export default function GameReview({
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
+  /** Avoid full-page loading flash on soft refreshes (keeps AI draft panel mounted). */
+  const hasLoadedRef = useRef(false);
 
   const playableSources = useMemo(
     () => sources.filter(isPlayableYouTubeSource),
@@ -280,7 +282,8 @@ export default function GameReview({
   }, [gameId, currentUid]);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    const soft = hasLoadedRef.current;
+    if (!soft) setLoading(true);
     setLoadError(null);
     try {
       const g = await getGame(gameId);
@@ -320,6 +323,7 @@ export default function GameReview({
         return playable[0]?.id ?? null;
       });
       await refreshHighlightDrafts();
+      hasLoadedRef.current = true;
     } catch {
       setLoadError("Could not load this game.");
     } finally {
@@ -1198,6 +1202,7 @@ export default function GameReview({
                 <AiTagDraftPanel
                   game={game}
                   sources={playableSources}
+                  events={events}
                   currentUid={currentUid}
                   currentDisplayName={currentDisplayName}
                   canEdit={canEditSources}
@@ -1206,9 +1211,11 @@ export default function GameReview({
                     setSelectedGameTime(tSec);
                     void applySeekForGameTime(tSec, selectedSource);
                   }}
+                  onEventsChanged={() => {
+                    void refreshEvents();
+                  }}
                   onRefresh={() => {
                     void refresh();
-                    void refreshEvents();
                   }}
                 />
               ) : null}

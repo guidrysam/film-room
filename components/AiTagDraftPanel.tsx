@@ -33,11 +33,14 @@ const dangerBtn =
 export type AiTagDraftPanelProps = {
   game: Game;
   sources: GameVideoSource[];
+  events?: Array<{ t: number; payload?: Record<string, unknown> | null }>;
   currentUid: string;
   currentDisplayName?: string | null;
   canEdit: boolean;
   selectedSourceId: string | null;
   onSeekGameTime: (tSec: number) => void;
+  /** Refresh timeline after approving a draft (do not remount the page). */
+  onEventsChanged: () => void;
   onRefresh: () => void;
 };
 
@@ -82,14 +85,38 @@ async function authHeaders(): Promise<HeadersInit> {
   };
 }
 
+function draftMatchesEvent(
+  draft: AiTagDraft,
+  events: Array<{ t: number; payload?: Record<string, unknown> | null }>,
+): boolean {
+  return events.some((ev) => {
+    if (Math.abs(ev.t - draft.tSec) > 2) return false;
+    const aiKind = ev.payload?.aiKind;
+    return typeof aiKind === "string" && aiKind === draft.kind;
+  });
+}
+
+function rowsFromDrafts(
+  list: AiTagDraft[],
+  events: Array<{ t: number; payload?: Record<string, unknown> | null }>,
+): DraftRow[] {
+  return list.map((d, i) => ({
+    ...d,
+    key: `${d.kind}-${d.tSec}-${i}`,
+    status: draftMatchesEvent(d, events) ? ("approved" as const) : ("pending" as const),
+  }));
+}
+
 export default function AiTagDraftPanel({
   game,
   sources,
+  events = [],
   currentUid,
   currentDisplayName,
   canEdit,
   selectedSourceId,
   onSeekGameTime,
+  onEventsChanged,
   onRefresh,
 }: AiTagDraftPanelProps) {
   const purchaseEnabled = isAiCreditsPurchaseEnabledPublic();
@@ -158,6 +185,49 @@ export default function AiTagDraftPanel({
     setSelectedSyncIds(secondaries.map((s) => s.id));
   }, [secondaries]);
 
+  /** Restore latest ready tag drafts after a remount / page reload. */
+  useEffect(() => {
+    if (!canEdit || drafts.length > 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const headers = await authHeaders();
+        const res = await fetch(
+          `/api/ai/jobs?gameId=${encodeURIComponent(game.id)}`,
+          { headers },
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          jobs?: Array<{
+            kind?: string;
+            status?: string;
+            id?: string;
+            drafts?: AiTagDraft[];
+            notes?: string;
+          }>;
+        };
+        const job = (data.jobs ?? []).find(
+          (j) =>
+            j.kind === "tag" &&
+            j.status === "ready" &&
+            Array.isArray(j.drafts) &&
+            j.drafts.length > 0,
+        );
+        if (!job || cancelled) return;
+        setTagJobId(job.id ?? null);
+        setDrafts(rowsFromDrafts(job.drafts ?? [], events));
+        if (job.notes) setNotes(job.notes);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only hydrate when empty; don't re-run when local drafts change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional one-shot restore
+  }, [canEdit, game.id]);
+
   const runTag = useCallback(async () => {
     if (!canEdit || !primary) return;
     setBusy("tag");
@@ -185,13 +255,7 @@ export default function AiTagDraftPanel({
         throw new Error(data.message || data.error || "Tag failed.");
       }
       setTagJobId(data.jobId ?? null);
-      setDrafts(
-        (data.drafts ?? []).map((d, i) => ({
-          ...d,
-          key: `${d.kind}-${d.tSec}-${i}`,
-          status: "pending" as const,
-        })),
-      );
+      setDrafts(rowsFromDrafts(data.drafts ?? [], events));
       setNotes(data.notes ?? null);
       if (typeof data.balance === "number") setBalance(data.balance);
       else void refreshBalance();
@@ -200,7 +264,7 @@ export default function AiTagDraftPanel({
     } finally {
       setBusy(null);
     }
-  }, [canEdit, primary, game.id, refreshBalance]);
+  }, [canEdit, primary, game.id, refreshBalance, events]);
 
   const runSync = useCallback(async () => {
     if (!canEdit || !primary) return;
@@ -303,7 +367,7 @@ export default function AiTagDraftPanel({
           d.key === row.key ? { ...d, status: "approved" } : d,
         ),
       );
-      onRefresh();
+      onEventsChanged();
     },
     [
       canEdit,
@@ -311,9 +375,16 @@ export default function AiTagDraftPanel({
       primary?.id,
       currentUid,
       currentDisplayName,
-      onRefresh,
+      onEventsChanged,
     ],
   );
+
+  const approveAllPending = useCallback(async () => {
+    const pending = drafts.filter((d) => d.status === "pending");
+    for (const row of pending) {
+      await approveDraft(row);
+    }
+  }, [drafts, approveDraft]);
 
   const rejectDraft = useCallback((row: DraftRow) => {
     setDrafts((prev) =>
@@ -450,7 +521,24 @@ export default function AiTagDraftPanel({
       ) : null}
 
       {drafts.length > 0 ? (
-        <ul className="mt-3 max-h-56 space-y-1.5 overflow-y-auto">
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-medium text-zinc-500">
+              Drafts ({drafts.filter((d) => d.status === "pending").length}{" "}
+              pending)
+            </p>
+            {drafts.some((d) => d.status === "pending") ? (
+              <button
+                type="button"
+                className={ghostBtn}
+                disabled={busy !== null}
+                onClick={() => void approveAllPending()}
+              >
+                Approve all pending
+              </button>
+            ) : null}
+          </div>
+          <ul className="max-h-56 space-y-1.5 overflow-y-auto">
           {drafts.map((d) => (
             <li
               key={d.key}
@@ -502,7 +590,8 @@ export default function AiTagDraftPanel({
               </div>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       ) : null}
 
       {syncDrafts.length > 0 ? (
