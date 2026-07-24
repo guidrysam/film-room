@@ -337,25 +337,32 @@ const HighlightReelPlayer = forwardRef<
       const stat = statInterstitialFromStep(step);
       setInterstitial(stat);
 
-      if (!alreadyBlack) {
-        setFadeOpaque(true);
-        if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
+      try {
+        if (!alreadyBlack) {
+          setFadeOpaque(true);
+          if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
+          if (seq !== playSeqRef.current || !playingRef.current) return;
+        } else if (segmentStarted) {
+          ensureSegmentPlaying(index, pass, true);
+        } else {
+          ensureSegmentPlaying(index, pass, false);
+        }
+
+        await waitForSegmentPlaying(index);
         if (seq !== playSeqRef.current || !playingRef.current) return;
-      } else if (segmentStarted) {
-        ensureSegmentPlaying(index, pass, true);
-      } else {
-        ensureSegmentPlaying(index, pass, false);
+
+        await delayMs(reelPrerollWallMs(step.speed));
+        if (seq !== playSeqRef.current || !playingRef.current) return;
+
+        setInterstitial(null);
+        setFadeOpaque(false);
+        await delayMs(REEL_FADE_OUT_MS);
+      } finally {
+        if (seq !== playSeqRef.current || !playingRef.current) {
+          setInterstitial(null);
+          setFadeOpaque(false);
+        }
       }
-
-      await waitForSegmentPlaying(index);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
-
-      await delayMs(reelPrerollWallMs(step.speed));
-      if (seq !== playSeqRef.current || !playingRef.current) return;
-
-      setInterstitial(null);
-      setFadeOpaque(false);
-      await delayMs(REEL_FADE_OUT_MS);
     },
     [ensureSegmentPlaying, waitForSegmentPlaying],
   );
@@ -404,6 +411,10 @@ const HighlightReelPlayer = forwardRef<
       } finally {
         transitioningRef.current = false;
         preTransitionArmRef.current = false;
+        if (seq !== playSeqRef.current || !playingRef.current) {
+          setInterstitial(null);
+          setFadeOpaque(false);
+        }
       }
     },
     [ensureSegmentPlaying, waitForSegmentPlaying, waitUntilSourceTime],
@@ -660,7 +671,7 @@ const HighlightReelPlayer = forwardRef<
         {firstVideoId ? (
           <YoutubeChromelessStage className="absolute inset-0 overflow-hidden bg-black">
             <div
-              className="absolute inset-0 h-full w-full"
+              className="h-full w-full"
               style={{
                 transform:
                   playing && kenBurnsScale !== 1
@@ -672,8 +683,8 @@ const HighlightReelPlayer = forwardRef<
               <YouTube
                 key={firstVideoId}
                 videoId={firstVideoId}
-                className="absolute inset-0 h-full w-full"
-                iframeClassName="absolute left-0 top-0 h-full w-full"
+                className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                iframeClassName="h-full w-full"
                 opts={youtubeOpts}
                 onReady={(e) => {
                   playerRef.current = e.target;
