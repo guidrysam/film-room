@@ -41,6 +41,8 @@ export async function geminiGenerateObject<T>(input: {
   system: string;
   userText: string;
   youtubeVideoId?: string;
+  /** Extra YouTube angles (e.g. sync secondaries). Capped to keep context bounded. */
+  extraYoutubeVideoIds?: string[];
   schema: z.ZodType<T>;
   /** JSON Schema object for Gemini responseSchema structured output. */
   responseJsonSchema: Record<string, unknown>;
@@ -48,10 +50,17 @@ export async function geminiGenerateObject<T>(input: {
   const modelPath = modelResourceName();
   const modelId = modelPath.replace(/^models\//, "");
   const parts: GeminiPart[] = [{ text: input.userText }];
-  if (input.youtubeVideoId) {
+  const youtubeIds = [
+    ...(input.youtubeVideoId ? [input.youtubeVideoId] : []),
+    ...(input.extraYoutubeVideoIds ?? []),
+  ]
+    .map((id) => id.trim())
+    .filter((id, i, all) => /^[a-zA-Z0-9_-]{11}$/.test(id) && all.indexOf(id) === i)
+    .slice(0, 4);
+  for (const id of youtubeIds) {
     parts.push({
       fileData: {
-        fileUri: `https://www.youtube.com/watch?v=${input.youtubeVideoId}`,
+        fileUri: `https://www.youtube.com/watch?v=${id}`,
         mimeType: "video/mp4",
       },
     });
@@ -67,7 +76,7 @@ export async function geminiGenerateObject<T>(input: {
       maxOutputTokens: 8192,
       // LOW = 70 tok/frame — required for ~60–90m film under the 1M context cap.
       // HIGH (280 tok/frame) overflows long YouTube games and forces text fallback.
-      ...(input.youtubeVideoId
+      ...(youtubeIds.length > 0
         ? { mediaResolution: "MEDIA_RESOLUTION_LOW" }
         : {}),
     },

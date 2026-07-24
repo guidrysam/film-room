@@ -22,8 +22,9 @@ const SYSTEM = `You tag youth soccer (football) game film for a coach review tim
 Watch the FULL video timeline (not just kickoff/goals). Work half-by-half and keep tagging as play develops.
 
 PRIMARY (always include when visible):
-- kickoff / half_start, half_end, full_time
+- kickoff, half_end, half_start (second-half restart), full_time
 - every goal (both teams)
+half_start is especially important — angle sync falls back to it when kickoff is missing or unclear on another camera.
 
 EXTENDED — include generously when you can see them (confidence ≥ ~0.45 is fine; coaches will approve/reject):
 - shot — any attempt toward goal (on or off target), including blocked shots that leave the shooter

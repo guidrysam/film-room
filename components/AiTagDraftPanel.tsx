@@ -431,7 +431,7 @@ export default function AiTagDraftPanel({
       </div>
 
       <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-        Tag one primary angle (structure + goals, plus clear shots/saves/corners/stops/chances/turnovers), then skim-sync other parent cams. Credits debit on success.
+        Tag one primary angle (structure + goals, plus clear shots/saves/corners/stops/chances/turnovers), then skim-sync other parent cams. Sync prefers kickoff, then falls back to second-half start. Credits debit on success.
       </p>
 
       <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
