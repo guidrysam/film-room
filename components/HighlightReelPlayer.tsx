@@ -666,12 +666,12 @@ const HighlightReelPlayer = forwardRef<
       <div
         ref={captureRef}
         data-reel-capture
-        className="relative aspect-video w-full min-h-[240px] overflow-hidden bg-black lg:min-h-[360px]"
+        className="relative aspect-video w-full overflow-hidden bg-black"
       >
         {firstVideoId ? (
           <YoutubeChromelessStage className="absolute inset-0 overflow-hidden bg-black">
             <div
-              className="h-full w-full"
+              className="absolute inset-0"
               style={{
                 transform:
                   playing && kenBurnsScale !== 1
@@ -683,8 +683,8 @@ const HighlightReelPlayer = forwardRef<
               <YouTube
                 key={firstVideoId}
                 videoId={firstVideoId}
-                className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
-                iframeClassName="h-full w-full"
+                className="absolute inset-0 h-full w-full"
+                iframeClassName="absolute inset-0 h-full w-full border-0"
                 opts={youtubeOpts}
                 onReady={(e) => {
                   playerRef.current = e.target;

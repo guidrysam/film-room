@@ -18,7 +18,7 @@ export default function YoutubeChromelessStage({
 }: YoutubeChromelessStageProps) {
   return (
     <div className={`relative overflow-hidden ${className}`.trim()}>
-      <div className="h-full w-full [&_iframe]:pointer-events-none">
+      <div className="absolute inset-0 [&_iframe]:pointer-events-none [&_iframe]:h-full [&_iframe]:w-full">
         {children}
       </div>
       <div
