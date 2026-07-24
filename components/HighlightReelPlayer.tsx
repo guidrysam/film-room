@@ -88,6 +88,7 @@ const HighlightReelPlayer = forwardRef<
   const [kenBurnsScale, setKenBurnsScale] = useState(1);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
   const stepsRef = useRef(steps);
   const titleCardRef = useRef(titleCard);
@@ -134,6 +135,42 @@ const HighlightReelPlayer = forwardRef<
     }),
     [],
   );
+
+  const setStageNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      stageRef.current = node;
+      if (!captureRef) return;
+      if (typeof captureRef === "function") {
+        captureRef(node);
+      } else {
+        (captureRef as { current: HTMLDivElement | null }).current = node;
+      }
+    },
+    [captureRef],
+  );
+
+  const syncPlayerSize = useCallback((player?: YouTubePlayer | null) => {
+    const el = stageRef.current;
+    const pl = player ?? playerRef.current;
+    if (!el || !pl) return;
+    const w = Math.round(el.clientWidth);
+    const h = Math.round(el.clientHeight);
+    if (w < 2 || h < 2) return;
+    try {
+      pl.setSize?.(w, h);
+    } catch {
+      /* player not ready */
+    }
+  }, []);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => syncPlayerSize());
+    ro.observe(el);
+    syncPlayerSize();
+    return () => ro.disconnect();
+  }, [syncPlayerSize, firstVideoId, ready]);
 
   const kickPlayback = useCallback((player: YouTubePlayer) => {
     const now = Date.now();
@@ -664,14 +701,14 @@ const HighlightReelPlayer = forwardRef<
   return (
     <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black">
       <div
-        ref={captureRef}
+        ref={setStageNode}
         data-reel-capture
         className="relative aspect-video w-full overflow-hidden bg-black"
       >
         {firstVideoId ? (
-          <YoutubeChromelessStage className="absolute inset-0 overflow-hidden bg-black">
+          <YoutubeChromelessStage className="absolute inset-0 h-full w-full overflow-hidden bg-black">
             <div
-              className="absolute inset-0"
+              className="h-full w-full"
               style={{
                 transform:
                   playing && kenBurnsScale !== 1
@@ -683,12 +720,13 @@ const HighlightReelPlayer = forwardRef<
               <YouTube
                 key={firstVideoId}
                 videoId={firstVideoId}
-                className="absolute inset-0 h-full w-full"
-                iframeClassName="absolute inset-0 h-full w-full border-0"
+                className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                iframeClassName="h-full w-full"
                 opts={youtubeOpts}
                 onReady={(e) => {
                   playerRef.current = e.target;
                   loadedVideoIdRef.current = firstVideoId;
+                  syncPlayerSize(e.target);
                   setReady(true);
                   if (pendingPlayRef.current) {
                     pendingPlayRef.current = false;
