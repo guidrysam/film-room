@@ -7,6 +7,7 @@ import {
   markAiJobReady,
 } from "@/lib/ai/jobs";
 import {
+  fetchYoutubeMetaServer,
   listGameSourcesAdmin,
   loadGameBillingContext,
 } from "@/lib/ai/game-context";
@@ -146,23 +147,38 @@ export async function POST(request: Request) {
     });
     debitLedgerId = debit.ledgerId;
 
-    const result = await runSyncAnglesAnalysis({
-      landmarks,
-      primarySourceId: primary.id,
-      primaryVideoId: String(primary.videoId),
-      angles: secondary.map((s) => ({
+    const primaryMeta = await fetchYoutubeMetaServer(String(primary.videoId));
+    const primaryPrivacy =
+      primaryMeta?.privacyStatus ||
+      (typeof primary.youtubePrivacyStatus === "string"
+        ? primary.youtubePrivacyStatus
+        : undefined);
+
+    const angles = [];
+    for (const s of secondary) {
+      const meta = await fetchYoutubeMetaServer(String(s.videoId));
+      angles.push({
         sourceId: s.id,
         videoId: String(s.videoId),
         label: typeof s.label === "string" ? s.label : s.id,
         privacyStatus:
-          typeof s.youtubePrivacyStatus === "string"
+          meta?.privacyStatus ||
+          (typeof s.youtubePrivacyStatus === "string"
             ? s.youtubePrivacyStatus
-            : undefined,
+            : undefined),
         currentOffsetSec:
           typeof s.offsetFromGameTime === "number"
             ? s.offsetFromGameTime
             : 0,
-      })),
+      });
+    }
+
+    const result = await runSyncAnglesAnalysis({
+      landmarks,
+      primarySourceId: primary.id,
+      primaryVideoId: String(primary.videoId),
+      primaryPrivacyStatus: primaryPrivacy,
+      angles,
       sport: ctx.sport,
     });
 

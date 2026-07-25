@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Keep firebase-admin outside the bundler so CJS/ESM interop matches Node on Vercel.
-  serverExternalPackages: ["firebase-admin"],
+  // Keep native / CJS packages outside the bundler for Node on Vercel.
+  serverExternalPackages: ["firebase-admin", "youtubei.js", "ffmpeg-static"],
 };
 
 export default nextConfig;

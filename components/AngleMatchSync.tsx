@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import YouTube, { type YouTubePlayer } from "react-youtube";
+import { auth } from "@/lib/firebase";
 import {
   formatTimelineSeconds,
   sourceTimeToGameTime,
@@ -111,8 +112,10 @@ export default function AngleMatchSync({
   const [refDuration, setRefDuration] = useState(0);
   const [targetDuration, setTargetDuration] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [audioBusy, setAudioBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedOffset, setSavedOffset] = useState<number | null>(null);
+  const [audioNote, setAudioNote] = useState<string | null>(null);
   const [refReady, setRefReady] = useState(false);
   const [targetReady, setTargetReady] = useState(false);
 
@@ -235,6 +238,7 @@ export default function AngleMatchSync({
         });
       }
       setSavedOffset(computedOffset);
+      setAudioNote(null);
       onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the alignment.");
@@ -242,6 +246,71 @@ export default function AngleMatchSync({
       setSaving(false);
     }
   }, [target, reference, referenceId, referenceGameTime, computedOffset, game.id, onSaved]);
+
+  const handleAudioSync = useCallback(async () => {
+    if (!reference || !target || reference.id === target.id) {
+      setError("Pick two different YouTube angles.");
+      return;
+    }
+    const user = auth.currentUser;
+    if (!user) {
+      setError("Sign in required.");
+      return;
+    }
+    setAudioBusy(true);
+    setError(null);
+    setAudioNote(null);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/sync/audio-align", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          gameId: game.id,
+          referenceSourceId: reference.id,
+          targetSourceId: target.id,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        offsetFromGameTime?: number;
+        confidence?: number;
+        syncConfidence?: "high" | "medium" | "low";
+        note?: string;
+        lagSec?: number;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Audio sync failed.");
+      }
+      if (typeof data.offsetFromGameTime !== "number") {
+        throw new Error("Audio sync returned no offset.");
+      }
+      await updateGameSourceSync(game.id, target.id, {
+        offsetFromGameTime: data.offsetFromGameTime,
+        syncStatus: "audio_synced",
+        syncConfidence: data.syncConfidence ?? "medium",
+      });
+      if (!isAnchored(reference)) {
+        await updateGameSourceSync(game.id, reference.id, {
+          syncStatus: "audio_synced",
+          syncConfidence: data.syncConfidence ?? "medium",
+        });
+      }
+      setSavedOffset(data.offsetFromGameTime);
+      setAudioNote(
+        data.note ??
+          `Audio sync offset ${data.offsetFromGameTime >= 0 ? "+" : ""}${data.offsetFromGameTime}s`,
+      );
+      onSaved?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Audio sync failed.");
+    } finally {
+      setAudioBusy(false);
+    }
+  }, [reference, target, game.id, onSaved]);
 
   if (!canEdit || playable.length < 2) return null;
 
@@ -260,8 +329,7 @@ export default function AngleMatchSync({
             Sync angles
           </span>
           <span className="mt-0.5 block text-[11px] text-zinc-500">
-            Line up two clips on the same moment — saved for review and
-            highlights.
+            Auto-align by shared audio, or scrub both clips to the same moment.
           </span>
         </span>
         <span className="shrink-0 text-zinc-400" aria-hidden>
@@ -319,14 +387,36 @@ export default function AngleMatchSync({
             </div>
 
             <p className="rounded-md border border-white/[0.06] bg-black/20 px-2.5 py-2 text-[11px] leading-relaxed text-zinc-400">
-              Scrub <span className="font-medium text-zinc-200">both</span> videos
-              to the exact same instant (a goal, the kickoff whistle, a clear
-              touch), then click{" "}
+              Prefer{" "}
+              <span className="font-medium text-zinc-200">Audio sync</span>{" "}
+              (shared whistle/crowd). Or scrub{" "}
+              <span className="font-medium text-zinc-200">both</span> videos to
+              the same instant and click{" "}
               <span className="font-medium text-zinc-200">
                 “These are the same moment”
               </span>
               .
             </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleAudioSync()}
+                disabled={
+                  audioBusy ||
+                  saving ||
+                  !reference ||
+                  !target ||
+                  target.id === reference.id
+                }
+                className={primaryBtn}
+              >
+                {audioBusy ? "Listening…" : "Audio sync"}
+              </button>
+              <span className="text-[10px] text-zinc-500">
+                Analyzes ~90s of audio from each angle (no AI credits).
+              </span>
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               {/* Reference */}
@@ -445,6 +535,9 @@ export default function AngleMatchSync({
                 Lined up — {target?.label} now follows the game clock (offset{" "}
                 {savedOffset >= 0 ? "+" : ""}
                 {savedOffset}s). Switch angles in review to check it.
+                {audioNote ? (
+                  <span className="mt-1 block text-emerald-100/70">{audioNote}</span>
+                ) : null}
               </p>
             ) : null}
 
