@@ -22,7 +22,14 @@ function modelResourceName(): string {
 
 type GeminiPart =
   | { text: string }
-  | { fileData: { fileUri: string; mimeType?: string } };
+  | {
+      fileData: { fileUri: string; mimeType?: string };
+      videoMetadata?: {
+        startOffset?: string;
+        endOffset?: string;
+        fps?: number;
+      };
+    };
 
 type GeminiGenerateResponse = {
   candidates?: Array<{
@@ -43,6 +50,8 @@ export async function geminiGenerateObject<T>(input: {
   youtubeVideoId?: string;
   /** Extra YouTube angles (e.g. sync secondaries). Capped to keep context bounded. */
   extraYoutubeVideoIds?: string[];
+  /** Clip the primary YouTube video to this range (absolute video time). */
+  videoClip?: { startSec: number; endSec: number };
   schema: z.ZodType<T>;
   /** JSON Schema object for Gemini responseSchema structured output. */
   responseJsonSchema: Record<string, unknown>;
@@ -55,16 +64,29 @@ export async function geminiGenerateObject<T>(input: {
     ...(input.extraYoutubeVideoIds ?? []),
   ]
     .map((id) => id.trim())
-    .filter((id, i, all) => /^[a-zA-Z0-9_-]{11}$/.test(id) && all.indexOf(id) === i)
+    .filter(
+      (id, i, all) =>
+        /^[a-zA-Z0-9_-]{11}$/.test(id) && all.indexOf(id) === i,
+    )
     .slice(0, 4);
-  for (const id of youtubeIds) {
-    parts.push({
+
+  const clip = input.videoClip;
+  youtubeIds.forEach((id, index) => {
+    const part: GeminiPart = {
       fileData: {
         fileUri: `https://www.youtube.com/watch?v=${id}`,
-        // Omit mimeType — some Gemini builds reject video/mp4 on YouTube URIs.
       },
-    });
-  }
+    };
+    // Only clip the primary (first) video.
+    if (index === 0 && clip && clip.endSec > clip.startSec) {
+      part.videoMetadata = {
+        startOffset: `${Math.max(0, Math.floor(clip.startSec))}s`,
+        endOffset: `${Math.max(1, Math.ceil(clip.endSec))}s`,
+        fps: 1,
+      };
+    }
+    parts.push(part);
+  });
 
   const url = `https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${encodeURIComponent(apiKey())}`;
   const body = {
@@ -74,8 +96,8 @@ export async function geminiGenerateObject<T>(input: {
       responseMimeType: "application/json",
       responseSchema: input.responseJsonSchema,
       maxOutputTokens: 8192,
-      // LOW = 70 tok/frame — required for ~60–90m film under the 1M context cap.
-      // HIGH (280 tok/frame) overflows long YouTube games and forces text fallback.
+      // LOW = 70 tok/frame — required for long film under the 1M context cap.
+      // Half-window clips keep enough frames for denser tagging.
       ...(youtubeIds.length > 0
         ? { mediaResolution: "MEDIA_RESOLUTION_LOW" }
         : {}),
@@ -89,9 +111,7 @@ export async function geminiGenerateObject<T>(input: {
   });
   const json = (await res.json()) as GeminiGenerateResponse;
   if (!res.ok) {
-    const msg =
-      json.error?.message ||
-      `Gemini HTTP ${res.status}`;
+    const msg = json.error?.message || `Gemini HTTP ${res.status}`;
     throw new Error(`[${modelPath}] ${msg}`);
   }
   const text = json.candidates?.[0]?.content?.parts
@@ -182,11 +202,13 @@ export async function geminiTagGame(input: {
   system: string;
   userText: string;
   youtubeVideoId?: string;
+  videoClip?: { startSec: number; endSec: number };
 }): Promise<{ object: AiTagResult; modelId: string }> {
   return geminiGenerateObject({
     system: input.system,
     userText: input.userText,
     youtubeVideoId: input.youtubeVideoId,
+    videoClip: input.videoClip,
     schema: aiTagResultSchema,
     responseJsonSchema: TAG_RESULT_JSON_SCHEMA,
   });

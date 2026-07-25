@@ -488,9 +488,9 @@ export default function AiTagDraftPanel({
       </div>
 
       <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-        Tag structure on one public angle. For lining up cams, prefer{" "}
-        <span className="text-zinc-300">Sync angles → Audio sync</span>. AI Sync
-        is best-effort. Credits debit on AI success.
+        AI Tag watches the film in half-windows for denser events. For lining up
+        cams, use <span className="text-zinc-300">Sync angles → Audio sync</span>{" "}
+        — AI Sync is best-effort only. Credits debit on AI success.
       </p>
 
       {nonPublicAngles.length > 0 ? (

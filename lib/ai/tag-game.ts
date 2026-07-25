@@ -8,6 +8,11 @@ import {
   geminiCanWatchYoutubePrivacy,
   youtubePrivacyBlockReason,
 } from "@/lib/ai/youtube-gemini-access";
+import {
+  mergeTagWindowResults,
+  planTagWindows,
+  shiftDraftsToVideoTime,
+} from "@/lib/ai/tag-windows";
 import type { AiTagResult } from "@/lib/ai/tag-schema";
 
 export type TagGameInput = {
@@ -24,28 +29,28 @@ export type TagGameInput = {
 
 const SYSTEM = `You tag youth soccer (football) game film for a coach review timeline.
 
-Watch the FULL video timeline (not just kickoff/goals). Work half-by-half and keep tagging as play develops.
+You are given a CLIPPED window of the match (see window start/end in the user prompt).
+Watch that window carefully — not just kickoff/goals. Keep tagging as play develops.
 
-PRIMARY (always include when visible):
+PRIMARY (always include when visible in this window):
 - kickoff, half_end, half_start (second-half restart), full_time
 - every goal (both teams)
-half_start is especially important — angle sync falls back to it when kickoff is missing or unclear on another camera.
 
 EXTENDED — include generously when you can see them (confidence ≥ ~0.45 is fine; coaches will approve/reject):
-- shot — any attempt toward goal (on or off target), including blocked shots that leave the shooter
+- shot — any attempt toward goal (on or off target), including blocked shots
 - save — goalkeeper or desperate block of a shot
 - corner — corner kick awarded or taken
 - defensive_stop — tackle, interception, or clear block that ends a dangerous attack
-- offensive_opportunity — clear chance (through ball, 1v1, overload in final third) even without a shot
+- offensive_opportunity — clear chance (through ball, 1v1, overload in final third)
 - turnover — meaningful possession loss that flips the attack
 
 Use coach_mark only for other high-value teaching moments that do not fit above.
-Timestamps are seconds from the start of THIS video file (not game clock).
-For a typical 60–90 minute youth match, expect STRUCTURE + ALL goals + a dense set of EXTENDED events (often 25–80 drafts total). Prefer missing fewer clear shots/corners/saves over being sparse.
+IMPORTANT: tSec must be seconds from the START OF THIS CLIP (0 = clip start), not wall-clock and not full-file time.
+Within a ~30–45 minute window expect STRUCTURE (if present) + ALL goals + a dense set of EXTENDED events (often 12–40 drafts for that half). Prefer missing fewer clear shots/corners/saves over being sparse.
 Do NOT emit routine passes, throw-ins, or every stoppage — only coach-useful moments.
 For goals/shots/corners, set opponent=true when the event belongs to the away/opponent side if distinguishable.
 If a moment is a bit uncertain, still include it with a lower confidence and/or lowEvidence=true rather than omitting it.
-Optionally set suggestedKickoffOffsetSec if recording starts before kickoff (seconds of pre-game footage before kickoff).
+Optionally set suggestedKickoffOffsetSec only when this clip includes pre-game footage before kickoff.
 Sort drafts by ascending tSec.`;
 
 function looksLikeDurationOnlyStructure(result: AiTagResult): boolean {
@@ -85,47 +90,79 @@ export async function runTagGameAnalysis(
       ? input.rosterNames.slice(0, 40).join(", ")
       : "(unknown)";
 
-  const durationHint =
-    typeof input.durationSec === "number" && input.durationSec > 0
-      ? `Scan the full ${Math.round(input.durationSec / 60)} minutes.`
-      : "Scan the full match duration.";
-
-  const textPrompt = [
+  const windows = planTagWindows(input.durationSec);
+  const baseMeta = [
     `Sport: ${input.sport?.trim() || "soccer"}`,
     `Title: ${input.title?.trim() || "(none)"}`,
-    `DurationSec: ${input.durationSec ?? "unknown"}`,
+    `FullDurationSec: ${input.durationSec ?? "unknown"}`,
     `Privacy: ${privacy || "unknown"}`,
     `Roster names (hints only): ${roster}`,
     input.description?.trim()
       ? `Description:\n${input.description.trim().slice(0, 2000)}`
       : "",
-    "",
-    `${durationHint} Return PRIMARY structure + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers throughout — not goals alone.`,
-    "You MUST watch the attached YouTube video. Do not invent timestamps from duration alone.",
   ]
     .filter(Boolean)
     .join("\n");
 
   try {
-    const { object, modelId } = await geminiTagGame({
-      system: SYSTEM,
-      userText: textPrompt,
-      youtubeVideoId: input.videoId,
-    });
+    const windowParts: Array<{ drafts: AiTagResult["drafts"]; notes?: string }> =
+      [];
+    let modelId: string | undefined;
 
-    if (looksLikeDurationOnlyStructure(object)) {
+    for (const window of windows) {
+      const userText = [
+        baseMeta,
+        "",
+        `Window: ${window.label}`,
+        `ClipStartSec (absolute in full video): ${window.startSec}`,
+        `ClipEndSec (absolute in full video): ${window.endSec}`,
+        `Clip duration ≈ ${Math.round((window.endSec - window.startSec) / 60)} minutes.`,
+        "Return PRIMARY structure (if visible) + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers in THIS clip.",
+        "tSec is relative to clip start (0 = first frame of this clip).",
+        "You MUST watch the attached YouTube clip. Do not invent timestamps from duration alone.",
+      ].join("\n");
+
+      const { object, modelId: mid } = await geminiTagGame({
+        system: SYSTEM,
+        userText,
+        youtubeVideoId: input.videoId,
+        videoClip: {
+          startSec: window.startSec,
+          endSec: window.endSec,
+        },
+      });
+      modelId = mid;
+      windowParts.push({
+        drafts: shiftDraftsToVideoTime(object.drafts, window.startSec),
+        notes: object.notes
+          ? `${window.label}: ${object.notes}`
+          : `${window.label}: ${object.drafts.length} drafts`,
+      });
+    }
+
+    const merged = mergeTagWindowResults(windowParts);
+    if (looksLikeDurationOnlyStructure(merged)) {
       throw new Error(
         "AI could not see the YouTube video pixels (often unlisted/private, or Gemini YouTube ingest failed). " +
           GEMINI_YOUTUBE_PUBLIC_REQUIRED,
       );
     }
 
-    return { ...object, modelId, watchedVideo: true };
+    const passNote =
+      windows.length > 1
+        ? `Tagged in ${windows.length} half-windows for denser coverage.`
+        : undefined;
+    return {
+      ...merged,
+      notes: [passNote, merged.notes].filter(Boolean).join(" ").slice(0, 500),
+      modelId,
+      watchedVideo: true,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/token count exceeds|maximum number of tokens/i.test(msg)) {
       throw new Error(
-        "This game film is too long for one AI pass at current settings. Try again after the next deploy, or tag a shorter clip.",
+        "This game film is too long for one AI pass at current settings. Try a shorter clip, or tag after the next deploy.",
       );
     }
     if (/public YouTube|unlisted|private|could not see the YouTube/i.test(msg)) {
