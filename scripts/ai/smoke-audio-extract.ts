@@ -14,7 +14,8 @@ async function main() {
   if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     throw new Error("Need --video <11-char id>");
   }
-  if (!ffmpegStatic) throw new Error("no ffmpeg-static");
+  const ffmpegBin = ffmpegStatic;
+  if (!ffmpegBin) throw new Error("no ffmpeg-static");
   const yt = await Innertube.create({ retrieve_player: true });
   const info = await yt.getBasicInfo(videoId, { client: "ANDROID_VR" });
   const audio = (info.streaming_data?.adaptive_formats ?? [])
@@ -26,7 +27,7 @@ async function main() {
 
   const pcm: Buffer = await new Promise((resolve, reject) => {
     const proc = spawn(
-      ffmpegStatic,
+      ffmpegBin,
       [
         "-hide_banner",
         "-loglevel",
