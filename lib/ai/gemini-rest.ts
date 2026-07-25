@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DEFAULT_AI_TAG_MODEL } from "@/lib/ai/google-model";
 import {
   aiTagResultSchema,
+  ALL_AI_TAG_KINDS,
   type AiTagResult,
 } from "@/lib/ai/tag-schema";
 
@@ -144,20 +145,7 @@ export const TAG_RESULT_JSON_SCHEMA: Record<string, unknown> = {
           tSec: { type: "number" },
           kind: {
             type: "string",
-            enum: [
-              "kickoff",
-              "half_end",
-              "half_start",
-              "full_time",
-              "goal",
-              "shot",
-              "save",
-              "corner",
-              "defensive_stop",
-              "offensive_opportunity",
-              "turnover",
-              "coach_mark",
-            ],
+            enum: [...ALL_AI_TAG_KINDS],
           },
           label: { type: "string" },
           confidence: { type: "number" },

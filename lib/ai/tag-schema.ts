@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const aiTagKindSchema = z.enum([
+  // Soccer structure / scoring
   "kickoff",
   "half_end",
   "half_start",
@@ -13,6 +14,18 @@ export const aiTagKindSchema = z.enum([
   "offensive_opportunity",
   "turnover",
   "coach_mark",
+  // Basketball structure / scoring
+  "tipoff",
+  "period_start",
+  "period_end",
+  "field_goal",
+  "three_pointer",
+  "rebound",
+  "block",
+  "steal",
+  "assist",
+  "foul",
+  "open_look",
 ]);
 
 export type AiTagKind = z.infer<typeof aiTagKindSchema>;
@@ -54,7 +67,7 @@ export const aiSyncResultSchema = z.object({
 
 export type AiSyncResult = z.infer<typeof aiSyncResultSchema>;
 
-/** Must-try structure + scoring. */
+/** Must-try structure + scoring (soccer). */
 export const PRIMARY_TAG_KINDS: AiTagKind[] = [
   "kickoff",
   "half_end",
@@ -73,10 +86,72 @@ export const EXTENDED_TAG_KINDS: AiTagKind[] = [
   "turnover",
 ];
 
+export const BASKETBALL_PRIMARY_TAG_KINDS: AiTagKind[] = [
+  "tipoff",
+  "period_end",
+  "period_start",
+  "full_time",
+  "field_goal",
+];
+
+export const BASKETBALL_EXTENDED_TAG_KINDS: AiTagKind[] = [
+  "three_pointer",
+  "shot",
+  "rebound",
+  "block",
+  "steal",
+  "assist",
+  "foul",
+  "open_look",
+  "turnover",
+];
+
+export const ALL_AI_TAG_KINDS: AiTagKind[] = aiTagKindSchema.options;
+
 export function isPrimaryTagKind(kind: string): boolean {
-  return (PRIMARY_TAG_KINDS as string[]).includes(kind);
+  return (
+    (PRIMARY_TAG_KINDS as string[]).includes(kind) ||
+    (BASKETBALL_PRIMARY_TAG_KINDS as string[]).includes(kind)
+  );
 }
 
 export function isExtendedTagKind(kind: string): boolean {
-  return (EXTENDED_TAG_KINDS as string[]).includes(kind);
+  return (
+    (EXTENDED_TAG_KINDS as string[]).includes(kind) ||
+    (BASKETBALL_EXTENDED_TAG_KINDS as string[]).includes(kind)
+  );
+}
+
+/** Map AI draft kind → optional GameStatType for approval. */
+export function statTypeForAiTagKind(kind: AiTagKind): string | undefined {
+  switch (kind) {
+    case "goal":
+      return "goal";
+    case "field_goal":
+      return "field_goal";
+    case "three_pointer":
+      return "three_pointer";
+    case "shot":
+      return "shot";
+    case "save":
+      return "save";
+    case "block":
+      return "block";
+    case "steal":
+      return "steal";
+    case "rebound":
+      return "rebound";
+    case "assist":
+      return "assist";
+    case "foul":
+      return "foul";
+    case "turnover":
+      return "turnover";
+    case "defensive_stop":
+      return "defensive_stop";
+    case "corner":
+      return "corner";
+    default:
+      return undefined;
+  }
 }

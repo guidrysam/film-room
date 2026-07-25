@@ -14,7 +14,9 @@ import {
   type AiSyncDraft,
   type AiTagDraft,
   type AiTagKind,
+  statTypeForAiTagKind,
 } from "@/lib/ai/tag-schema";
+import { isBasketballSport } from "@/lib/sports";
 import {
   SYNC_CREDITS_PER_ANGLE,
   tagCreditsForDurationSec,
@@ -55,7 +57,47 @@ export type AiTagDraftPanelProps = {
 
 type DraftRow = AiTagDraft & { key: string; status: "pending" | "approved" | "rejected" };
 
-function kindLabel(kind: AiTagKind): string {
+function kindLabel(kind: AiTagKind, basketball: boolean): string {
+  if (basketball) {
+    switch (kind) {
+      case "tipoff":
+        return "Tipoff";
+      case "period_end":
+        return "Period end";
+      case "period_start":
+        return "Period start";
+      case "full_time":
+        return "Full time";
+      case "field_goal":
+      case "goal":
+        return "Bucket";
+      case "three_pointer":
+        return "3PT";
+      case "shot":
+        return "Shot";
+      case "rebound":
+        return "Rebound";
+      case "block":
+      case "save":
+        return "Block";
+      case "steal":
+      case "defensive_stop":
+        return "Steal";
+      case "assist":
+        return "Assist";
+      case "foul":
+        return "Foul";
+      case "open_look":
+      case "offensive_opportunity":
+        return "Open look";
+      case "turnover":
+        return "Turnover";
+      case "coach_mark":
+        return "Coach mark";
+      default:
+        return kind.replace(/_/g, " ");
+    }
+  }
   switch (kind) {
     case "kickoff":
       return "Kickoff";
@@ -80,7 +122,7 @@ function kindLabel(kind: AiTagKind): string {
     case "turnover":
       return "Turnover";
     default:
-      return kind;
+      return kind.replace(/_/g, " ");
   }
 }
 
@@ -128,6 +170,7 @@ export default function AiTagDraftPanel({
   onEventsChanged,
   onRefresh,
 }: AiTagDraftPanelProps) {
+  const basketball = isBasketballSport(game.sport);
   const purchaseEnabled = isAiCreditsPurchaseEnabledPublic();
   const [balance, setBalance] = useState<number | null>(null);
   const [busy, setBusy] = useState<"tag" | "sync" | null>(null);
@@ -388,12 +431,21 @@ export default function AiTagDraftPanel({
   const approveDraft = useCallback(
     async (row: DraftRow) => {
       if (!canEdit) return;
-      const label =
-        row.kind === "goal"
-          ? row.opponent
-            ? `Goal (opponent): ${row.label}`
-            : `Goal: ${row.label}`
-          : row.label || kindLabel(row.kind);
+      const scoring =
+        row.kind === "goal" ||
+        row.kind === "field_goal" ||
+        row.kind === "three_pointer";
+      const scoreWord = basketball
+        ? row.kind === "three_pointer"
+          ? "3PT"
+          : "Bucket"
+        : "Goal";
+      const label = scoring
+        ? row.opponent
+          ? `${scoreWord} (opponent): ${row.label}`
+          : `${scoreWord}: ${row.label}`
+        : row.label || kindLabel(row.kind, basketball);
+      const statType = statTypeForAiTagKind(row.kind);
       await addGameEvent(
         game.id,
         {
@@ -405,13 +457,7 @@ export default function AiTagDraftPanel({
             aiKind: row.kind,
             confidence: row.confidence,
             ...(row.opponent ? { opponent: true } : {}),
-            ...(row.kind === "goal"
-              ? { statType: "goal" }
-              : row.kind === "shot"
-                ? { statType: "shot" }
-                : row.kind === "save"
-                  ? { statType: "save" }
-                  : {}),
+            ...(statType ? { statType } : {}),
             ...(row.lowEvidence ? { lowEvidence: true } : {}),
           },
           createdBy: currentUid,
@@ -433,6 +479,7 @@ export default function AiTagDraftPanel({
       currentUid,
       currentDisplayName,
       onEventsChanged,
+      basketball,
     ],
   );
 
@@ -633,7 +680,7 @@ export default function AiTagDraftPanel({
                   onClick={() => onSeekGameTime(d.tSec)}
                 >
                   <span className="block text-xs font-medium text-white">
-                    {kindLabel(d.kind)}
+                    {kindLabel(d.kind, basketball)}
                     {isPrimaryTagKind(d.kind)
                       ? ""
                       : " · extended"}

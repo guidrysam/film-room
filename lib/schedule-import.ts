@@ -29,6 +29,7 @@ import {
   scheduleTeamNames,
   type ParsedScheduleRow,
 } from "@/lib/schedule-csv";
+import { canonicalizeSportForStorage, DEFAULT_SPORT_ID } from "@/lib/sports";
 
 export type ScheduleSyncStatus = "new" | "updated" | "unchanged";
 
@@ -227,10 +228,15 @@ export function buildTeamScopedPlan(
   };
 }
 
-function gameInputFromRow(row: ParsedScheduleRow): CreateGameInput {
+function gameInputFromRow(
+  row: ParsedScheduleRow,
+  teamSport?: string | null,
+): CreateGameInput {
+  const sport =
+    canonicalizeSportForStorage(teamSport) ?? DEFAULT_SPORT_ID;
   return {
     title: row.title,
-    sport: "soccer",
+    sport,
     ...(row.date ? { date: row.date } : {}),
     ...(row.homeTeam ? { homeTeam: row.homeTeam } : {}),
     ...(row.awayTeam ? { awayTeam: row.awayTeam } : {}),
@@ -269,7 +275,11 @@ export async function importSchedulePlan(
     for (const item of plan.rows) {
       try {
         if (item.status === "new") {
-          await createTeamGame(uid, teamId, gameInputFromRow(item.row));
+          await createTeamGame(
+            uid,
+            teamId,
+            gameInputFromRow(item.row, plan.matchedTeam.sport),
+          );
           result.gamesCreated++;
           touched = true;
         } else if (item.status === "updated" && item.matchedGameId && item.patch) {

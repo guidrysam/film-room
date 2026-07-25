@@ -12,6 +12,7 @@ import {
   withEventPlayerIds,
 } from "@/lib/timeline-players";
 import { canCoachTeam, type Player, type Team } from "@/lib/teams";
+import { isBasketballSport } from "@/lib/sports";
 
 export type GameStatType =
   | "goal"
@@ -26,6 +27,11 @@ export type GameStatType =
   | "key_pass"
   | "defensive_stop"
   | "turnover"
+  | "field_goal"
+  | "three_pointer"
+  | "rebound"
+  | "block"
+  | "steal"
   | "custom";
 
 export const GAME_STAT_TYPES: GameStatType[] = [
@@ -41,6 +47,11 @@ export const GAME_STAT_TYPES: GameStatType[] = [
   "key_pass",
   "defensive_stop",
   "turnover",
+  "field_goal",
+  "three_pointer",
+  "rebound",
+  "block",
+  "steal",
   "custom",
 ];
 
@@ -57,8 +68,62 @@ const STAT_TYPE_LABELS: Record<GameStatType, string> = {
   key_pass: "Key pass",
   defensive_stop: "Defensive stop",
   turnover: "Turnover",
+  field_goal: "Bucket",
+  three_pointer: "3-pointer",
+  rebound: "Rebound",
+  block: "Block",
+  steal: "Steal",
   custom: "Custom",
 };
+
+/** Soccer-oriented types hidden when reviewing basketball. */
+const SOCCER_ONLY_STAT_TYPES: ReadonlySet<GameStatType> = new Set([
+  "goal",
+  "shot_on_goal",
+  "save",
+  "yellow_card",
+  "red_card",
+  "corner",
+  "key_pass",
+  "defensive_stop",
+]);
+
+/** Basketball-oriented types hidden when reviewing soccer. */
+const BASKETBALL_ONLY_STAT_TYPES: ReadonlySet<GameStatType> = new Set([
+  "field_goal",
+  "three_pointer",
+  "rebound",
+  "block",
+  "steal",
+]);
+
+export function gameStatTypesForSport(
+  sportRaw: string | null | undefined,
+): GameStatType[] {
+  const isBb = isBasketballSport(sportRaw);
+  return GAME_STAT_TYPES.filter((t) => {
+    if (t === "custom") return true;
+    if (isBb) return !SOCCER_ONLY_STAT_TYPES.has(t);
+    return !BASKETBALL_ONLY_STAT_TYPES.has(t);
+  });
+}
+
+export function statTypeLabel(
+  statType: string,
+  sportRaw?: string | null,
+): string {
+  const isBb = isBasketballSport(sportRaw);
+  if (isBb) {
+    if (statType === "goal") return "Bucket";
+    if (statType === "save") return "Block";
+    if (statType === "shot") return "Shot";
+    if (statType === "defensive_stop") return "Steal";
+  }
+  if (statType in STAT_TYPE_LABELS) {
+    return STAT_TYPE_LABELS[statType as GameStatType];
+  }
+  return statType.replace(/_/g, " ");
+}
 
 export type GameStatRecord = {
   eventId: string;
@@ -101,13 +166,6 @@ export type TeamStatSummary = {
   byType: Record<string, number>;
   players: PlayerStatSummary[];
 };
-
-export function statTypeLabel(statType: string): string {
-  if (statType in STAT_TYPE_LABELS) {
-    return STAT_TYPE_LABELS[statType as GameStatType];
-  }
-  return statType.replace(/_/g, " ");
-}
 
 export function isGameStatType(value: unknown): value is GameStatType {
   return typeof value === "string" && GAME_STAT_TYPES.includes(value as GameStatType);

@@ -28,6 +28,7 @@ import {
   parseContributorRole,
 } from "@/lib/game-access-denorm";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
+import { canonicalizeSportForStorage } from "@/lib/sports";
 
 /**
  * Phase 0 durable Game model (Firestore).
@@ -278,6 +279,7 @@ export async function createGame(
   const ref = doc(gamesCol());
   const now = serverTimestamp();
   const title = data.title.trim() || "Game";
+  const sport = canonicalizeSportForStorage(data.sport);
   try {
     await setDoc(ref, {
       title,
@@ -289,7 +291,7 @@ export async function createGame(
       visibility: data.visibility ?? "private",
       createdAt: now,
       updatedAt: now,
-      ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
+      ...(sport ? { sport } : {}),
       ...(trimOrUndef(data.date) ? { date: data.date!.trim() } : {}),
       ...(trimOrUndef(data.homeTeam) ? { homeTeam: data.homeTeam!.trim() } : {}),
       ...(trimOrUndef(data.awayTeam) ? { awayTeam: data.awayTeam!.trim() } : {}),
@@ -390,6 +392,9 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
     raw.visibility === "link" || raw.visibility === "public"
       ? raw.visibility
       : "private";
+  const sport = canonicalizeSportForStorage(
+    typeof raw.sport === "string" ? raw.sport : undefined,
+  );
   return {
     id,
     title: typeof raw.title === "string" ? raw.title : "Game",
@@ -397,7 +402,7 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
     contributors,
     memberUids,
     visibility,
-    ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
+    ...(sport ? { sport } : {}),
     ...(trimOrUndef(raw.date) ? { date: (raw.date as string).trim() } : {}),
     ...(trimOrUndef(raw.homeTeam)
       ? { homeTeam: (raw.homeTeam as string).trim() }
@@ -497,7 +502,11 @@ export async function updateGame(
   await updateDoc(doc(gamesCol(), gameId), {
     updatedAt: serverTimestamp(),
     ...(patch.title !== undefined ? { title: patch.title.trim() || "Game" } : {}),
-    ...(patch.sport !== undefined ? { sport: patch.sport.trim() } : {}),
+    ...(patch.sport !== undefined
+      ? {
+          sport: canonicalizeSportForStorage(patch.sport) ?? patch.sport.trim(),
+        }
+      : {}),
     ...(patch.date !== undefined ? { date: patch.date.trim() } : {}),
     ...(patch.homeTeam !== undefined ? { homeTeam: patch.homeTeam.trim() } : {}),
     ...(patch.awayTeam !== undefined ? { awayTeam: patch.awayTeam.trim() } : {}),

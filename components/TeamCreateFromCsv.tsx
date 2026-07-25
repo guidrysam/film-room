@@ -28,6 +28,7 @@ import type {
 import { listMyTeams, type Team } from "@/lib/teams";
 import { clubHubUrl } from "@/lib/club-routes";
 import { teamSetupUrl } from "@/lib/team-routes";
+import SportSelect from "@/components/SportSelect";
 
 export type TeamCreateFromCsvProps = {
   uid: string;
@@ -508,13 +509,7 @@ export default function TeamCreateFromCsv({
             ))}
           </ul>
 
-          <input
-            type="text"
-            value={sport}
-            onChange={(e) => setSport(e.target.value)}
-            placeholder="Sport (optional)"
-            className={inputClass}
-          />
+          <SportSelect value={sport} onChange={setSport} />
 
           <button
             type="button"

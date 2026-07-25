@@ -61,7 +61,7 @@ describe("manual team creation", () => {
     if ("error" in result) return;
     assert.deepEqual(result, {
       name: "U14 Wolves",
-      sport: "Soccer",
+      sport: "soccer",
       season: "2026 Spring",
     });
   });

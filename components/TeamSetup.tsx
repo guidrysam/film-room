@@ -10,6 +10,8 @@ import {
   type Team,
 } from "@/lib/teams";
 import { teamRosterUrl, teamSetupUrl } from "@/lib/team-routes";
+import SportSelect from "@/components/SportSelect";
+import { sportLabel } from "@/lib/sports";
 
 export type TeamSetupProps = {
   currentUid: string;
@@ -127,13 +129,7 @@ export default function TeamSetup({
               placeholder="Team name (e.g. U14 Central Michigan)"
               className={inputClass}
             />
-            <input
-              type="text"
-              value={sport}
-              onChange={(e) => setSport(e.target.value)}
-              placeholder="Sport (optional)"
-              className={inputClass}
-            />
+            <SportSelect value={sport} onChange={setSport} />
             <button
               type="button"
               onClick={() => void handleCreate()}
@@ -173,7 +169,7 @@ export default function TeamSetup({
                       {t.name}
                     </span>
                     <span className="block text-xs text-zinc-500">
-                      {t.sport || "Team"}
+                      {t.sport ? sportLabel(t.sport) : "Team"}
                     </span>
                   </span>
                   {role ? (

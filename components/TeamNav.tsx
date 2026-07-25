@@ -10,6 +10,7 @@ import {
   teamTacticsUrl,
 } from "@/lib/team-routes";
 import { canManageTeam, type Team } from "@/lib/teams";
+import { isSoccerCurriculumSport, sportLabel } from "@/lib/sports";
 
 export type TeamNavTab =
   | "roster"
@@ -45,9 +46,11 @@ export type TeamNavProps = {
  */
 export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
   const showSettings = canManageTeam(team, currentUid);
+  const showSoccerCurriculum = isSoccerCurriculumSport(team.sport);
   const showAcademy =
-    process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
-    process.env.NODE_ENV === "development";
+    showSoccerCurriculum &&
+    (process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
+      process.env.NODE_ENV === "development");
   const base = teamRosterUrl(team.id);
 
   return (
@@ -56,6 +59,7 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
         <div>
           <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
             Team
+            {team.sport ? ` · ${sportLabel(team.sport)}` : ""}
           </p>
           <h1 className="text-xl font-semibold text-white">{team.name}</h1>
         </div>
@@ -79,12 +83,14 @@ export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
         <Link href={teamGamesUrl(team.id)} className={tabClass(active === "games")}>
           Games
         </Link>
-        <Link
-          href={teamTacticsUrl(team.id)}
-          className={tabClass(active === "tactics")}
-        >
-          Tactics
-        </Link>
+        {showSoccerCurriculum ? (
+          <Link
+            href={teamTacticsUrl(team.id)}
+            className={tabClass(active === "tactics")}
+          >
+            Tactics
+          </Link>
+        ) : null}
         {showAcademy ? (
           <Link
             href={teamAcademyUrl(team.id)}

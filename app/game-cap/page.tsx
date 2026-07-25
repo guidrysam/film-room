@@ -23,6 +23,8 @@ import {
 } from "@/lib/teams";
 import { gameCapUrl, teamSetupUrl } from "@/lib/team-routes";
 import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
+import SportSelect from "@/components/SportSelect";
+import { sportLabel } from "@/lib/sports";
 
 const linkBack =
   "text-sm text-zinc-400 transition hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] rounded-sm";
@@ -375,13 +377,7 @@ function GameCapPageInner() {
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <input
-                    type="text"
-                    value={sport}
-                    onChange={(e) => setSport(e.target.value)}
-                    placeholder="Sport (optional)"
-                    className={inputClass}
-                  />
+                  <SportSelect value={sport} onChange={setSport} />
                   <input
                     type="date"
                     value={date}
@@ -428,7 +424,12 @@ function GameCapPageInner() {
                       {g.title}
                     </span>
                     <span className="block text-xs text-zinc-500">
-                      {[g.sport, g.date, g.opponent ?? g.awayTeam, g.season]
+                      {[
+                        g.sport ? sportLabel(g.sport) : null,
+                        g.date,
+                        g.opponent ?? g.awayTeam,
+                        g.season,
+                      ]
                         .filter(Boolean)
                         .join(" · ") || "Game"}
                     </span>

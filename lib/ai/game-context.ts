@@ -5,6 +5,7 @@ import {
   resolveWalletFromIds,
   type CreditWalletRef,
 } from "@/lib/billing/credits";
+import { canonicalizeSportForStorage } from "@/lib/sports";
 
 export type GameBillingContext = {
   gameId: string;
@@ -33,6 +34,10 @@ export async function loadGameBillingContext(
     typeof game.ownerId === "string" && game.ownerId.trim()
       ? game.ownerId.trim()
       : undefined;
+  let sportRaw =
+    typeof game.sport === "string" && game.sport.trim()
+      ? game.sport.trim()
+      : undefined;
 
   if (teamId) {
     const teamSnap = await adminFirestore.collection("teams").doc(teamId).get();
@@ -48,20 +53,27 @@ export async function loadGameBillingContext(
       ) {
         ownerUid = team.ownerId.trim();
       }
+      if (
+        !sportRaw &&
+        typeof team.sport === "string" &&
+        team.sport.trim()
+      ) {
+        sportRaw = team.sport.trim();
+      }
     }
   }
 
   const wallet = resolveWalletFromIds({ clubId, ownerUid });
   if (!wallet) return null;
 
+  const sport = canonicalizeSportForStorage(sportRaw);
+
   return {
     gameId,
     ...(teamId ? { teamId } : {}),
     ...(clubId ? { clubId } : {}),
     ...(ownerUid ? { ownerUid } : {}),
-    ...(typeof game.sport === "string" && game.sport.trim()
-      ? { sport: game.sport.trim() }
-      : {}),
+    ...(sport ? { sport } : {}),
     wallet,
   };
 }

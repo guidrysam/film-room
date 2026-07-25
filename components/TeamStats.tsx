@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   downloadCsvFile,
-  GAME_STAT_TYPES,
+  gameStatTypesForSport,
   gameStatsToCsv,
   statTypeLabel,
 } from "@/lib/game-stats";
@@ -24,6 +24,7 @@ import {
   type SeasonPlayerTableRow,
 } from "@/lib/season-stats";
 import type { Team } from "@/lib/teams";
+import { isBasketballSport, sportLabel } from "@/lib/sports";
 
 export type TeamStatsProps = {
   team: Team;
@@ -47,6 +48,11 @@ function tdClass() {
 }
 
 export default function TeamStats({ team }: TeamStatsProps) {
+  const basketball = isBasketballSport(team.sport);
+  const availableStatTypes = useMemo(
+    () => gameStatTypesForSport(team.sport),
+    [team.sport],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [season, setSeason] = useState("");
@@ -154,6 +160,11 @@ export default function TeamStats({ team }: TeamStatsProps) {
     <div className="space-y-5">
       <section className={panelClass}>
         <h2 className="mb-3 text-sm font-semibold text-white">Filters</h2>
+        <p className="mb-3 text-xs text-zinc-500">
+          {basketball
+            ? `Season totals for this ${sportLabel(team.sport)} team (buckets, assists, rebounds…).`
+            : "Season totals from game timeline stats."}
+        </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <label className="block">
             <span className="mb-1 block text-[10px] text-zinc-500">Season</span>
@@ -212,9 +223,9 @@ export default function TeamStats({ team }: TeamStatsProps) {
               className={inputClass}
             >
               <option value="">All stat types</option>
-              {GAME_STAT_TYPES.map((type) => (
+              {availableStatTypes.map((type) => (
                 <option key={type} value={type}>
-                  {statTypeLabel(type)}
+                  {statTypeLabel(type, team.sport)}
                 </option>
               ))}
             </select>
@@ -248,11 +259,18 @@ export default function TeamStats({ team }: TeamStatsProps) {
           <p className="text-xs text-zinc-500">
             {Object.entries(teamByType)
               .sort((a, b) => b[1] - a[1])
-              .map(([type, count]) => `${count} ${statTypeLabel(type).toLowerCase()}`)
+              .map(
+                ([type, count]) =>
+                  `${count} ${statTypeLabel(type, team.sport).toLowerCase()}`,
+              )
               .join(" · ")}
           </p>
         ) : (
-          <p className="text-sm text-zinc-400">No stats match these filters yet.</p>
+          <p className="text-sm text-zinc-400">
+            {basketball
+              ? "No basketball stats yet — tag buckets and plays in Review."
+              : "No stats match these filters yet."}
+          </p>
         )}
       </section>
 
@@ -264,14 +282,14 @@ export default function TeamStats({ team }: TeamStatsProps) {
               <tr className="border-b border-white/[0.06]">
                 <th className={thClass()}>Player</th>
                 <th className={thClass()}>#</th>
-                <th className={thClass()}>G</th>
+                <th className={thClass()}>{basketball ? "Bkt" : "G"}</th>
                 <th className={thClass()}>A</th>
                 <th className={thClass()}>Sh</th>
-                <th className={thClass()}>SOG</th>
-                <th className={thClass()}>Sv</th>
+                <th className={thClass()}>{basketball ? "Reb" : "SOG"}</th>
+                <th className={thClass()}>{basketball ? "Blk" : "Sv"}</th>
                 <th className={thClass()}>F</th>
-                <th className={thClass()}>Y</th>
-                <th className={thClass()}>R</th>
+                <th className={thClass()}>{basketball ? "Stl" : "Y"}</th>
+                <th className={thClass()}>{basketball ? "TO" : "R"}</th>
                 <th className={thClass()}>Other</th>
                 <th className={thClass()}>Total</th>
               </tr>

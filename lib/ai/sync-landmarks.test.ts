@@ -72,4 +72,16 @@ describe("planSyncLandmarks", () => {
     ]);
     assert.equal(plan.preferredAnchor, "goal");
   });
+
+  it("uses tipoff and period_start for basketball landmarks", () => {
+    const plan = planSyncLandmarks([
+      draft({ kind: "tipoff", tSec: 80, confidence: 0.9 }),
+      draft({ kind: "period_end", tSec: 1200, confidence: 0.8 }),
+      draft({ kind: "period_start", tSec: 1260, confidence: 0.85 }),
+      draft({ kind: "field_goal", tSec: 400, confidence: 0.9, label: "bucket" }),
+    ]);
+    assert.equal(plan.preferredAnchor, "kickoff");
+    assert.match(plan.guidance, /tipoff @ 80/);
+    assert.match(plan.guidance, /period_start/);
+  });
 });

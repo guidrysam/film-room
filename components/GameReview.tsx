@@ -29,13 +29,19 @@ import {
   addGameStat,
   canManageGameStats,
   deleteGameStat,
-  GAME_STAT_TYPES,
+  gameStatTypesForSport,
   listGameStatsFromEvents,
   parseGameStat,
   statFromCoachMark,
   statTypeLabel,
   type GameStatType,
 } from "@/lib/game-stats";
+import {
+  isScoringStatType,
+  reviewTagsForSport,
+  type ReviewQuickTag,
+} from "@/lib/sport-pack";
+import { resolveSportId, isSoccerCurriculumSport } from "@/lib/sports";
 import {
   appendHighlightMoment,
   createHighlightDraft,
@@ -82,29 +88,6 @@ const dangerBtn =
 function formatOffsetSec(sec: number): string {
   return sec >= 0 ? `+${sec}s` : `${sec}s`;
 }
-
-type QuickTag =
-  | { label: string; kind: "stat"; statType: GameStatType }
-  | { label: string; kind: "mark"; opponent?: boolean };
-
-/** Player-required stats (prompt for a player), then no-player marks. */
-const QUICK_TAGS: QuickTag[] = [
-  { label: "Goal", kind: "stat", statType: "goal" },
-  { label: "Shot", kind: "stat", statType: "shot" },
-  { label: "Save", kind: "stat", statType: "save" },
-  { label: "Assist", kind: "stat", statType: "assist" },
-  { label: "Foul", kind: "stat", statType: "foul" },
-];
-
-const MARK_TAGS: QuickTag[] = [
-  { label: "Corner", kind: "mark" },
-  { label: "Great play", kind: "mark" },
-];
-
-const OPPONENT_TAGS: QuickTag[] = [
-  { label: "Other team goal", kind: "mark", opponent: true },
-  { label: "Other team corner", kind: "mark", opponent: true },
-];
 
 function eventTypeLabel(type: GameTimelineEventType): string {
   switch (type) {
@@ -205,9 +188,6 @@ export default function GameReview({
   type ReviewTab = "tag" | "stat" | "highlight" | "develop";
   const [reviewTab, setReviewTab] = useState<ReviewTab>("tag");
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const academyEnabled =
-    process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
-    process.env.NODE_ENV === "development";
 
   const playerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
@@ -238,6 +218,36 @@ export default function GameReview({
     () => (game ? canManageGameStats(game, currentUid, team) : false),
     [game, currentUid, team],
   );
+
+  const reviewSportId = useMemo(
+    () =>
+      resolveSportId({
+        gameSport: game?.sport,
+        teamSport: team?.sport,
+      }),
+    [game?.sport, team?.sport],
+  );
+
+  const academyEnabled =
+    isSoccerCurriculumSport(reviewSportId) &&
+    (process.env.NEXT_PUBLIC_ACADEMY_ENABLED === "true" ||
+      process.env.NODE_ENV === "development");
+
+  const { quickTags, markTags, opponentTags } = useMemo(
+    () => reviewTagsForSport(reviewSportId),
+    [reviewSportId],
+  );
+
+  const availableStatTypes = useMemo(
+    () => gameStatTypesForSport(reviewSportId),
+    [reviewSportId],
+  );
+
+  useEffect(() => {
+    if (!availableStatTypes.includes(statType)) {
+      setStatType(availableStatTypes[0] ?? "custom");
+    }
+  }, [availableStatTypes, statType]);
 
   const canEditSources = useMemo(() => {
     if (!game) return false;
@@ -495,7 +505,7 @@ export default function GameReview({
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         if (
-          pendingTag.statType === "goal" &&
+          isScoringStatType(pendingTag.statType) &&
           pendingAssistId &&
           pendingAssistId !== pendingPlayerId
         ) {
@@ -511,7 +521,7 @@ export default function GameReview({
           });
         }
         const assist =
-          pendingTag.statType === "goal" && pendingAssistId
+          isScoringStatType(pendingTag.statType) && pendingAssistId
             ? ` (assist: ${playerName(pendingAssistId)})`
             : "";
         setTagMessage(
@@ -1271,6 +1281,7 @@ export default function GameReview({
                                     {ev.type === "stat"
                                       ? statTypeLabel(
                                           parseGameStat(ev)?.statType ?? "custom",
+                                          reviewSportId,
                                         )
                                       : eventTypeLabel(ev.type)}
                                   </span>
@@ -1444,8 +1455,9 @@ export default function GameReview({
                     Tag a play
                   </p>
                   <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-                    Tap a tag — the video pauses so you can attribute a player
-                    (or none) before saving. The mark lands at the time below.
+                    {reviewSportId === "basketball"
+                      ? "Youth basketball film room — tap Bucket, Assist, Rebound, and more. Video pauses so you can attribute a player (or none)."
+                      : "Tap a tag — the video pauses so you can attribute a player (or none) before saving. The mark lands at the time below."}
                   </p>
 
                   <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
@@ -1469,7 +1481,9 @@ export default function GameReview({
                       <div className="mt-2 space-y-2">
                         <label className="block">
                           <span className="mb-1 block text-[10px] text-blue-200/70">
-                            {pendingTag.statType === "goal" ? "Scorer" : "Player"}{" "}
+                            {isScoringStatType(pendingTag.statType)
+                              ? "Scorer"
+                              : "Player"}{" "}
                             (optional)
                           </span>
                           <select
@@ -1489,7 +1503,7 @@ export default function GameReview({
                           </select>
                         </label>
 
-                        {pendingTag.statType === "goal" ? (
+                        {isScoringStatType(pendingTag.statType) ? (
                           <label className="block">
                             <span className="mb-1 block text-[10px] text-blue-200/70">
                               Assist (optional)
@@ -1544,7 +1558,7 @@ export default function GameReview({
                     Our team
                   </p>
                   <div className="mb-3 flex flex-wrap gap-1.5">
-                    {QUICK_TAGS.map((tag) => (
+                    {quickTags.map((tag: ReviewQuickTag) => (
                       <button
                         key={tag.label}
                         type="button"
@@ -1558,7 +1572,7 @@ export default function GameReview({
                         {tag.label}
                       </button>
                     ))}
-                    {MARK_TAGS.map((tag) => (
+                    {markTags.map((tag) => (
                       <button
                         key={tag.label}
                         type="button"
@@ -1575,7 +1589,7 @@ export default function GameReview({
                     Other team
                   </p>
                   <div className="mb-3 flex flex-wrap gap-1.5">
-                    {OPPONENT_TAGS.map((tag) => (
+                    {opponentTags.map((tag) => (
                       <button
                         key={tag.label}
                         type="button"
@@ -1649,9 +1663,9 @@ export default function GameReview({
                       }
                       className={inputClass}
                     >
-                      {GAME_STAT_TYPES.map((type) => (
+                      {availableStatTypes.map((type) => (
                         <option key={type} value={type}>
-                          {statTypeLabel(type)}
+                          {statTypeLabel(type, reviewSportId)}
                         </option>
                       ))}
                     </select>
@@ -1748,7 +1762,7 @@ export default function GameReview({
                                 {formatTimelineSeconds(stat.t)}
                               </span>
                               <span className="ml-2 text-[11px] text-zinc-200">
-                                {statTypeLabel(stat.statType)}
+                                {statTypeLabel(stat.statType, reviewSportId)}
                               </span>
                               <span className="ml-1 text-[10px] text-zinc-500">
                                 {stat.playerIds

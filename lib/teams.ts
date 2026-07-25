@@ -25,6 +25,7 @@ import {
   type CreateGameInput,
   type Game,
 } from "@/lib/games";
+import { canonicalizeSportForStorage } from "@/lib/sports";
 
 /**
  * Team organization layer (Phase 1–2).
@@ -167,13 +168,16 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
           : {}),
       }
     : undefined;
+  const sport = canonicalizeSportForStorage(
+    typeof raw.sport === "string" ? raw.sport : undefined,
+  );
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : "Team",
     ownerId: typeof raw.ownerId === "string" ? raw.ownerId : "",
     members,
     memberUids,
-    ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
+    ...(sport ? { sport } : {}),
     ...(trimOrUndef(raw.season) ? { season: (raw.season as string).trim() } : {}),
     ...(trimOrUndef(raw.clubId) ? { clubId: (raw.clubId as string).trim() } : {}),
     ...(trimOrUndef(raw.importBatchId)
@@ -201,9 +205,10 @@ export function normalizeCreateTeamInput(input: {
 }): CreateTeamInput | { error: string } {
   const name = input.name.trim();
   if (!name) return { error: "Give the team a name." };
+  const sport = canonicalizeSportForStorage(input.sport);
   return {
     name,
-    ...(trimOrUndef(input.sport) ? { sport: input.sport!.trim() } : {}),
+    ...(sport ? { sport } : {}),
     ...(trimOrUndef(input.season) ? { season: input.season!.trim() } : {}),
     ...(trimOrUndef(input.clubId) ? { clubId: input.clubId!.trim() } : {}),
   };
@@ -311,6 +316,7 @@ export async function createTeam(
   const ref = doc(teamsCol());
   const now = serverTimestamp();
   const name = data.name.trim() || "Team";
+  const sport = canonicalizeSportForStorage(data.sport);
   const payload = {
     name,
     ownerId: effectiveUid,
@@ -318,7 +324,7 @@ export async function createTeam(
     memberUids: [effectiveUid],
     createdAt: now,
     updatedAt: now,
-    ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
+    ...(sport ? { sport } : {}),
     ...(trimOrUndef(data.season) ? { season: data.season!.trim() } : {}),
     ...(trimOrUndef(data.clubId) ? { clubId: data.clubId!.trim() } : {}),
     ...(trimOrUndef(data.importBatchId)
@@ -372,7 +378,11 @@ export async function updateTeam(
   await updateDoc(doc(teamsCol(), teamId), {
     updatedAt: serverTimestamp(),
     ...(patch.name !== undefined ? { name: patch.name.trim() || "Team" } : {}),
-    ...(patch.sport !== undefined ? { sport: patch.sport.trim() } : {}),
+    ...(patch.sport !== undefined
+      ? {
+          sport: canonicalizeSportForStorage(patch.sport) ?? patch.sport.trim(),
+        }
+      : {}),
     ...(patch.season !== undefined ? { season: patch.season.trim() } : {}),
     ...(patch.clubId !== undefined ? { clubId: patch.clubId.trim() } : {}),
     ...(patch.youtube !== undefined ? { youtube: patch.youtube } : {}),
@@ -601,10 +611,14 @@ export async function createTeamGame(
   if (!canCoachTeam(team, uid)) {
     throw new Error("Only team admins and coaches can create games.");
   }
+  const inheritedSport =
+    canonicalizeSportForStorage(data.sport) ??
+    canonicalizeSportForStorage(team.sport);
   return createGame(uid, {
     ...data,
     teamId,
     ...(team.clubId ? { clubId: team.clubId } : {}),
+    ...(inheritedSport ? { sport: inheritedSport } : {}),
   });
 }
 

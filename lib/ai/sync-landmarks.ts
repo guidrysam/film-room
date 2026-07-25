@@ -1,11 +1,12 @@
 import type { AiTagDraft } from "@/lib/ai/tag-schema";
 
+/** Conceptual anchors (soccer names); basketball tipoff/period_start/field_goal map here. */
 export type SyncAnchorKind = "kickoff" | "half_start" | "goal" | "none";
 
 export type SyncLandmarkPlan = {
   /** Landmarks ordered for the model: anchors first, then verification events. */
   landmarks: AiTagDraft[];
-  /** Preferred global anchor when kickoff is usable. */
+  /** Preferred global anchor when kickoff/tipoff is usable. */
   preferredAnchor: SyncAnchorKind;
   /** Human/model guidance string. */
   guidance: string;
@@ -17,13 +18,23 @@ const STRUCTURE_KINDS = new Set([
   "half_start",
   "full_time",
   "goal",
+  "tipoff",
+  "period_end",
+  "period_start",
+  "field_goal",
+  "three_pointer",
 ]);
 
-function bestOfKind(
+const OPENING_KINDS = new Set(["kickoff", "tipoff"]);
+const PERIOD_END_KINDS = new Set(["half_end", "period_end"]);
+const PERIOD_START_KINDS = new Set(["half_start", "period_start"]);
+const SCORING_KINDS = new Set(["goal", "field_goal", "three_pointer"]);
+
+function bestOfKinds(
   landmarks: AiTagDraft[],
-  kind: AiTagDraft["kind"],
+  kinds: Set<string>,
 ): AiTagDraft | null {
-  const matches = landmarks.filter((d) => d.kind === kind);
+  const matches = landmarks.filter((d) => kinds.has(d.kind));
   if (matches.length === 0) return null;
   return matches.reduce((best, cur) =>
     cur.confidence > best.confidence ? cur : best,
@@ -31,62 +42,62 @@ function bestOfKind(
 }
 
 /**
- * Second-half restart: prefer half_start after half_end; else the latest half_start.
+ * Period/half restart: prefer start after a period/half end; else the latest start.
  */
 export function pickSecondHalfStart(
   landmarks: AiTagDraft[],
 ): AiTagDraft | null {
-  const halfStarts = landmarks
-    .filter((d) => d.kind === "half_start")
+  const starts = landmarks
+    .filter((d) => PERIOD_START_KINDS.has(d.kind))
     .sort((a, b) => a.tSec - b.tSec);
-  if (halfStarts.length === 0) return null;
+  if (starts.length === 0) return null;
 
-  const halfEnd = bestOfKind(landmarks, "half_end");
-  if (halfEnd) {
-    const after = halfStarts.filter((d) => d.tSec >= halfEnd.tSec - 30);
+  const periodEnd = bestOfKinds(landmarks, PERIOD_END_KINDS);
+  if (periodEnd) {
+    const after = starts.filter((d) => d.tSec >= periodEnd.tSec - 30);
     if (after.length > 0) {
       return after.reduce((best, cur) =>
         cur.confidence > best.confidence ? cur : best,
       );
     }
   }
-  return halfStarts[halfStarts.length - 1] ?? null;
+  return starts[starts.length - 1] ?? null;
 }
 
 /**
- * Build sync landmarks with kickoff → second-half start fallback guidance.
+ * Build sync landmarks with opening → period restart → scoring fallback guidance.
+ * Works for soccer (kickoff/half_start/goal) and basketball (tipoff/period_start/field_goal).
  */
 export function planSyncLandmarks(landmarks: AiTagDraft[]): SyncLandmarkPlan {
   const usable = landmarks.filter(
     (d) => STRUCTURE_KINDS.has(d.kind) && d.confidence >= 0.25,
   );
-  const kickoff = bestOfKind(usable, "kickoff");
-  const halfStart = pickSecondHalfStart(usable);
-  const halfEnd = bestOfKind(usable, "half_end");
-  const goals = usable
-    .filter((d) => d.kind === "goal")
+  const opening = bestOfKinds(usable, OPENING_KINDS);
+  const periodStart = pickSecondHalfStart(usable);
+  const periodEnd = bestOfKinds(usable, PERIOD_END_KINDS);
+  const scores = usable
+    .filter((d) => SCORING_KINDS.has(d.kind))
     .sort((a, b) => a.tSec - b.tSec)
     .slice(0, 8);
 
-  const kickoffUsable =
-    kickoff != null && kickoff.confidence >= 0.45 && !kickoff.lowEvidence;
+  const openingUsable =
+    opening != null && opening.confidence >= 0.45 && !opening.lowEvidence;
 
   let preferredAnchor: SyncAnchorKind = "none";
-  if (kickoffUsable) preferredAnchor = "kickoff";
-  else if (halfStart) preferredAnchor = "half_start";
-  else if (goals[0]) preferredAnchor = "goal";
+  if (openingUsable) preferredAnchor = "kickoff";
+  else if (periodStart) preferredAnchor = "half_start";
+  else if (scores[0]) preferredAnchor = "goal";
 
   const anchors: AiTagDraft[] = [];
-  if (kickoff) anchors.push(kickoff);
-  if (halfStart) anchors.push(halfStart);
-  if (halfEnd) anchors.push(halfEnd);
-  for (const g of goals) {
+  if (opening) anchors.push(opening);
+  if (periodStart) anchors.push(periodStart);
+  if (periodEnd) anchors.push(periodEnd);
+  for (const g of scores) {
     if (!anchors.some((a) => a.kind === g.kind && a.tSec === g.tSec)) {
       anchors.push(g);
     }
   }
 
-  // Dedupe by kind+tSec while keeping order; fill with remaining structure if sparse.
   const seen = new Set<string>();
   const ordered: AiTagDraft[] = [];
   for (const d of [...anchors, ...usable.sort((a, b) => a.tSec - b.tSec)]) {
@@ -97,32 +108,40 @@ export function planSyncLandmarks(landmarks: AiTagDraft[]): SyncLandmarkPlan {
     if (ordered.length >= 20) break;
   }
 
+  const openingName = opening?.kind === "tipoff" ? "tipoff" : "kickoff";
+  const restartName =
+    periodStart?.kind === "period_start" ? "period_start" : "half_start";
+  const scoreName =
+    scores[0]?.kind === "field_goal" || scores[0]?.kind === "three_pointer"
+      ? "field_goal"
+      : "goal";
+
   const guidanceParts: string[] = [];
-  if (preferredAnchor === "kickoff" && kickoff) {
+  if (preferredAnchor === "kickoff" && opening) {
     guidanceParts.push(
-      `Primary sync anchor: kickoff @ ${kickoff.tSec}s (conf ${kickoff.confidence.toFixed(2)}).`,
+      `Primary sync anchor: ${openingName} @ ${opening.tSec}s (conf ${opening.confidence.toFixed(2)}).`,
     );
-    if (halfStart) {
+    if (periodStart) {
       guidanceParts.push(
-        `FALLBACK: if kickoff is missing/unclear on a secondary angle (late start, no whistle, wrong end), align that angle on second-half half_start @ ${halfStart.tSec}s instead. Note the fallback in the draft note.`,
+        `FALLBACK: if ${openingName} is missing/unclear on a secondary angle (late start, no whistle), align that angle on ${restartName} @ ${periodStart.tSec}s instead. Note the fallback in the draft note.`,
       );
     }
-  } else if (preferredAnchor === "half_start" && halfStart) {
+  } else if (preferredAnchor === "half_start" && periodStart) {
     guidanceParts.push(
-      `Kickoff unavailable or low-confidence on primary landmarks. Primary sync anchor: second-half half_start @ ${halfStart.tSec}s (conf ${halfStart.confidence.toFixed(2)}).`,
+      `${openingName} unavailable or low-confidence on primary landmarks. Primary sync anchor: ${restartName} @ ${periodStart.tSec}s (conf ${periodStart.confidence.toFixed(2)}).`,
     );
-    if (kickoff) {
+    if (opening) {
       guidanceParts.push(
-        `Kickoff draft exists @ ${kickoff.tSec}s but treat it as weak; prefer half_start unless kickoff is clearly visible on both angles.`,
+        `${openingName} draft exists @ ${opening.tSec}s but treat it as weak; prefer ${restartName} unless opening is clearly visible on both angles.`,
       );
     }
-  } else if (preferredAnchor === "goal" && goals[0]) {
+  } else if (preferredAnchor === "goal" && scores[0]) {
     guidanceParts.push(
-      `No usable kickoff or half_start. Align on the clearest goal @ ${goals[0].tSec}s and cross-check other goals.`,
+      `No usable ${openingName} or ${restartName}. Align on the clearest ${scoreName} @ ${scores[0].tSec}s and cross-check other scoring events.`,
     );
   } else {
     guidanceParts.push(
-      "Few structure landmarks. Use any shared visible events (goals, half changes) you can confirm visually.",
+      "Few structure landmarks. Use any shared visible events (scoring, period changes) you can confirm visually.",
     );
   }
 

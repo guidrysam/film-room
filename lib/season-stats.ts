@@ -62,6 +62,12 @@ const TABLE_STANDARD_TYPES = new Set<GameStatType>([
   "foul",
   "yellow_card",
   "red_card",
+  "field_goal",
+  "three_pointer",
+  "rebound",
+  "block",
+  "steal",
+  "turnover",
 ]);
 
 function csvEscape(value: string): string {
@@ -174,6 +180,13 @@ function countType(summary: PlayerStatSummary, type: GameStatType): number {
   return summary.counts[type] ?? 0;
 }
 
+function countTypes(
+  summary: PlayerStatSummary,
+  types: GameStatType[],
+): number {
+  return types.reduce((sum, t) => sum + countType(summary, t), 0);
+}
+
 export function customOrOtherStatCount(summary: PlayerStatSummary): number {
   let total = 0;
   for (const [type, count] of Object.entries(summary.counts)) {
@@ -197,14 +210,18 @@ export function buildSeasonPlayerTableRows(
       ...(player?.jerseyNumber ?? summary.jerseyNumber
         ? { jerseyNumber: player?.jerseyNumber ?? summary.jerseyNumber }
         : {}),
-      goals: countType(summary, "goal"),
+      // Soccer: goals; basketball: field_goal + three_pointer (+ legacy goal)
+      goals: countTypes(summary, ["goal", "field_goal", "three_pointer"]),
       assists: countType(summary, "assist"),
       shots: countType(summary, "shot"),
-      shotOnGoal: countType(summary, "shot_on_goal"),
-      saves: countType(summary, "save"),
+      // Soccer: SOG; basketball: rebounds
+      shotOnGoal: countTypes(summary, ["shot_on_goal", "rebound"]),
+      // Soccer: saves; basketball: blocks (+ legacy save)
+      saves: countTypes(summary, ["save", "block"]),
       fouls: countType(summary, "foul"),
-      yellow: countType(summary, "yellow_card"),
-      red: countType(summary, "red_card"),
+      // Soccer cards; basketball: steals / turnovers in Y/R columns when present
+      yellow: countTypes(summary, ["yellow_card", "steal"]),
+      red: countTypes(summary, ["red_card", "turnover"]),
       customOther: customOrOtherStatCount(summary),
       total: summary.total,
     };

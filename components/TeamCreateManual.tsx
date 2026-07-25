@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { createTeam, normalizeCreateTeamInput } from "@/lib/teams";
 import { teamSetupUrl } from "@/lib/team-routes";
+import SportSelect from "@/components/SportSelect";
 
 export type TeamCreateManualProps = {
   uid: string;
@@ -67,13 +68,7 @@ export default function TeamCreateManual({
           placeholder="Team name (e.g. U14 Central Michigan)"
           className={inputClass}
         />
-        <input
-          type="text"
-          value={sport}
-          onChange={(e) => setSport(e.target.value)}
-          placeholder="Sport (optional)"
-          className={inputClass}
-        />
+        <SportSelect value={sport} onChange={setSport} />
         <input
           type="text"
           value={season}

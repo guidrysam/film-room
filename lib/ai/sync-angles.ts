@@ -16,6 +16,7 @@ import {
   type AiSyncResult,
   type AiTagDraft,
 } from "@/lib/ai/tag-schema";
+import { isBasketballSport, normalizeSportId } from "@/lib/sports";
 
 export type SyncAngleSource = {
   sourceId: string;
@@ -34,7 +35,7 @@ export type SyncAnglesInput = {
   sport?: string;
 };
 
-const SYSTEM = `You align ONE secondary camera angle to a primary tagged soccer game timeline.
+const SYSTEM_SOCCER = `You align ONE secondary camera angle to a primary tagged soccer game timeline.
 You are given landmark events (kickoff, half_end, half_start, goals, full time) with times in PRIMARY video seconds.
 The attached video is the SECONDARY angle only — find the same landmarks in it and compute the offset.
 
@@ -50,6 +51,23 @@ Sync anchors (in order):
 You MUST watch the attached YouTube video. Do not invent offsets.
 Skim visually around the chosen anchor (±2–3 minutes); do not re-tag the whole match.
 Return exactly one draft for the secondary sourceId. In the draft note, say which anchor you used (kickoff | half_start | goal).
+If you cannot see video pixels, return confidence 0 and explain — do not guess.`;
+
+const SYSTEM_BASKETBALL = `You align ONE secondary camera angle to a primary tagged basketball game timeline.
+You are given landmark events (tipoff, period_end, period_start, field goals, full time) with times in PRIMARY video seconds.
+The attached video is the SECONDARY angle only — find the same landmarks in it and compute the offset.
+
+Estimate offsetFromGameTime: seconds added to canonical game time to reach that source's playback time.
+Convention: if secondary starts later than primary (missed tipoff), offset is typically larger positive or adjusted so landmarks line up.
+
+Sync anchors (in order):
+1. Prefer tipoff when clearly visible on the secondary.
+2. FALLBACK — if tipoff cannot be found (late start, no whistle), use period_start (next period/quarter restart). Match the primary period_start landmark to the visible restart on the secondary, then derive offsetFromGameTime.
+3. If neither tipoff nor period_start works, use the clearest shared field_goal / make.
+
+You MUST watch the attached YouTube video. Do not invent offsets.
+Skim visually around the chosen anchor (±2–3 minutes); do not re-tag the whole game.
+Return exactly one draft for the secondary sourceId. In the draft note, say which anchor you used (tipoff | period_start | field_goal).
 If you cannot see video pixels, return confidence 0 and explain — do not guess.`;
 
 function assertPublicForGemini(
@@ -71,8 +89,14 @@ async function syncOneAngle(input: {
   angle: SyncAngleSource;
   sport?: string;
 }): Promise<AiSyncDraft> {
+  const sportId =
+    normalizeSportId(input.sport) ?? (input.sport?.trim() || "soccer");
+  const basketball = isBasketballSport(sportId);
+  const retryHint = basketball
+    ? "Propose offsetFromGameTime for this secondary sourceId as JSON. If tipoff fails, retry alignment on period_start before giving up."
+    : "Propose offsetFromGameTime for this secondary sourceId as JSON. If kickoff fails, retry alignment on half_start before giving up.";
   const userText = [
-    `Sport: ${input.sport?.trim() || "soccer"}`,
+    `Sport: ${sportId}`,
     `Primary sourceId: ${input.primarySourceId} videoId: ${input.primaryVideoId}`,
     `Preferred anchor: ${input.preferredAnchor}`,
     input.guidance,
@@ -83,12 +107,12 @@ async function syncOneAngle(input: {
     "Secondary angle to sync (second attached video):",
     `- sourceId=${input.angle.sourceId} label=${input.angle.label} videoId=${input.angle.videoId} currentOffset=${input.angle.currentOffsetSec ?? 0}`,
     "",
-    "Propose offsetFromGameTime for this secondary sourceId as JSON. If kickoff fails, retry alignment on half_start before giving up.",
+    retryHint,
   ].join("\n");
 
   const { object } = await geminiGenerateObject({
     modelId: process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
-    system: SYSTEM,
+    system: basketball ? SYSTEM_BASKETBALL : SYSTEM_SOCCER,
     userText,
     // Watch the secondary angle only — primary landmarks are text times.
     // Dual long YouTube attachments often trip Gemini "invalid argument".

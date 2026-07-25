@@ -21,6 +21,7 @@ import {
   canManageTeam,
   type Team,
 } from "@/lib/teams";
+import { canonicalizeSportForStorage } from "@/lib/sports";
 
 /**
  * Club organization layer.
@@ -89,13 +90,16 @@ function parseClub(id: string, raw: Record<string, unknown>): Club {
         (u): u is string => typeof u === "string",
       )
     : Object.keys(members);
+  const sport = canonicalizeSportForStorage(
+    typeof raw.sport === "string" ? raw.sport : undefined,
+  );
   return {
     id,
     name: typeof raw.name === "string" ? raw.name : "Club",
     ownerId: typeof raw.ownerId === "string" ? raw.ownerId : "",
     members,
     memberUids,
-    ...(trimOrUndef(raw.sport) ? { sport: (raw.sport as string).trim() } : {}),
+    ...(sport ? { sport } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -107,9 +111,10 @@ export function normalizeCreateClubInput(input: {
 }): CreateClubInput | { error: string } {
   const name = input.name.trim();
   if (!name) return { error: "Give the club a name." };
+  const sport = canonicalizeSportForStorage(input.sport);
   return {
     name,
-    ...(trimOrUndef(input.sport) ? { sport: input.sport!.trim() } : {}),
+    ...(sport ? { sport } : {}),
   };
 }
 
@@ -154,6 +159,7 @@ export async function createClub(
   const ref = doc(clubsCol());
   const now = serverTimestamp();
   const name = data.name.trim() || "Club";
+  const sport = canonicalizeSportForStorage(data.sport);
   const payload = {
     name,
     ownerId: effectiveUid,
@@ -161,7 +167,7 @@ export async function createClub(
     memberUids: [effectiveUid],
     createdAt: now,
     updatedAt: now,
-    ...(trimOrUndef(data.sport) ? { sport: data.sport!.trim() } : {}),
+    ...(sport ? { sport } : {}),
   };
 
   try {

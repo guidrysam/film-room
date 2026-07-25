@@ -14,6 +14,7 @@ import {
   shiftDraftsToVideoTime,
 } from "@/lib/ai/tag-windows";
 import type { AiTagResult } from "@/lib/ai/tag-schema";
+import { isBasketballSport, normalizeSportId } from "@/lib/sports";
 
 export type TagGameInput = {
   videoId: string;
@@ -27,7 +28,7 @@ export type TagGameInput = {
   allowYoutubeUrl?: boolean;
 };
 
-const SYSTEM = `You tag youth soccer (football) game film for a coach review timeline.
+const SYSTEM_SOCCER = `You tag youth soccer (football) game film for a coach review timeline.
 
 You are given a CLIPPED window of the match (see window start/end in the user prompt).
 Watch that window carefully — not just kickoff/goals. Keep tagging as play develops.
@@ -53,12 +54,62 @@ If a moment is a bit uncertain, still include it with a lower confidence and/or 
 Optionally set suggestedKickoffOffsetSec only when this clip includes pre-game footage before kickoff.
 Sort drafts by ascending tSec.`;
 
-function looksLikeDurationOnlyStructure(result: AiTagResult): boolean {
+const SYSTEM_BASKETBALL = `You tag youth basketball game film for a coach review timeline.
+
+You are given a CLIPPED window of the game (see window start/end in the user prompt).
+Watch that window carefully — not just tipoff/buckets. Keep tagging as play develops.
+
+PRIMARY (always include when visible in this window):
+- tipoff, period_end, period_start (next period/quarter restart), full_time
+- every field_goal / made basket (both teams)
+
+EXTENDED — include generously when you can see them (confidence ≥ ~0.45 is fine; coaches will approve/reject):
+- three_pointer — made three
+- shot — attempt (missed FGA or contested look)
+- rebound — clear rebound
+- block — shot block
+- steal — steal / takeaway
+- assist — clear helper on a make
+- foul — whistled foul
+- open_look — clear open scoring chance that may or may not go in
+- turnover — meaningful possession loss
+
+Use coach_mark only for other high-value teaching moments that do not fit above.
+IMPORTANT: tSec must be seconds from the START OF THIS CLIP (0 = clip start), not wall-clock and not full-file time.
+Within a window expect STRUCTURE (if present) + ALL makes + a dense set of EXTENDED events. Prefer missing fewer clear shots/rebounds/steals over being sparse.
+Do NOT emit every pass or inbound — only coach-useful moments.
+For scoring/shots, set opponent=true when the event belongs to the away/opponent side if distinguishable.
+If a moment is a bit uncertain, still include it with a lower confidence and/or lowEvidence=true rather than omitting it.
+Optionally set suggestedKickoffOffsetSec only when this clip includes pre-game footage before tipoff (same field name for compatibility).
+Sort drafts by ascending tSec.`;
+
+const STRUCTURE_KINDS_SOCCER = [
+  "kickoff",
+  "half_end",
+  "half_start",
+  "full_time",
+];
+const STRUCTURE_KINDS_BASKETBALL = [
+  "tipoff",
+  "period_end",
+  "period_start",
+  "full_time",
+];
+
+function tagSystemForSport(sport?: string): string {
+  return isBasketballSport(sport) ? SYSTEM_BASKETBALL : SYSTEM_SOCCER;
+}
+
+function looksLikeDurationOnlyStructure(
+  result: AiTagResult,
+  sport?: string,
+): boolean {
   if (result.drafts.length === 0) return true;
+  const structure = isBasketballSport(sport)
+    ? STRUCTURE_KINDS_BASKETBALL
+    : STRUCTURE_KINDS_SOCCER;
   const allLow = result.drafts.every((d) => d.lowEvidence);
-  const onlyStructure = result.drafts.every((d) =>
-    ["kickoff", "half_end", "half_start", "full_time"].includes(d.kind),
-  );
+  const onlyStructure = result.drafts.every((d) => structure.includes(d.kind));
   const note = (result.notes ?? "").toLowerCase();
   const noteSaysGuess =
     /duration|lowEvidence|no video|without (watching|pixels|video)|standard match structure/i.test(
@@ -85,6 +136,9 @@ export async function runTagGameAnalysis(
     );
   }
 
+  const sportId =
+    normalizeSportId(input.sport) ??
+    (input.sport?.trim() || "soccer");
   const roster =
     input.rosterNames && input.rosterNames.length > 0
       ? input.rosterNames.slice(0, 40).join(", ")
@@ -92,7 +146,7 @@ export async function runTagGameAnalysis(
 
   const windows = planTagWindows(input.durationSec);
   const baseMeta = [
-    `Sport: ${input.sport?.trim() || "soccer"}`,
+    `Sport: ${sportId}`,
     `Title: ${input.title?.trim() || "(none)"}`,
     `FullDurationSec: ${input.durationSec ?? "unknown"}`,
     `Privacy: ${privacy || "unknown"}`,
@@ -103,6 +157,10 @@ export async function runTagGameAnalysis(
   ]
     .filter(Boolean)
     .join("\n");
+
+  const denseHint = isBasketballSport(sportId)
+    ? "Return PRIMARY structure (if visible) + ALL field goals + EXTENDED 3PT/shots/rebounds/blocks/steals/assists/fouls/open looks/turnovers in THIS clip."
+    : "Return PRIMARY structure (if visible) + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers in THIS clip.";
 
   try {
     const windowParts: Array<{ drafts: AiTagResult["drafts"]; notes?: string }> =
@@ -117,13 +175,13 @@ export async function runTagGameAnalysis(
         `ClipStartSec (absolute in full video): ${window.startSec}`,
         `ClipEndSec (absolute in full video): ${window.endSec}`,
         `Clip duration ≈ ${Math.round((window.endSec - window.startSec) / 60)} minutes.`,
-        "Return PRIMARY structure (if visible) + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers in THIS clip.",
+        denseHint,
         "tSec is relative to clip start (0 = first frame of this clip).",
         "You MUST watch the attached YouTube clip. Do not invent timestamps from duration alone.",
       ].join("\n");
 
       const { object, modelId: mid } = await geminiTagGame({
-        system: SYSTEM,
+        system: tagSystemForSport(sportId),
         userText,
         youtubeVideoId: input.videoId,
         videoClip: {
@@ -141,12 +199,13 @@ export async function runTagGameAnalysis(
     }
 
     const merged = mergeTagWindowResults(windowParts);
-    if (looksLikeDurationOnlyStructure(merged)) {
+    if (looksLikeDurationOnlyStructure(merged, sportId)) {
       throw new Error(
         "AI could not see the YouTube video pixels (often unlisted/private, or Gemini YouTube ingest failed). " +
           GEMINI_YOUTUBE_PUBLIC_REQUIRED,
       );
     }
+
 
     const passNote =
       windows.length > 1

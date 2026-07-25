@@ -32,7 +32,7 @@ describe("normalizeCreateClubInput", () => {
   it("trims name and sport", () => {
     assert.deepEqual(
       normalizeCreateClubInput({ name: " CMFC ", sport: " Soccer " }),
-      { name: "CMFC", sport: "Soccer" },
+      { name: "CMFC", sport: "soccer" },
     );
   });
 });

@@ -1,9 +1,8 @@
 /**
- * Sport definitions for the Coach Mark feature.
+ * Sport packs for coach marks, review quick-tags, and product gating.
  *
- * Each sport exposes a set of quick "event" buttons the coach taps to drop a
- * mark on the live/VOD timeline. Marks reuse the existing room mark pipeline
- * (`rooms/{roomId}/marks`), so a sport event is just a preset label.
+ * Canonical ids: soccer | basketball | football | hockey | general
+ * Free-text ("Basketball", "Youth Soccer") normalizes to these ids when possible.
  */
 
 export type SportEvent = {
@@ -92,9 +91,94 @@ export const SPORTS: SportDef[] = [
 
 export const DEFAULT_SPORT_ID = "soccer";
 
+/** Primary sports offered in create selectors (thin pack + soccer). */
+export const SELECTOR_SPORTS: SportDef[] = SPORTS.filter(
+  (s) => s.id === "soccer" || s.id === "basketball",
+);
+
+const ALIASES: Record<string, string> = {
+  soccer: "soccer",
+  football_soccer: "soccer",
+  futbol: "soccer",
+  "association football": "soccer",
+  basketball: "basketball",
+  hoop: "basketball",
+  hoops: "basketball",
+  bball: "basketball",
+  "youth basketball": "basketball",
+  football: "football",
+  "american football": "football",
+  hockey: "hockey",
+  "ice hockey": "hockey",
+  general: "general",
+  other: "general",
+};
+
+/** Map free-text or id to a canonical sport id, or null if unknown. */
+export function normalizeSportId(
+  raw: string | null | undefined,
+): string | null {
+  if (raw == null) return null;
+  const trimmed = raw.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!trimmed) return null;
+  if (SPORTS.some((s) => s.id === trimmed)) return trimmed;
+  const alias = ALIASES[trimmed];
+  if (alias) return alias;
+  // Soft match: "Youth Soccer Club" contains soccer
+  if (/\bsoccer\b|\bfutbol\b/.test(trimmed)) return "soccer";
+  if (/\bbasketball\b|\bhoops?\b/.test(trimmed)) return "basketball";
+  if (/\bhockey\b/.test(trimmed)) return "hockey";
+  if (/\bamerican football\b|\bgridiron\b/.test(trimmed)) return "football";
+  return null;
+}
+
+/** Canonicalize for storage: known id, else trimmed free-text, else undefined. */
+export function canonicalizeSportForStorage(
+  raw: string | null | undefined,
+): string | undefined {
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
+  if (!trimmed) return undefined;
+  return normalizeSportId(trimmed) ?? trimmed;
+}
+
+export function sportLabel(raw: string | null | undefined): string {
+  const id = normalizeSportId(raw);
+  if (id) return getSportById(id).name;
+  const t = (raw ?? "").trim();
+  return t || getSportById(DEFAULT_SPORT_ID).name;
+}
+
 export function getSportById(id: string | null | undefined): SportDef {
-  const found = SPORTS.find((s) => s.id === id);
-  return found ?? SPORTS[0];
+  const normalized = normalizeSportId(id) ?? id;
+  const found = SPORTS.find((s) => s.id === normalized);
+  return found ?? SPORTS.find((s) => s.id === DEFAULT_SPORT_ID)!;
+}
+
+/** Resolve effective sport for a game (game → team → club → default). */
+export function resolveSportId(input: {
+  gameSport?: string | null;
+  teamSport?: string | null;
+  clubSport?: string | null;
+}): string {
+  return (
+    normalizeSportId(input.gameSport) ||
+    normalizeSportId(input.teamSport) ||
+    normalizeSportId(input.clubSport) ||
+    DEFAULT_SPORT_ID
+  );
+}
+
+/** Soccer-only surfaces (Academy, tactics boards, ball-mastery). */
+export function isSoccerCurriculumSport(
+  raw: string | null | undefined,
+): boolean {
+  const id = normalizeSportId(raw);
+  // Unknown / unset defaults to soccer curriculum available.
+  return id == null || id === "soccer";
+}
+
+export function isBasketballSport(raw: string | null | undefined): boolean {
+  return normalizeSportId(raw) === "basketball";
 }
 
 const SPORT_STORAGE_KEY = "film-room-coach-mark-sport";
@@ -127,7 +211,9 @@ export function writePreferredSportId(id: string): void {
   const ls = storage();
   if (!ls) return;
   try {
-    ls.setItem(SPORT_STORAGE_KEY, id);
+    const canonical = normalizeSportId(id) ?? id;
+    if (!SPORTS.some((s) => s.id === canonical)) return;
+    ls.setItem(SPORT_STORAGE_KEY, canonical);
   } catch {
     /* private mode / quota */
   }

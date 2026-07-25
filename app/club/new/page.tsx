@@ -10,6 +10,7 @@ import {
   normalizeCreateClubInput,
 } from "@/lib/clubs";
 import { clubHubUrl } from "@/lib/club-routes";
+import SportSelect from "@/components/SportSelect";
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -90,13 +91,7 @@ export default function NewClubPage() {
             placeholder="Club name (e.g. Central Michigan FC)"
             className={inputClass}
           />
-          <input
-            type="text"
-            value={sport}
-            onChange={(e) => setSport(e.target.value)}
-            placeholder="Sport (optional)"
-            className={inputClass}
-          />
+          <SportSelect value={sport} onChange={setSport} />
           {error ? (
             <p className="text-sm text-rose-300">{error}</p>
           ) : null}
