@@ -4,7 +4,7 @@ import {
   AUDIO_SYNC_SAMPLE_RATE,
   extractYoutubePcmWindow,
 } from "@/lib/audio-sync/extract-youtube-pcm";
-import { crossCorrelateEnvelopes } from "@/lib/audio-sync/cross-correlate";
+import { alignByAudioPeaks } from "@/lib/audio-sync/cross-correlate";
 import { roundSyncOffsetSeconds } from "@/lib/persist-room-game-sync";
 
 export type AudioAlignAngle = {
@@ -36,8 +36,8 @@ function syncConfidenceFromScore(
 }
 
 /**
- * Align `target` to `reference` using shared ambient audio.
- * Reference is treated as the game-time anchor (uses its existing offset).
+ * Align `target` to `reference` using shared ambient audio peaks
+ * (whistle / cheer / kick), confirmed with envelope correlation.
  */
 export async function alignAnglesByAudio(input: {
   reference: AudioAlignAngle;
@@ -62,26 +62,27 @@ export async function alignAnglesByAudio(input: {
     }),
   ]);
 
-  const corr = crossCorrelateEnvelopes(primaryPcm, secondaryPcm, {
+  const corr = alignByAudioPeaks(primaryPcm, secondaryPcm, {
     sampleRate: AUDIO_SYNC_SAMPLE_RATE,
     maxLagSec: Math.min(150, Math.floor(windowDurationSec * 0.75)),
   });
 
   if (corr.confidence < 0.2) {
     throw new Error(
-      `Audio sync confidence too low (${corr.confidence.toFixed(2)}). ` +
-        "Try a noisier stretch of the game (crowd/whistle), or use Match angles manually. " +
+      `Audio sync confidence too low (${corr.confidence.toFixed(2)}; ` +
+        `peaks ${corr.primaryPeakCount ?? 0}/${corr.secondaryPeakCount ?? 0}). ` +
+        "Need shared loud moments (whistle, cheer). Try again later in the game, or sync manually. " +
         "Muted or music-only angles cannot audio-sync.",
     );
   }
 
   const refOffset = input.reference.offsetFromGameTime ?? 0;
-  // secondaryTime ≈ primaryTime + lagSec  (within the same window start)
-  // primaryTime = gameTime + refOffset
-  // secondaryTime = gameTime + targetOffset
-  // => targetOffset = refOffset + lagSec
   const offsetFromGameTime = roundSyncOffsetSeconds(refOffset + corr.lagSec);
   const level = syncConfidenceFromScore(corr.confidence);
+  const peakBit =
+    corr.peakVotes != null
+      ? ` · ${corr.peakVotes} peak pairs · ${corr.primaryPeakCount}/${corr.secondaryPeakCount} peaks`
+      : ` · ${corr.primaryPeakCount ?? 0}/${corr.secondaryPeakCount ?? 0} peaks`;
 
   return {
     targetSourceId: input.target.sourceId,
@@ -89,7 +90,7 @@ export async function alignAnglesByAudio(input: {
     lagSec: corr.lagSec,
     confidence: corr.confidence,
     syncConfidence: level,
-    note: `Audio envelope match lag ${corr.lagSec >= 0 ? "+" : ""}${corr.lagSec.toFixed(2)}s · window ${windowStartSec}s–${windowStartSec + windowDurationSec}s`,
+    note: `Audio ${corr.method} lag ${corr.lagSec >= 0 ? "+" : ""}${corr.lagSec.toFixed(2)}s${peakBit} · window ${windowStartSec}s–${windowStartSec + windowDurationSec}s`,
     windowStartSec,
     windowDurationSec,
   };

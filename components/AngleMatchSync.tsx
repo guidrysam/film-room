@@ -414,7 +414,7 @@ export default function AngleMatchSync({
                 {audioBusy ? "Listening…" : "Audio sync"}
               </button>
               <span className="text-[10px] text-zinc-500">
-                Analyzes ~90s of audio from each angle (no AI credits).
+                Matches loud peaks (whistle/cheer) across angles — no AI credits.
               </span>
             </div>
 
