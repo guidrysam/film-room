@@ -22,7 +22,7 @@ function modelResourceName(): string {
 
 type GeminiPart =
   | { text: string }
-  | { fileData: { fileUri: string; mimeType: string } };
+  | { fileData: { fileUri: string; mimeType?: string } };
 
 type GeminiGenerateResponse = {
   candidates?: Array<{
@@ -61,7 +61,7 @@ export async function geminiGenerateObject<T>(input: {
     parts.push({
       fileData: {
         fileUri: `https://www.youtube.com/watch?v=${id}`,
-        mimeType: "video/mp4",
+        // Omit mimeType — some Gemini builds reject video/mp4 on YouTube URIs.
       },
     });
   }

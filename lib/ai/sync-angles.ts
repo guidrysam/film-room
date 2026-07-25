@@ -36,18 +36,18 @@ export type SyncAnglesInput = {
 
 const SYSTEM = `You align ONE secondary camera angle to a primary tagged soccer game timeline.
 You are given landmark events (kickoff, half_end, half_start, goals, full time) with times in PRIMARY video seconds.
-Attached videos: primary first, then the single secondary angle.
+The attached video is the SECONDARY angle only — find the same landmarks in it and compute the offset.
 
 Estimate offsetFromGameTime: seconds added to canonical game time to reach that source's playback time.
 Convention: if secondary starts later than primary (missed kickoff), offset is typically larger positive or adjusted so landmarks line up.
 If secondary has more pre-game footage, offset may be negative relative to an already-zeroed primary.
 
 Sync anchors (in order):
-1. Prefer kickoff on both angles when clearly visible.
-2. FALLBACK — if kickoff cannot be found on the secondary (late start, no whistle, wrong end of field, pre-roll only), use second-half half_start as the sync opportunity. Match the primary half_start landmark time to the visible second-half restart on that secondary, then derive offsetFromGameTime from that pair.
+1. Prefer kickoff when clearly visible on the secondary.
+2. FALLBACK — if kickoff cannot be found (late start, no whistle, wrong end of field, pre-roll only), use second-half half_start. Match the primary half_start landmark to the visible second-half restart on the secondary, then derive offsetFromGameTime.
 3. If neither kickoff nor half_start works, use the clearest shared goal.
 
-You MUST watch both attached YouTube videos. Do not invent offsets.
+You MUST watch the attached YouTube video. Do not invent offsets.
 Skim visually around the chosen anchor (±2–3 minutes); do not re-tag the whole match.
 Return exactly one draft for the secondary sourceId. In the draft note, say which anchor you used (kickoff | half_start | goal).
 If you cannot see video pixels, return confidence 0 and explain — do not guess.`;
@@ -90,8 +90,9 @@ async function syncOneAngle(input: {
     modelId: process.env.AI_SYNC_MODEL ?? process.env.AI_TAG_MODEL,
     system: SYSTEM,
     userText,
-    youtubeVideoId: input.primaryVideoId,
-    extraYoutubeVideoIds: [input.angle.videoId],
+    // Watch the secondary angle only — primary landmarks are text times.
+    // Dual long YouTube attachments often trip Gemini "invalid argument".
+    youtubeVideoId: input.angle.videoId,
     schema: aiSyncResultSchema,
     responseJsonSchema: SYNC_RESULT_JSON_SCHEMA,
   });
@@ -115,7 +116,7 @@ async function syncOneAngle(input: {
     throw new Error(
       `AI Sync could not watch or align "${input.angle.label}"` +
         (draft.note ? `: ${draft.note}` : ".") +
-        ` ${GEMINI_YOUTUBE_PUBLIC_REQUIRED}`,
+        " Try Sync angles → Audio sync, or make both videos Public and re-tag.",
     );
   }
 
@@ -185,9 +186,13 @@ export async function runSyncAnglesAnalysis(
         throw err instanceof Error ? err : new Error(msg);
       }
       console.warn("[ai/sync-angles] angle failed:", angle.sourceId, err);
-      throw new Error(
-        `AI Sync failed for "${angle.label}" (${msg}). ${GEMINI_YOUTUBE_PUBLIC_REQUIRED}`,
-      );
+      if (/invalid argument/i.test(msg)) {
+        throw new Error(
+          `AI Sync failed for "${angle.label}" (${msg}). ` +
+            "Prefer Sync angles → Audio sync for alignment; AI Sync is best-effort on long dual YouTube film.",
+        );
+      }
+      throw new Error(`AI Sync failed for "${angle.label}" (${msg}).`);
     }
   }
 

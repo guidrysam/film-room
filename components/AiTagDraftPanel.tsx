@@ -5,6 +5,7 @@ import { auth } from "@/lib/firebase";
 import {
   addGameEvent,
   updateGameSourceSync,
+  updateGameSourceYouTubeMetadata,
   type Game,
   type GameVideoSource,
 } from "@/lib/games";
@@ -24,6 +25,10 @@ import {
   GEMINI_YOUTUBE_PUBLIC_REQUIRED,
   normalizeYoutubePrivacy,
 } from "@/lib/ai/youtube-gemini-access";
+import {
+  fetchYouTubeVideoMeta,
+  metaToSourcePatch,
+} from "@/lib/youtube-video-meta-client";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-4 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -132,6 +137,10 @@ export default function AiTagDraftPanel({
   const [syncDrafts, setSyncDrafts] = useState<AiSyncDraft[]>([]);
   const [notes, setNotes] = useState<string | null>(null);
   const [selectedSyncIds, setSelectedSyncIds] = useState<string[]>([]);
+  const [livePrivacyBySourceId, setLivePrivacyBySourceId] = useState<
+    Record<string, string>
+  >({});
+  const [privacyRefreshing, setPrivacyRefreshing] = useState(false);
 
   const youtubeSources = useMemo(
     () =>
@@ -164,10 +173,43 @@ export default function AiTagDraftPanel({
 
   const nonPublicAngles = useMemo(() => {
     return youtubeSources.filter((s) => {
-      const p = normalizeYoutubePrivacy(s.youtubePrivacyStatus);
+      const live = livePrivacyBySourceId[s.id];
+      const p = normalizeYoutubePrivacy(live ?? s.youtubePrivacyStatus);
       return p === "unlisted" || p === "private";
     });
-  }, [youtubeSources]);
+  }, [youtubeSources, livePrivacyBySourceId]);
+
+  const refreshLivePrivacy = useCallback(async () => {
+    if (youtubeSources.length === 0) return;
+    setPrivacyRefreshing(true);
+    try {
+      const next: Record<string, string> = {};
+      for (const s of youtubeSources) {
+        if (!s.videoId) continue;
+        const meta = await fetchYouTubeVideoMeta(s.videoId);
+        const privacy = meta?.privacyStatus;
+        if (
+          privacy === "public" ||
+          privacy === "unlisted" ||
+          privacy === "private"
+        ) {
+          next[s.id] = privacy;
+          if (privacy !== s.youtubePrivacyStatus) {
+            const patch = metaToSourcePatch(meta!);
+            if (patch.youtubePrivacyStatus) {
+              await updateGameSourceYouTubeMetadata(game.id, s.id, patch).catch(
+                () => {},
+              );
+            }
+          }
+        }
+      }
+      setLivePrivacyBySourceId(next);
+      if (Object.keys(next).length > 0) onRefresh();
+    } finally {
+      setPrivacyRefreshing(false);
+    }
+  }, [youtubeSources, game.id, onRefresh]);
 
   const refreshBalance = useCallback(async () => {
     try {
@@ -191,6 +233,10 @@ export default function AiTagDraftPanel({
   useEffect(() => {
     void refreshBalance();
   }, [refreshBalance]);
+
+  useEffect(() => {
+    void refreshLivePrivacy();
+  }, [refreshLivePrivacy]);
 
   useEffect(() => {
     setSelectedSyncIds(secondaries.map((s) => s.id));
@@ -442,17 +488,32 @@ export default function AiTagDraftPanel({
       </div>
 
       <p className="mb-3 text-[11px] leading-snug text-zinc-500">
-        Tag one primary angle, then sync other cams (kickoff, else second-half
-        start). Gemini can only watch <span className="text-zinc-300">public</span>{" "}
-        YouTube videos — unlisted/private will fail. Credits debit on success.
+        Tag structure on one public angle. For lining up cams, prefer{" "}
+        <span className="text-zinc-300">Sync angles → Audio sync</span>. AI Sync
+        is best-effort. Credits debit on AI success.
       </p>
 
       {nonPublicAngles.length > 0 ? (
-        <p className="mb-3 rounded-lg border border-amber-500/25 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-snug text-amber-100/90">
-          {nonPublicAngles.map((s) => s.label).join(", ")}{" "}
-          {nonPublicAngles.length === 1 ? "is" : "are"} not public.{" "}
-          {GEMINI_YOUTUBE_PUBLIC_REQUIRED}
-        </p>
+        <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-snug text-amber-100/90">
+          <p>
+            {nonPublicAngles.map((s) => s.label).join(", ")}{" "}
+            {nonPublicAngles.length === 1 ? "looks" : "look"} unlisted/private
+            to Film Room
+            {nonPublicAngles.some(
+              (s) => !livePrivacyBySourceId[s.id],
+            )
+              ? " (cached). If you already set Public on YouTube, refresh privacy."
+              : `. ${GEMINI_YOUTUBE_PUBLIC_REQUIRED}`}
+          </p>
+          <button
+            type="button"
+            className={`${ghostBtn} mt-2`}
+            disabled={privacyRefreshing}
+            onClick={() => void refreshLivePrivacy()}
+          >
+            {privacyRefreshing ? "Checking YouTube…" : "Refresh privacy from YouTube"}
+          </button>
+        </div>
       ) : null}
 
       <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-zinc-400">
