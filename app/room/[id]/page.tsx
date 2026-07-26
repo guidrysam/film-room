@@ -1336,7 +1336,8 @@ async function ensureViewerPlaybackIntent(
   player.playVideo();
 }
 
-function safeDecodeVideoId(id: string): string {
+function safeDecodeVideoId(id: string | null | undefined): string {
+  if (id == null) return "";
   try {
     return decodeURIComponent(id);
   } catch {
@@ -7800,6 +7801,47 @@ function RoomContent() {
   const saveSessionFieldClass =
     "mt-1 w-full rounded-lg border border-white/12 bg-zinc-950/80 px-3 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
 
+  const embedErrorBanner = embedError ? (
+    <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-3 pt-3">
+      <div className="flex w-full max-w-2xl flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-950/90 px-4 py-3 text-sm text-amber-50 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-semibold text-amber-100">
+            This video can’t play embedded here
+          </p>
+          <p className="mt-0.5 text-[12px] leading-snug text-amber-100/85">
+            {embedError.code === 101 || embedError.code === 150
+              ? "YouTube has embedding disabled for this video. In YouTube Studio → the video → enable “Allow embedding”, or open it on YouTube."
+              : embedError.code === 100
+                ? "The video is private or was removed. Re-add a public or unlisted embeddable link on the game."
+                : embedError.code === 2
+                  ? "The video id is invalid. Re-add the YouTube link on the game."
+                  : "YouTube reported a playback error for the embedded player. You can still watch on YouTube."}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {embedError.videoId &&
+          /^[a-zA-Z0-9_-]{11}$/.test(embedError.videoId) ? (
+            <a
+              href={`https://www.youtube.com/watch?v=${embedError.videoId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-amber-300/40 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/30"
+            >
+              Open on YouTube
+            </a>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setEmbedError(null)}
+            className="rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-xs font-medium text-amber-50/90 transition hover:bg-white/[0.12]"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (isSyncLayoutMode(roomViewMode) && roomState && !cleanMode) {
     const s = roomState;
     const synced = (s.syncAnchorTime ?? 0) > 0 || s.manualSyncLocked === true;
@@ -7826,9 +7868,12 @@ function RoomContent() {
       isLiveSource && roomViewMode === "sync";
     const perAngleLiveBtnClass =
       "rounded-md border border-rose-500/40 bg-rose-950/55 px-2 py-1 text-[10px] font-semibold text-rose-100 shadow-sm transition hover:border-rose-400/55 hover:bg-rose-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/45";
+    const syncPrimaryVideoId = safeDecodeVideoId(activeAngle.videoId);
+    const syncPrimaryVideoOk = /^[a-zA-Z0-9_-]{11}$/.test(syncPrimaryVideoId);
 
     return (
       <>
+      {embedErrorBanner}
       {gameHubNavLink}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -8265,6 +8310,26 @@ function RoomContent() {
                               onReady={(e) => {
                                 const pl = e.target as YouTubePlayer;
                                 syncPlayerRefs.current[angle.id] = pl;
+                                try {
+                                  const iframe = (
+                                    pl as YouTubePlayer & {
+                                      getIframe?: () => HTMLElement;
+                                    }
+                                  ).getIframe?.();
+                                  const stage =
+                                    iframe?.parentElement?.parentElement;
+                                  const w = stage?.clientWidth ?? 0;
+                                  const h = stage?.clientHeight ?? 0;
+                                  if (w > 2 && h > 2) {
+                                    (
+                                      pl as YouTubePlayer & {
+                                        setSize?: (w: number, h: number) => void;
+                                      }
+                                    ).setSize?.(w, h);
+                                  }
+                                } catch {
+                                  /* ignore */
+                                }
                                 if (angle.id === s.currentAngleId) {
                                   handlePlayerReady();
                                 }
@@ -8276,8 +8341,8 @@ function RoomContent() {
                               onStateChange={(e) =>
                                 handleHostSyncAngleStateChange(angle.id, e)
                               }
-                              className="absolute left-0 top-0 h-full w-full"
-                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                              iframeClassName="h-full w-full border-0"
                               onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                             />
@@ -8353,7 +8418,7 @@ function RoomContent() {
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   <span className="truncate text-sm font-semibold text-zinc-100">
-                    {multi ? "Angle 1 (Active)" : "Angle 1"}
+                    {multi ? `${activeAngle.name} (Active)` : activeAngle.name}
                   </span>
                   {multi ? (
                     <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-semibold text-zinc-200">
@@ -8464,8 +8529,8 @@ function RoomContent() {
                                   "viewer-sync-onReady",
                                 );
                               }}
-                              className="absolute left-0 top-0 h-full w-full"
-                              iframeClassName="absolute left-0 top-0 h-full w-full"
+                              className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                              iframeClassName="h-full w-full border-0"
                               onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                             />
@@ -8557,28 +8622,79 @@ function RoomContent() {
                 ) : (
                   <VideoZoomStage
                     drawLocked={drawGateOn}
-                    className="absolute inset-0 z-10 min-h-0 min-w-0 bg-black"
+                    className="absolute inset-0 z-10 h-full w-full min-h-0 min-w-0 bg-black"
                   >
+                    {!syncPrimaryVideoOk ? (
+                      <div className="absolute inset-0 z-[30] flex flex-col items-center justify-center gap-2 bg-black px-4 text-center">
+                        <p className="text-sm font-semibold text-zinc-100">
+                          No playable YouTube video on this angle
+                        </p>
+                        <p className="max-w-sm text-[12px] leading-snug text-zinc-400">
+                          Re-open Team Film Room from the game after adding an
+                          embeddable YouTube source, or open the video on YouTube.
+                        </p>
+                      </div>
+                    ) : null}
+                    {embedError && syncPrimaryVideoOk ? (
+                      <div className="absolute inset-0 z-[30] flex flex-col items-center justify-center gap-3 bg-black/90 px-4 text-center">
+                        <p className="text-sm font-semibold text-amber-100">
+                          Video won’t embed here
+                        </p>
+                        <p className="max-w-sm text-[12px] leading-snug text-amber-100/80">
+                          Enable “Allow embedding” on the YouTube video, or watch
+                          it on YouTube.
+                        </p>
+                        <a
+                          href={`https://www.youtube.com/watch?v=${syncPrimaryVideoId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-md border border-amber-300/40 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/30"
+                        >
+                          Open on YouTube
+                        </a>
+                      </div>
+                    ) : null}
                     <YoutubePointerGate drawOn={drawGateOn} blockOn={blockHostYoutubePointer}>
-                      <YouTube
-                        key={`sync-primary-${safeDecodeVideoId(activeAngle.videoId)}`}
-                        ref={playerRef}
-                        videoId={safeDecodeVideoId(activeAngle.videoId)}
-                        onReady={(e) => {
-                          const pl = e.target as YouTubePlayer;
-                          syncPlayerRefs.current[activeAngle.id] = pl;
-                          handlePlayerReady();
-                          applySyncStateToAnglePlayer(
-                            activeAngle.id,
-                            "sync-single-onReady",
-                          );
-                        }}
-                        onStateChange={handleYoutubeStateChange}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
-                        onError={handlePlayerError}
-                        opts={youtubePlayerOpts}
-                      />
+                      {syncPrimaryVideoOk ? (
+                        <YouTube
+                          key={`sync-primary-${syncPrimaryVideoId}`}
+                          ref={playerRef}
+                          videoId={syncPrimaryVideoId}
+                          onReady={(e) => {
+                            const pl = e.target as YouTubePlayer;
+                            syncPlayerRefs.current[activeAngle.id] = pl;
+                            try {
+                              const iframe = (
+                                pl as YouTubePlayer & {
+                                  getIframe?: () => HTMLElement;
+                                }
+                              ).getIframe?.();
+                              const stage = iframe?.parentElement?.parentElement;
+                              const w = stage?.clientWidth ?? 0;
+                              const h = stage?.clientHeight ?? 0;
+                              if (w > 2 && h > 2) {
+                                (
+                                  pl as YouTubePlayer & {
+                                    setSize?: (w: number, h: number) => void;
+                                  }
+                                ).setSize?.(w, h);
+                              }
+                            } catch {
+                              /* ignore */
+                            }
+                            handlePlayerReady();
+                            applySyncStateToAnglePlayer(
+                              activeAngle.id,
+                              "sync-single-onReady",
+                            );
+                          }}
+                          onStateChange={handleYoutubeStateChange}
+                          className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                          iframeClassName="h-full w-full border-0"
+                          onError={handlePlayerError}
+                          opts={youtubePlayerOpts}
+                        />
+                      ) : null}
                     </YoutubePointerGate>
                     {roomId ? (
                       <TelestratorOverlay
@@ -9100,46 +9216,7 @@ function RoomContent() {
 
   return (
     <>
-    {embedError ? (
-      <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-3 pt-3">
-        <div className="flex w-full max-w-2xl flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-950/90 px-4 py-3 text-sm text-amber-50 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="font-semibold text-amber-100">
-              This stream can’t play embedded here
-            </p>
-            <p className="mt-0.5 text-[12px] leading-snug text-amber-100/85">
-              {embedError.code === 101 || embedError.code === 150
-                ? "YouTube has embedding disabled for this broadcast. Open YouTube Studio → the live broadcast → enable “Allow embedding”, or watch on YouTube."
-                : embedError.code === 100
-                  ? "The video is private or was removed. Re-create today’s watch link from Go Live."
-                  : embedError.code === 2
-                    ? "The video id is invalid. Re-create today’s watch link from Go Live."
-                    : "YouTube reported a playback error for the embedded player. You can still watch on YouTube."}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {embedError.videoId &&
-            /^[a-zA-Z0-9_-]{11}$/.test(embedError.videoId) ? (
-              <a
-                href={`https://www.youtube.com/watch?v=${embedError.videoId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-md border border-amber-300/40 bg-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-50 transition hover:bg-amber-500/30"
-              >
-                Open on YouTube
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => setEmbedError(null)}
-              className="rounded-md border border-white/15 bg-white/[0.06] px-2.5 py-1.5 text-xs font-medium text-amber-50/90 transition hover:bg-white/[0.12]"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      </div>
-    ) : null}
+    {embedErrorBanner}
     <div
       className={`flex min-h-screen flex-col text-zinc-50 ${
         cleanMode
@@ -9697,8 +9774,8 @@ function RoomContent() {
                           );
                         }}
                         onStateChange={handleYoutubeStateChange}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                         onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
@@ -9797,8 +9874,8 @@ function RoomContent() {
                             e,
                           )
                         }
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                         onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
@@ -9875,8 +9952,8 @@ function RoomContent() {
                           );
                         }}
                         onStateChange={handleYoutubeStateChange}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                         onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
@@ -9935,8 +10012,8 @@ function RoomContent() {
                             e,
                           )
                         }
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                         onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
@@ -10007,8 +10084,8 @@ function RoomContent() {
                       videoId={safeDecodeVideoId(effectiveVideoId)}
                       onReady={handlePlayerReady}
                       onStateChange={handleYoutubeStateChange}
-                      className="absolute left-0 top-0 h-full w-full"
-                      iframeClassName="absolute left-0 top-0 h-full w-full"
+                      className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                       onError={handlePlayerError}
                       opts={youtubePlayerOpts}
                     />
@@ -10506,8 +10583,8 @@ function RoomContent() {
                               );
                             }}
                             onStateChange={handleYoutubeStateChange}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                             onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                           />
@@ -10598,8 +10675,8 @@ function RoomContent() {
                                 e,
                               )
                             }
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                             onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                           />
@@ -10678,8 +10755,8 @@ function RoomContent() {
                               );
                             }}
                             onStateChange={handleYoutubeStateChange}
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                             onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                           />
@@ -10740,8 +10817,8 @@ function RoomContent() {
                                 e,
                               )
                             }
-                            className="absolute left-0 top-0 h-full w-full"
-                            iframeClassName="absolute left-0 top-0 h-full w-full"
+                            className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                             onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                           />
@@ -10812,8 +10889,8 @@ function RoomContent() {
                         videoId={safeDecodeVideoId(effectiveVideoId)}
                         onReady={handlePlayerReady}
                         onStateChange={handleYoutubeStateChange}
-                        className="absolute left-0 top-0 h-full w-full"
-                        iframeClassName="absolute left-0 top-0 h-full w-full"
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+iframeClassName="h-full w-full border-0"
                         onError={handlePlayerError}
                         opts={youtubePlayerOpts}
                       />
