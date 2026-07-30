@@ -24,6 +24,8 @@ export type UploadVideoToYouTubeOptions = {
   accessToken: string;
   file: File;
   metadata: YouTubeUploadMetadata;
+  /** Default unlisted. Use `public` for Gemini AI watch. */
+  privacyStatus?: "private" | "unlisted" | "public";
   onProgress?: (progress: YouTubeUploadProgress) => void;
   signal?: AbortSignal;
 };
@@ -35,6 +37,7 @@ async function initiateResumableUpload(
   accessToken: string,
   file: File,
   metadata: YouTubeUploadMetadata,
+  privacyStatus: "private" | "unlisted" | "public" = "unlisted",
 ): Promise<string> {
   const res = await fetch(UPLOAD_INIT_URL, {
     method: "POST",
@@ -51,7 +54,7 @@ async function initiateResumableUpload(
         categoryId: "17",
       },
       status: {
-        privacyStatus: "unlisted",
+        privacyStatus,
         embeddable: true,
         selfDeclaredMadeForKids: false,
       },
@@ -156,6 +159,7 @@ export async function uploadVideoToYouTube(
     opts.accessToken,
     opts.file,
     opts.metadata,
+    opts.privacyStatus ?? "unlisted",
   );
   return putFileToUploadSession(
     uploadUrl,
