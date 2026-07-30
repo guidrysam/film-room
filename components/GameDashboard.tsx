@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import GameCapUpload from "@/components/GameCapUpload";
+import GameCapVaultUpload from "@/components/GameCapVaultUpload";
 import GameSources from "@/components/GameSources";
+import PublishAiProxies from "@/components/PublishAiProxies";
+import ImportGameCapSidecar from "@/components/ImportGameCapSidecar";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
 import { loadGameDashboard, type GameDashboardData } from "@/lib/game-dashboard-load";
 import { isPermissionDeniedError } from "@/lib/firestore-errors";
@@ -33,7 +36,7 @@ export type GameDashboardProps = {
   currentDisplayName?: string | null;
 };
 
-type SourceMode = "paste" | "upload";
+type SourceMode = "paste" | "upload" | "vault";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -268,6 +271,17 @@ export default function GameDashboard({
             <div className="mb-4 flex flex-wrap gap-2">
               <button
                 type="button"
+                onClick={() => setSourceMode("vault")}
+                className={`${modeTab} ${
+                  sourceMode === "vault"
+                    ? "border-blue-500/45 bg-blue-600/25 text-white"
+                    : "border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                }`}
+              >
+                Upload to team vault
+              </button>
+              <button
+                type="button"
                 onClick={() => setSourceMode("paste")}
                 className={`${modeTab} ${
                   sourceMode === "paste"
@@ -295,6 +309,18 @@ export default function GameDashboard({
             <p className="mb-4 text-sm leading-relaxed text-zinc-400">
               {SOURCES_EMPTY_MESSAGE}
             </p>
+          ) : null}
+
+          {canAttach && sourceMode === "vault" ? (
+            <div className="mb-4">
+              <GameCapVaultUpload
+                game={game}
+                team={team}
+                currentUid={currentUid}
+                currentDisplayName={currentDisplayName}
+                onComplete={handleSourcesChanged}
+              />
+            </div>
           ) : null}
 
           {canAttach && sourceMode === "upload" ? (
@@ -333,6 +359,24 @@ export default function GameDashboard({
             />
           </div>
         </section>
+
+        {canAttach ? (
+          <section className="mb-5 space-y-4">
+            <PublishAiProxies
+              game={game}
+              sources={data.sources}
+              team={team}
+              onComplete={handleSourcesChanged}
+            />
+            <ImportGameCapSidecar
+              game={game}
+              sources={data.sources}
+              currentUid={currentUid}
+              currentDisplayName={currentDisplayName}
+              onComplete={handleSourcesChanged}
+            />
+          </section>
+        ) : null}
 
         {/* Review */}
         <section className={`${panelClass} mb-5`}>

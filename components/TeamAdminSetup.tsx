@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import TeamLogoUpload from "@/components/TeamLogoUpload";
+import TeamDriveVaultConnect from "@/components/TeamDriveVaultConnect";
 import ParentInviteTargets from "@/components/ParentInviteTargets";
 import BackfillEventPersons from "@/components/BackfillEventPersons";
 import RosterImportResultSummary from "@/components/RosterImportResultSummary";
@@ -33,10 +34,15 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
     if (summary) clearTeamCreateImportSummary();
     return summary;
   });
+  const [teamState, setTeamState] = useState(team);
 
-  const isOperator = canManageTeam(team, currentUid);
+  useEffect(() => {
+    setTeamState(team);
+  }, [team]);
 
-  if (!canCoachTeam(team, currentUid)) {
+  const isOperator = canManageTeam(teamState, currentUid);
+
+  if (!canCoachTeam(teamState, currentUid)) {
     return (
       <div className={panelClass}>
         <p className="text-sm text-zinc-400">
@@ -70,12 +76,22 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
         />
       ) : null}
 
+      <TeamDriveVaultConnect
+        team={teamState}
+        currentUid={currentUid}
+        onChanged={async () => {
+          const { getTeam } = await import("@/lib/teams");
+          const next = await getTeam(teamState.id);
+          if (next) setTeamState(next);
+        }}
+      />
+
       <section className={panelClass}>
         <h2 className="mb-1 text-sm font-semibold text-white">Branding</h2>
         <p className="mb-3 text-xs leading-relaxed text-zinc-500">
           Team logo appears on highlight reel title screens.
         </p>
-        <TeamLogoUpload team={team} />
+        <TeamLogoUpload team={teamState} />
       </section>
 
       <section

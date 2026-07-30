@@ -49,6 +49,14 @@ export type TeamYouTubeConfig = {
   channelTitle?: string;
 };
 
+/** Public Drive vault metadata (refresh token lives in Admin-only secrets). */
+export type TeamDriveConfig = {
+  connectedByUid: string;
+  rootFolderId: string;
+  connectedAt: string;
+  accountEmail?: string;
+};
+
 export type TeamMember = {
   uid: string;
   role: TeamMemberRole;
@@ -76,6 +84,7 @@ export type Team = {
   /** Mirror of member uids for `array-contains` queries. */
   memberUids: string[];
   youtube?: TeamYouTubeConfig;
+  drive?: TeamDriveConfig;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
@@ -168,6 +177,24 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
           : {}),
       }
     : undefined;
+  const driveRaw =
+    raw.drive && typeof raw.drive === "object"
+      ? (raw.drive as Record<string, unknown>)
+      : null;
+  const drive: TeamDriveConfig | undefined =
+    driveRaw &&
+    trimOrUndef(driveRaw.connectedByUid) &&
+    trimOrUndef(driveRaw.rootFolderId) &&
+    trimOrUndef(driveRaw.connectedAt)
+      ? {
+          connectedByUid: (driveRaw.connectedByUid as string).trim(),
+          rootFolderId: (driveRaw.rootFolderId as string).trim(),
+          connectedAt: (driveRaw.connectedAt as string).trim(),
+          ...(trimOrUndef(driveRaw.accountEmail)
+            ? { accountEmail: (driveRaw.accountEmail as string).trim() }
+            : {}),
+        }
+      : undefined;
   const sport = canonicalizeSportForStorage(
     typeof raw.sport === "string" ? raw.sport : undefined,
   );
@@ -191,6 +218,7 @@ function parseTeam(id: string, raw: Record<string, unknown>): Team {
       : {}),
     ...(trimOrUndef(raw.logoUrl) ? { logoUrl: (raw.logoUrl as string).trim() } : {}),
     ...(youtube && Object.keys(youtube).length > 0 ? { youtube } : {}),
+    ...(drive ? { drive } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };

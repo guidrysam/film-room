@@ -5,9 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import GameCapUpload from "@/components/GameCapUpload";
+import GameCapVaultUpload from "@/components/GameCapVaultUpload";
 import GameSources from "@/components/GameSources";
 import TeamSetup from "@/components/TeamSetup";
 import { signInWithGoogle } from "@/lib/auth-google";
+import {
+  isAngleSlot,
+  type AngleSlot,
+} from "@/lib/drive/angle-slots";
 import {
   canContributeGameSources,
   getGame,
@@ -41,7 +46,7 @@ const primaryBtn =
 const ghostBtn =
   "rounded-lg border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-white/20 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
-type SourceMode = "paste" | "upload" | "record";
+type SourceMode = "paste" | "upload" | "vault" | "record";
 
 const modeTab =
   "rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
@@ -52,6 +57,10 @@ function GameCapPageInner() {
   const searchParams = useSearchParams();
   const queryGameId = searchParams.get("gameId");
   const queryTeamId = searchParams.get("teamId");
+  const queryAngle = searchParams.get("angle");
+  const initialAngleSlot: AngleSlot | null = isAngleSlot(queryAngle)
+    ? queryAngle
+    : null;
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -68,7 +77,9 @@ function GameCapPageInner() {
   const [scheduledStartAt, setScheduledStartAt] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
+  const [sourceMode, setSourceMode] = useState<SourceMode>(
+    initialAngleSlot ? "vault" : "paste",
+  );
   const [sourcesKey, setSourcesKey] = useState(0);
   const [queryResolvedGame, setQueryResolvedGame] = useState<Game | null>(null);
   const [showPicker, setShowPicker] = useState(false);
@@ -488,6 +499,17 @@ function GameCapPageInner() {
                 <div className="mb-4 flex flex-wrap gap-2">
                   <button
                     type="button"
+                    onClick={() => setSourceMode("vault")}
+                    className={`${modeTab} ${
+                      sourceMode === "vault"
+                        ? "border-blue-500/50 bg-blue-950/35 text-white"
+                        : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    Upload to team vault
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setSourceMode("paste")}
                     className={`${modeTab} ${
                       sourceMode === "paste"
@@ -516,6 +538,23 @@ function GameCapPageInner() {
                   </span>
                 </div>
               )}
+
+              {canAttachSources && sourceMode === "vault" ? (
+                <div className="mb-4">
+                  <GameCapVaultUpload
+                    game={selectedGame}
+                    team={selectedTeam}
+                    currentUid={user.uid}
+                    currentDisplayName={user.displayName}
+                    initialAngleSlot={initialAngleSlot}
+                    onComplete={() => {
+                      setSourcesKey((k) => k + 1);
+                      void refreshGames();
+                      void refreshTeam();
+                    }}
+                  />
+                </div>
+              ) : null}
 
               {canAttachSources && sourceMode === "upload" ? (
                 <div className="mb-4">

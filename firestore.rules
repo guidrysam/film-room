@@ -357,6 +357,11 @@ service cloud.firestore {
                          request.resource.data.status == 'joined';
       }
 
+      // Drive refresh tokens — Admin SDK only; never client-readable.
+      match /secrets/{secretId} {
+        allow read, write: if false;
+      }
+
       // Tactics boards — coaches only (parents/players/viewers excluded).
       match /tactics/{boardId} {
         function tacticsBoardReadable() {

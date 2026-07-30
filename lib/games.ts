@@ -62,6 +62,13 @@ export type GameVideoSourceKind =
   | "upload"
   | "external_url";
 
+export type GameAngleSlot =
+  | "main"
+  | "goal_a"
+  | "goal_b"
+  | "offense"
+  | "defense";
+
 export type GameVideoSource = {
   id: string;
   kind: GameVideoSourceKind;
@@ -70,8 +77,17 @@ export type GameVideoSource = {
   videoId?: string;
   /** Arbitrary playable URL (kind: external_url). */
   url?: string;
-  /** Storage path (kind: upload). */
+  /** Storage path (kind: upload). Drive files use `drive:{fileId}`. */
   storagePath?: string;
+  /** Google Drive file id when kind is upload into the team vault. */
+  driveFileId?: string;
+  /** Fixed kit angle slot for team vault uploads. */
+  angleSlot?: GameAngleSlot;
+  /**
+   * YouTube video id used as an AI analysis proxy for a Drive vault raw.
+   * Clean render still uses `driveFileId`; Gemini watches this public/unlisted copy.
+   */
+  aiProxyVideoId?: string;
   /** Seconds added to canonical game time to reach this source's playback time. */
   offsetFromGameTime?: number;
   durationSec?: number;
@@ -203,6 +219,10 @@ export type Game = {
   sourceIds?: string[];
   /** Denormalized list of timeline event doc ids (avoids subcollection list query rules). */
   eventIds?: string[];
+  /** Google Drive game folder id (team vault). */
+  driveFolderId?: string;
+  /** Google Drive `raw/` folder id under the game folder. */
+  driveRawFolderId?: string;
   createdAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
@@ -433,6 +453,12 @@ function parseGame(id: string, raw: Record<string, unknown>): Game {
       : {}),
     ...(sourceIds && sourceIds.length > 0 ? { sourceIds } : {}),
     ...(eventIds && eventIds.length > 0 ? { eventIds } : {}),
+    ...(trimOrUndef(raw.driveFolderId)
+      ? { driveFolderId: (raw.driveFolderId as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.driveRawFolderId)
+      ? { driveRawFolderId: (raw.driveRawFolderId as string).trim() }
+      : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -839,6 +865,20 @@ export async function addGameSource(
     ...(trimOrUndef(source.storagePath)
       ? { storagePath: source.storagePath!.trim() }
       : {}),
+    ...(trimOrUndef(source.driveFileId)
+      ? { driveFileId: source.driveFileId!.trim() }
+      : {}),
+    ...(trimOrUndef(source.aiProxyVideoId) &&
+    /^[a-zA-Z0-9_-]{11}$/.test(source.aiProxyVideoId!.trim())
+      ? { aiProxyVideoId: source.aiProxyVideoId!.trim() }
+      : {}),
+    ...(source.angleSlot === "main" ||
+    source.angleSlot === "goal_a" ||
+    source.angleSlot === "goal_b" ||
+    source.angleSlot === "offense" ||
+    source.angleSlot === "defense"
+      ? { angleSlot: source.angleSlot }
+      : {}),
     ...(typeof source.offsetFromGameTime === "number" &&
     Number.isFinite(source.offsetFromGameTime)
       ? { offsetFromGameTime: source.offsetFromGameTime }
@@ -966,6 +1006,20 @@ function parseSource(
     ...(trimOrUndef(raw.url) ? { url: (raw.url as string).trim() } : {}),
     ...(trimOrUndef(raw.storagePath)
       ? { storagePath: (raw.storagePath as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.driveFileId)
+      ? { driveFileId: (raw.driveFileId as string).trim() }
+      : {}),
+    ...(trimOrUndef(raw.aiProxyVideoId) &&
+    /^[a-zA-Z0-9_-]{11}$/.test((raw.aiProxyVideoId as string).trim())
+      ? { aiProxyVideoId: (raw.aiProxyVideoId as string).trim() }
+      : {}),
+    ...(raw.angleSlot === "main" ||
+    raw.angleSlot === "goal_a" ||
+    raw.angleSlot === "goal_b" ||
+    raw.angleSlot === "offense" ||
+    raw.angleSlot === "defense"
+      ? { angleSlot: raw.angleSlot }
       : {}),
     ...(typeof raw.offsetFromGameTime === "number" &&
     Number.isFinite(raw.offsetFromGameTime)
@@ -1158,6 +1212,63 @@ export type AddGameSourceFromYouTubeUploadInput = {
   syncConfidence?: GameVideoSource["syncConfidence"];
 };
 
+export type AddGameSourceFromDriveUploadInput = {
+  driveFileId: string;
+  label: string;
+  angleSlot: GameAngleSlot;
+  createdByName?: string;
+  durationSec?: number;
+  offsetFromGameTime?: number;
+  recordedStartTime?: string;
+  syncStatus?: GameVideoSource["syncStatus"];
+  syncConfidence?: GameVideoSource["syncConfidence"];
+};
+
+/**
+ * Attach a team Drive vault file as an `upload` source.
+ */
+export async function addGameSourceFromDriveUpload(
+  gameId: string,
+  uid: string,
+  input: AddGameSourceFromDriveUploadInput,
+): Promise<string> {
+  const driveFileId = input.driveFileId.trim();
+  if (!driveFileId) throw new Error("Missing Drive file id.");
+  const label = input.label.trim() || "Camera";
+  const hasOffset =
+    typeof input.offsetFromGameTime === "number" &&
+    Number.isFinite(input.offsetFromGameTime);
+  return addGameSource(
+    gameId,
+    {
+      kind: "upload",
+      label,
+      driveFileId,
+      angleSlot: input.angleSlot,
+      storagePath: `drive:${driveFileId}`,
+      url: `https://drive.google.com/file/d/${encodeURIComponent(driveFileId)}/view`,
+      offsetFromGameTime: hasOffset ? input.offsetFromGameTime! : 0,
+      uploadOwner: "team",
+      uploadedBy: uid,
+      createdBy: uid,
+      syncStatus: input.syncStatus ?? "unsynced",
+      ...(input.syncConfidence ? { syncConfidence: input.syncConfidence } : {}),
+      ...(trimOrUndef(input.recordedStartTime)
+        ? { recordedStartTime: input.recordedStartTime!.trim() }
+        : {}),
+      ...(trimOrUndef(input.createdByName)
+        ? { createdByName: input.createdByName!.trim() }
+        : {}),
+      ...(typeof input.durationSec === "number" &&
+      Number.isFinite(input.durationSec) &&
+      input.durationSec > 0
+        ? { durationSec: input.durationSec }
+        : {}),
+    },
+    { actorUid: uid },
+  );
+}
+
 /**
  * Attach a Game Cap YouTube upload as a `youtube` source on the user's channel.
  */
@@ -1256,6 +1367,37 @@ export type GameSourceSyncPatch = {
   syncStatus?: GameVideoSource["syncStatus"];
   syncConfidence?: GameVideoSource["syncConfidence"];
 };
+
+/** Attach or clear the YouTube AI proxy id on a vault (Drive) source. */
+export async function updateGameSourceAiProxy(
+  gameId: string,
+  sourceId: string,
+  patch: {
+    aiProxyVideoId?: string | null;
+    youtubePrivacyStatus?: "private" | "unlisted" | "public";
+    youtubeEmbeddable?: boolean;
+  },
+): Promise<void> {
+  const proxy =
+    typeof patch.aiProxyVideoId === "string"
+      ? patch.aiProxyVideoId.trim()
+      : patch.aiProxyVideoId;
+  await updateDoc(doc(sourcesCol(gameId), sourceId), {
+    ...(proxy === null
+      ? { aiProxyVideoId: deleteField() }
+      : typeof proxy === "string" && /^[a-zA-Z0-9_-]{11}$/.test(proxy)
+        ? { aiProxyVideoId: proxy }
+        : {}),
+    ...(patch.youtubePrivacyStatus === "private" ||
+    patch.youtubePrivacyStatus === "unlisted" ||
+    patch.youtubePrivacyStatus === "public"
+      ? { youtubePrivacyStatus: patch.youtubePrivacyStatus }
+      : {}),
+    ...(typeof patch.youtubeEmbeddable === "boolean"
+      ? { youtubeEmbeddable: patch.youtubeEmbeddable }
+      : {}),
+  });
+}
 
 /** Update sync / timeline fields on a game source. */
 export async function updateGameSourceSync(

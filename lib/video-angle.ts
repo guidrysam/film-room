@@ -156,13 +156,32 @@ export function videoAngleToGameSource(angle: VideoAngle): GameVideoSource {
  */
 export function gameSourceToVideoAngle(source: GameVideoSource): VideoAngle | null {
   const isYouTube = source.kind === "youtube" || source.kind === "youtube_live";
-  if (!isYouTube) return null;
-  const videoId = typeof source.videoId === "string" ? source.videoId.trim() : "";
-  if (!YT_ID.test(videoId)) return null;
-  return {
-    id: source.id,
-    name: source.label.trim() || "Angle",
-    videoId,
-    offsetFromGameTime: source.offsetFromGameTime ?? 0,
-  };
+  const nativeId =
+    typeof source.videoId === "string" ? source.videoId.trim() : "";
+  const proxyId =
+    typeof source.aiProxyVideoId === "string"
+      ? source.aiProxyVideoId.trim()
+      : "";
+
+  // Native YouTube angle.
+  if (isYouTube && YT_ID.test(nativeId)) {
+    return {
+      id: source.id,
+      name: source.label.trim() || "Angle",
+      videoId: nativeId,
+      offsetFromGameTime: source.offsetFromGameTime ?? 0,
+    };
+  }
+
+  // Vault raw with AI proxy — preview / AI timeline via the YouTube proxy id.
+  if (YT_ID.test(proxyId)) {
+    return {
+      id: source.id,
+      name: source.label.trim() || "Angle",
+      videoId: proxyId,
+      offsetFromGameTime: source.offsetFromGameTime ?? 0,
+    };
+  }
+
+  return null;
 }

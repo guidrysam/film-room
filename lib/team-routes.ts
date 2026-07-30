@@ -31,10 +31,12 @@ export function teamTacticsBoardUrl(teamId: string, boardId: string): string {
 export function gameCapUrl(opts?: {
   teamId?: string;
   gameId?: string;
+  angle?: string;
 }): string {
   const params = new URLSearchParams();
   if (opts?.teamId) params.set("teamId", opts.teamId);
   if (opts?.gameId) params.set("gameId", opts.gameId);
+  if (opts?.angle) params.set("angle", opts.angle);
   const q = params.toString();
   return q ? `/game-cap?${q}` : "/game-cap";
 }

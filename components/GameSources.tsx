@@ -76,7 +76,7 @@ function kindLabel(kind: GameVideoSource["kind"]): string {
     case "youtube_live":
       return "YouTube Live";
     case "upload":
-      return "Upload";
+      return "Drive";
     case "external_url":
       return "External URL";
     default:
@@ -682,6 +682,22 @@ export default function GameSources({
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
                   {s.videoId ? (
                     <span className="font-mono">{s.videoId}</span>
+                  ) : null}
+                  {s.driveFileId ? (
+                    <a
+                      href={`https://drive.google.com/file/d/${encodeURIComponent(s.driveFileId)}/view`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-300 hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Open in Drive
+                    </a>
+                  ) : null}
+                  {s.angleSlot ? (
+                    <span className="uppercase tracking-wide text-zinc-400">
+                      {s.angleSlot.replace("_", " ")}
+                    </span>
                   ) : null}
                   {duration ? <span>{duration}</span> : null}
                   <span>offset {s.offsetFromGameTime ?? 0}s</span>
