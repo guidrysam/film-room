@@ -111,6 +111,9 @@ export function buildDriveAuthorizeUrl(opts: {
   appBaseUrl: string;
   state: string;
 }): string {
+  // Do NOT set include_granted_scopes — this OAuth client is also used for
+  // YouTube (`auth/youtube`). Google rejects requesting youtube + drive.file
+  // in one consent. Drive connect must stay drive.file-only.
   const params = new URLSearchParams({
     client_id: driveClientId(),
     redirect_uri: driveOAuthRedirectUri(opts.appBaseUrl),
@@ -118,7 +121,6 @@ export function buildDriveAuthorizeUrl(opts: {
     scope: DRIVE_OAUTH_SCOPE,
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
     state: opts.state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
