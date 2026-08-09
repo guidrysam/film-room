@@ -13,6 +13,7 @@ import {
 } from "@/lib/ai/game-context";
 import { runSyncAnglesAnalysis } from "@/lib/ai/sync-angles";
 import type { AiTagDraft } from "@/lib/ai/tag-schema";
+import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
 import {
   debitCredits,
   getCreditBalance,
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
     const actor = await requireCoachForGame(request, gameId);
     actorUid = actor.uid;
 
-    const ctx = await loadGameBillingContext(gameId);
+    const ctx = await loadGameBillingContext(gameId, actorUid);
     if (!ctx) {
       return NextResponse.json(
         { error: "Game wallet not found." },
@@ -58,24 +59,22 @@ export async function POST(request: Request) {
     wallet = ctx.wallet;
 
     const sources = await listGameSourcesAdmin(gameId);
-    const youtubeSources = sources.filter((s) => {
-      const kind = s.kind;
-      const videoId = s.videoId;
-      return (
-        (kind === "youtube" || kind === "youtube_live") &&
-        typeof videoId === "string" &&
-        /^[a-zA-Z0-9_-]{11}$/.test(videoId)
-      );
-    });
+    const youtubeSources = sources.filter(
+      (s) => youtubeVideoIdForAnalysis(s) != null,
+    );
 
     const primaryId =
-      body.primarySourceId?.trim() ||
-      youtubeSources[0]?.id ||
-      "";
+      body.primarySourceId?.trim() || youtubeSources[0]?.id || "";
     const primary = youtubeSources.find((s) => s.id === primaryId);
-    if (!primary || typeof primary.videoId !== "string") {
+    const primaryVideoId = primary
+      ? youtubeVideoIdForAnalysis(primary)
+      : null;
+    if (!primary || !primaryVideoId) {
       return NextResponse.json(
-        { error: "Primary YouTube source required." },
+        {
+          error:
+            "Primary YouTube or AI-proxy source required. Publish AI proxies for vault angles first.",
+        },
         { status: 400 },
       );
     }
@@ -117,7 +116,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: "INSUFFICIENT_CREDITS",
-          message: `Need ${creditsCharged} credits; balance is ${bal.balance}. Ask an admin for a test grant.`,
+          message: `Need ${creditsCharged} credits; balance is ${bal.balance}. Use Grant me 500 in AI Tag (test mode).`,
           estimate: creditsCharged,
           balance: bal.balance,
         },
@@ -147,7 +146,7 @@ export async function POST(request: Request) {
     });
     debitLedgerId = debit.ledgerId;
 
-    const primaryMeta = await fetchYoutubeMetaServer(String(primary.videoId));
+    const primaryMeta = await fetchYoutubeMetaServer(primaryVideoId);
     const primaryPrivacy =
       primaryMeta?.privacyStatus ||
       (typeof primary.youtubePrivacyStatus === "string"
@@ -156,10 +155,11 @@ export async function POST(request: Request) {
 
     const angles = [];
     for (const s of secondary) {
-      const meta = await fetchYoutubeMetaServer(String(s.videoId));
+      const sid = youtubeVideoIdForAnalysis(s)!;
+      const meta = await fetchYoutubeMetaServer(sid);
       angles.push({
         sourceId: s.id,
-        videoId: String(s.videoId),
+        videoId: sid,
         label: typeof s.label === "string" ? s.label : s.id,
         privacyStatus:
           meta?.privacyStatus ||
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
     const result = await runSyncAnglesAnalysis({
       landmarks,
       primarySourceId: primary.id,
-      primaryVideoId: String(primary.videoId),
+      primaryVideoId,
       primaryPrivacyStatus: primaryPrivacy,
       angles,
       sport: ctx.sport,

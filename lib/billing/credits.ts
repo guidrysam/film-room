@@ -10,6 +10,7 @@ export type CreditLedgerEntryType =
   | "grant_stripe"
   | "debit_tag"
   | "debit_sync"
+  | "debit_propose_cut"
   | "refund";
 
 export type CreditBalance = {
@@ -32,6 +33,17 @@ function ledgerColPath(wallet: CreditWalletRef): string {
   return `users/${wallet.userId}/creditLedger`;
 }
 
+/** Personal AI credits wallet for the signed-in actor. */
+export function resolveActorWallet(actorUid: string): CreditWalletRef {
+  const userId = actorUid.trim();
+  if (!userId) throw new Error("ACTOR_UID_REQUIRED");
+  return { kind: "user", userId };
+}
+
+/**
+ * @deprecated Club-first resolution. AI spend now uses {@link resolveActorWallet}.
+ * Kept for reading legacy club balances in the club hub UI.
+ */
 export function resolveWalletFromIds(input: {
   clubId?: string | null;
   ownerUid?: string | null;
@@ -118,7 +130,10 @@ export async function grantCredits(input: {
 export async function debitCredits(input: {
   wallet: CreditWalletRef;
   amount: number;
-  type: Extract<CreditLedgerEntryType, "debit_tag" | "debit_sync">;
+  type: Extract<
+    CreditLedgerEntryType,
+    "debit_tag" | "debit_sync" | "debit_propose_cut"
+  >;
   actorUid: string;
   jobId: string;
   note?: string;

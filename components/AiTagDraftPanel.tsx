@@ -27,6 +27,7 @@ import {
   GEMINI_YOUTUBE_PUBLIC_REQUIRED,
   normalizeYoutubePrivacy,
 } from "@/lib/ai/youtube-gemini-access";
+import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
 import {
   fetchYouTubeVideoMeta,
   metaToSourcePatch,
@@ -173,7 +174,7 @@ export default function AiTagDraftPanel({
   const basketball = isBasketballSport(game.sport);
   const purchaseEnabled = isAiCreditsPurchaseEnabledPublic();
   const [balance, setBalance] = useState<number | null>(null);
-  const [busy, setBusy] = useState<"tag" | "sync" | null>(null);
+  const [busy, setBusy] = useState<"tag" | "sync" | "grant" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tagJobId, setTagJobId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftRow[]>([]);
@@ -186,13 +187,7 @@ export default function AiTagDraftPanel({
   const [privacyRefreshing, setPrivacyRefreshing] = useState(false);
 
   const youtubeSources = useMemo(
-    () =>
-      sources.filter(
-        (s) =>
-          (s.kind === "youtube" || s.kind === "youtube_live") &&
-          typeof s.videoId === "string" &&
-          s.videoId.length === 11,
-      ),
+    () => sources.filter((s) => youtubeVideoIdForAnalysis(s) != null),
     [sources],
   );
 
@@ -228,8 +223,9 @@ export default function AiTagDraftPanel({
     try {
       const next: Record<string, string> = {};
       for (const s of youtubeSources) {
-        if (!s.videoId) continue;
-        const meta = await fetchYouTubeVideoMeta(s.videoId);
+        const videoId = youtubeVideoIdForAnalysis(s);
+        if (!videoId) continue;
+        const meta = await fetchYouTubeVideoMeta(videoId);
         const privacy = meta?.privacyStatus;
         if (
           privacy === "public" ||
@@ -257,10 +253,8 @@ export default function AiTagDraftPanel({
   const refreshBalance = useCallback(async () => {
     try {
       const headers = await authHeaders();
-      const qs = game.clubId
-        ? `clubId=${encodeURIComponent(game.clubId)}`
-        : `gameId=${encodeURIComponent(game.id)}`;
-      const res = await fetch(`/api/billing/balance?${qs}`, { headers });
+      // Personal wallet — AI is never billed to the club.
+      const res = await fetch(`/api/billing/balance`, { headers });
       const data = (await res.json()) as {
         balance?: number;
         error?: string;
@@ -271,7 +265,34 @@ export default function AiTagDraftPanel({
     } catch {
       /* ignore */
     }
-  }, [game.clubId, game.id]);
+  }, []);
+
+  const grantTestCredits = useCallback(async () => {
+    if (!canEdit || purchaseEnabled) return;
+    setBusy("grant");
+    setError(null);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Sign in required.");
+      const headers = await authHeaders();
+      const res = await fetch("/api/billing/grant-test", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: user.uid, amount: 500 }),
+      });
+      const data = (await res.json()) as {
+        balance?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Grant failed.");
+      if (typeof data.balance === "number") setBalance(data.balance);
+      else void refreshBalance();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Grant failed.");
+    } finally {
+      setBusy(null);
+    }
+  }, [canEdit, purchaseEnabled, refreshBalance]);
 
   useEffect(() => {
     void refreshBalance();
@@ -581,10 +602,19 @@ export default function AiTagDraftPanel({
       </div>
 
       {!purchaseEnabled ? (
-        <p className="mb-3 text-[10px] leading-snug text-zinc-500">
-          Test mode — purchase is off. Club admins can grant credits from the
-          club hub.
-        </p>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <p className="text-[10px] leading-snug text-zinc-500">
+            Test mode — these are your personal credits (not the club pool).
+          </p>
+          <button
+            type="button"
+            className={ghostBtn}
+            disabled={busy !== null}
+            onClick={() => void grantTestCredits()}
+          >
+            {busy === "grant" ? "Granting…" : "Grant me 500"}
+          </button>
+        </div>
       ) : null}
 
       {youtubeSources.length === 0 ? (

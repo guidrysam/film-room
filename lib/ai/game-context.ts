@@ -2,7 +2,7 @@ import "server-only";
 
 import { adminFirestore } from "@/lib/firebase-admin";
 import {
-  resolveWalletFromIds,
+  resolveActorWallet,
   type CreditWalletRef,
 } from "@/lib/billing/credits";
 import { canonicalizeSportForStorage } from "@/lib/sports";
@@ -13,11 +13,17 @@ export type GameBillingContext = {
   clubId?: string;
   ownerUid?: string;
   sport?: string;
+  /** Always the acting user's personal credit wallet. */
   wallet: CreditWalletRef;
 };
 
+/**
+ * Load game metadata and the **actor's personal** credit wallet.
+ * Club affiliation is still returned for UI, but AI spend is never club-billed.
+ */
 export async function loadGameBillingContext(
   gameId: string,
+  actorUid: string,
 ): Promise<GameBillingContext | null> {
   const gameSnap = await adminFirestore.collection("games").doc(gameId).get();
   if (!gameSnap.exists) return null;
@@ -63,9 +69,7 @@ export async function loadGameBillingContext(
     }
   }
 
-  const wallet = resolveWalletFromIds({ clubId, ownerUid });
-  if (!wallet) return null;
-
+  const wallet = resolveActorWallet(actorUid);
   const sport = canonicalizeSportForStorage(sportRaw);
 
   return {
@@ -170,4 +174,28 @@ export async function listTeamRosterNames(
     if (typeof name === "string" && name.trim()) names.push(name.trim());
   }
   return names;
+}
+
+export type AdminGameEvent = {
+  id: string;
+  type?: string;
+  t?: number;
+  label?: string;
+  sourceId?: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export async function listGameEventsAdmin(
+  gameId: string,
+): Promise<AdminGameEvent[]> {
+  const snap = await adminFirestore
+    .collection("games")
+    .doc(gameId)
+    .collection("events")
+    .get();
+  return snap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Record<string, unknown>),
+  }));
 }

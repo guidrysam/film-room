@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import UserDriveConnect from "@/components/UserDriveConnect";
 import UserYouTubeUploadConnect from "@/components/UserYouTubeUploadConnect";
+import PersonalCreditsCard from "@/components/PersonalCreditsCard";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
   getUserDrivePublic,
@@ -368,6 +369,7 @@ export default function MyFilmPage() {
           youtube={youtube}
           onChanged={() => void refresh()}
         />
+        <PersonalCreditsCard />
         <UserDriveConnect drive={drive} onChanged={() => void refresh()} />
 
         <section className={panelClass}>
