@@ -7,12 +7,19 @@ import {
   ensureGameDriveFolders,
   getTeamVaultAccessToken,
 } from "@/lib/drive/team-vault";
+import { getUserVaultAccessToken } from "@/lib/drive/user-vault";
+import { requireBearerUid } from "@/lib/ai/auth";
 
 export const runtime = "nodejs";
 
 /**
- * Mint a short-lived team vault access token and ensure game raw folder.
- * Body: { gameId, angleSlot, fileName, mimeType?, sizeBytes? }
+ * Mint a short-lived Drive access token and target folder for vault upload.
+ *
+ * Body: { fileName, angleSlot, mimeType?, sizeBytes?, gameId? }
+ * - With gameId → team game vault (existing Game Cap path).
+ * - Without gameId → signed-in user's My Film Inbox.
+ *
+ * Response always includes rawFolderId (Mac client field name stays stable).
  */
 export async function POST(request: Request) {
   try {
@@ -28,9 +35,9 @@ export async function POST(request: Request) {
       typeof body?.gameId === "string" ? body.gameId.trim() : "";
     const fileName =
       typeof body?.fileName === "string" ? body.fileName.trim() : "";
-    if (!gameId || !fileName) {
+    if (!fileName) {
       return Response.json(
-        { error: "gameId and fileName are required." },
+        { error: "fileName is required." },
         { status: 400 },
       );
     }
@@ -41,32 +48,55 @@ export async function POST(request: Request) {
       );
     }
     const angleSlot = body.angleSlot;
-
-    const { uid, teamId } = await requireGameVaultContributor(request, gameId);
-    const folders = await ensureGameDriveFolders({ teamId, gameId });
-    const { accessToken } = await getTeamVaultAccessToken(teamId);
-
     const safeBase = fileName.replace(/[^\w.\- ()[\]]+/g, "_").slice(0, 120);
     const uploadName = `${labelForAngleSlot(angleSlot)} — ${safeBase}`;
+    const mimeType =
+      typeof body?.mimeType === "string" && body.mimeType.trim()
+        ? body.mimeType.trim()
+        : "video/mp4";
+    const sizeBytes =
+      typeof body?.sizeBytes === "number" &&
+      Number.isFinite(body.sizeBytes) &&
+      body.sizeBytes > 0
+        ? body.sizeBytes
+        : undefined;
 
+    if (gameId) {
+      const { uid, teamId } = await requireGameVaultContributor(
+        request,
+        gameId,
+      );
+      const folders = await ensureGameDriveFolders({ teamId, gameId });
+      const { accessToken } = await getTeamVaultAccessToken(teamId);
+      return Response.json({
+        accessToken,
+        rawFolderId: folders.driveRawFolderId,
+        driveFolderId: folders.driveFolderId,
+        uploadName,
+        angleSlot,
+        angleLabel: labelForAngleSlot(angleSlot),
+        teamId,
+        gameId,
+        scope: "game",
+        uid,
+        mimeType,
+        ...(sizeBytes != null ? { sizeBytes } : {}),
+      });
+    }
+
+    const uid = await requireBearerUid(request);
+    const vault = await getUserVaultAccessToken(uid);
     return Response.json({
-      accessToken,
-      rawFolderId: folders.driveRawFolderId,
-      driveFolderId: folders.driveFolderId,
+      accessToken: vault.accessToken,
+      rawFolderId: vault.inboxFolderId,
+      driveFolderId: vault.rootFolderId,
       uploadName,
       angleSlot,
       angleLabel: labelForAngleSlot(angleSlot),
-      teamId,
+      scope: "inbox",
       uid,
-      mimeType:
-        typeof body?.mimeType === "string" && body.mimeType.trim()
-          ? body.mimeType.trim()
-          : "video/mp4",
-      ...(typeof body?.sizeBytes === "number" &&
-      Number.isFinite(body.sizeBytes) &&
-      body.sizeBytes > 0
-        ? { sizeBytes: body.sizeBytes }
-        : {}),
+      mimeType,
+      ...(sizeBytes != null ? { sizeBytes } : {}),
     });
   } catch (err) {
     return driveAuthErrorResponse(err);

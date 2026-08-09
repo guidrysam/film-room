@@ -78,6 +78,15 @@ export function driveAuthErrorResponse(err: unknown): Response {
       { status: 400 },
     );
   }
+  if (msg === "USER_DRIVE_NOT_CONNECTED") {
+    return Response.json(
+      {
+        error:
+          "Connect your Google Drive in My Film first, then upload without a game.",
+      },
+      { status: 400 },
+    );
+  }
   if (msg === "GAME_HAS_NO_TEAM" || msg === "GAME_TEAM_MISMATCH") {
     return Response.json(
       { error: "This game is not linked to a team vault." },

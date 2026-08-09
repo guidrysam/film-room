@@ -104,4 +104,34 @@ export async function ensureTeamVaultRoot(opts: {
   });
 }
 
+/**
+ * Personal vault: Film Room / My Film /
+ * Inbox uploads land in Film Room / My Film / Inbox /
+ */
+export async function ensureUserVaultRoot(opts: {
+  accessToken: string;
+}): Promise<string> {
+  const filmRoom = await ensureChildFolder({
+    accessToken: opts.accessToken,
+    parentId: "root",
+    name: "Film Room",
+  });
+  return ensureChildFolder({
+    accessToken: opts.accessToken,
+    parentId: filmRoom,
+    name: "My Film",
+  });
+}
+
+export async function ensureUserInboxFolder(opts: {
+  accessToken: string;
+  rootFolderId: string;
+}): Promise<string> {
+  return ensureChildFolder({
+    accessToken: opts.accessToken,
+    parentId: opts.rootFolderId,
+    name: "Inbox",
+  });
+}
+
 export { gameFolderDisplayName } from "@/lib/drive/naming";

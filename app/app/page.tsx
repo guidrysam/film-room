@@ -197,8 +197,18 @@ export default function DashboardPage() {
             <h1 className="text-xl font-semibold tracking-tight text-white">
               What do you want to work on today?
             </h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              Start with{" "}
+              <Link href="/app/film" className="text-blue-300 hover:underline">
+                My Film
+              </Link>{" "}
+              for uploads — teams and roster are for organizing later.
+            </p>
           </div>
           <div className="flex items-center gap-2 text-xs">
+            <Link href="/app/film" className={ghostBtn}>
+              My Film
+            </Link>
             <Link href={myPlayersUrl()} className={ghostBtn}>
               My kids
             </Link>

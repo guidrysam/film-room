@@ -25,15 +25,29 @@ function stateSigningKey(): Buffer {
   return Buffer.from(raw, "utf8");
 }
 
+export type DriveOAuthKind = "team" | "user";
+
 export type DriveOAuthState = {
+  /** Defaults to team when omitted (legacy signed states). */
+  kind: DriveOAuthKind;
+  /** Empty when kind is user. */
   teamId: string;
   uid: string;
   nonce: string;
   exp: number;
 };
 
-export function signDriveOAuthState(state: DriveOAuthState): string {
-  const payload = Buffer.from(JSON.stringify(state), "utf8").toString(
+export function signDriveOAuthState(
+  state: Omit<DriveOAuthState, "kind"> & { kind?: DriveOAuthKind },
+): string {
+  const normalized: DriveOAuthState = {
+    kind: state.kind ?? (state.teamId ? "team" : "user"),
+    teamId: state.kind === "user" ? "" : state.teamId,
+    uid: state.uid,
+    nonce: state.nonce,
+    exp: state.exp,
+  };
+  const payload = Buffer.from(JSON.stringify(normalized), "utf8").toString(
     "base64url",
   );
   const sig = createHmac("sha256", stateSigningKey())
@@ -55,9 +69,8 @@ export function verifyDriveOAuthState(raw: string): DriveOAuthState {
   }
   const parsed = JSON.parse(
     Buffer.from(payload, "base64url").toString("utf8"),
-  ) as DriveOAuthState;
+  ) as Partial<DriveOAuthState>;
   if (
-    typeof parsed.teamId !== "string" ||
     typeof parsed.uid !== "string" ||
     typeof parsed.nonce !== "string" ||
     typeof parsed.exp !== "number"
@@ -65,7 +78,29 @@ export function verifyDriveOAuthState(raw: string): DriveOAuthState {
     throw new Error("Invalid OAuth state payload.");
   }
   if (Date.now() > parsed.exp) throw new Error("OAuth state expired.");
-  return parsed;
+
+  const kind: DriveOAuthKind =
+    parsed.kind === "user" || parsed.kind === "team"
+      ? parsed.kind
+      : typeof parsed.teamId === "string" && parsed.teamId.trim()
+        ? "team"
+        : "user";
+  const teamId =
+    kind === "user"
+      ? ""
+      : typeof parsed.teamId === "string"
+        ? parsed.teamId.trim()
+        : "";
+  if (kind === "team" && !teamId) {
+    throw new Error("Invalid OAuth state payload.");
+  }
+  return {
+    kind,
+    teamId,
+    uid: parsed.uid,
+    nonce: parsed.nonce,
+    exp: parsed.exp,
+  };
 }
 
 export function driveOAuthRedirectUri(appBaseUrl: string): string {

@@ -1,5 +1,6 @@
 import { adminFirestore } from "@/lib/firebase-admin";
 import { requireBearerUid } from "@/lib/ai/auth";
+import { readUserDrivePublicConfig } from "@/lib/drive/user-vault";
 
 export const runtime = "nodejs";
 
@@ -56,7 +57,10 @@ async function gamesForTeam(teamId: string): Promise<CatalogGame[]> {
 }
 
 /**
- * List teams the signed-in user can vault-upload for, and recent games.
+ * Catalog for Game Cap Mac client.
+ * Personal inbox upload works when `inbox.driveConnected` is true —
+ * games list may be empty without blocking upload.
+ *
  * GET /api/mac/catalog
  */
 export async function GET(request: Request) {
@@ -124,7 +128,49 @@ export async function GET(request: Request) {
       }
     }
 
-    return Response.json({ teams });
+    const userDrive = await readUserDrivePublicConfig(uid);
+    const inboxSnap = await adminFirestore
+      .collection("users")
+      .doc(uid)
+      .collection("filmSources")
+      .orderBy("createdAt", "desc")
+      .limit(8)
+      .get()
+      .catch(() => null);
+
+    const recentInbox =
+      inboxSnap?.docs.map((d) => {
+        const data = d.data() ?? {};
+        return {
+          id: d.id,
+          label:
+            typeof data.label === "string" && data.label.trim()
+              ? data.label.trim()
+              : d.id,
+          organizeKind:
+            data.organizeKind === "game" ||
+            data.organizeKind === "practice" ||
+            data.organizeKind === "other"
+              ? data.organizeKind
+              : "other",
+          status:
+            typeof data.status === "string" ? data.status : "ready",
+        };
+      }) ?? [];
+
+    return Response.json({
+      teams,
+      inbox: {
+        driveConnected: Boolean(userDrive?.rootFolderId),
+        rootFolderId: userDrive?.rootFolderId ?? null,
+        inboxFolderId: userDrive?.inboxFolderId ?? null,
+        accountEmail: userDrive?.accountEmail ?? null,
+        /** Prefer this path: upload without gameId when true. */
+        uploadWithoutGame: Boolean(userDrive?.rootFolderId),
+        openPath: "/app/film",
+        recent: recentInbox,
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "UNKNOWN";
     if (msg === "AUTH_REQUIRED") {
