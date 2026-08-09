@@ -191,6 +191,7 @@ export default function AiTagDraftPanel({
     Record<string, string>
   >({});
   const [privacyRefreshing, setPrivacyRefreshing] = useState(false);
+  const [attachBusy, setAttachBusy] = useState(false);
 
   const youtubeSources = useMemo(
     () => sources.filter((s) => youtubeVideoIdForAnalysis(s) != null),
@@ -321,6 +322,50 @@ export default function AiTagDraftPanel({
       setBusy(null);
     }
   }, [canEdit, purchaseEnabled, refreshBalance]);
+
+  const matchSidecarsFromDrive = useCallback(async () => {
+    if (!canEdit || !game.teamId) return;
+    setAttachBusy(true);
+    setError(null);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch("/api/drive/attach-sidecars", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          gameId: game.id,
+          createdByName: currentDisplayName ?? undefined,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        scannedJson?: number;
+        marksImported?: number;
+        matched?: unknown[];
+      };
+      if (!res.ok) throw new Error(data.error || "Drive match failed.");
+      if (!data.matched?.length) {
+        throw new Error(
+          data.scannedJson
+            ? `Found ${data.scannedJson} JSON in Drive but none matched a YouTube name.`
+            : "No sidecar JSON in this game’s Drive vault.",
+        );
+      }
+      onEventsChanged();
+      onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Drive match failed.");
+    } finally {
+      setAttachBusy(false);
+    }
+  }, [
+    canEdit,
+    game.teamId,
+    game.id,
+    currentDisplayName,
+    onEventsChanged,
+    onRefresh,
+  ]);
 
   useEffect(() => {
     void refreshBalance();
@@ -603,9 +648,22 @@ export default function AiTagDraftPanel({
         ) : (
           <>
             {" "}
-            No Game Cap marks on this game yet — import the sidecar JSON from
-            the game dashboard (or re-upload with sidecar) so AI can lock to
-            your live tags.
+            No Game Cap marks yet — match vault{" "}
+            <span className="font-mono">.json</span> to the same-name YouTube,
+            then re-run AI Tag.
+            {canEdit && game.teamId ? (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="text-zinc-300 underline decoration-white/20 underline-offset-2 hover:text-white"
+                  disabled={attachBusy}
+                  onClick={() => void matchSidecarsFromDrive()}
+                >
+                  {attachBusy ? "Matching Drive…" : "Match sidecars from Drive"}
+                </button>
+              </>
+            ) : null}
           </>
         )}
       </p>

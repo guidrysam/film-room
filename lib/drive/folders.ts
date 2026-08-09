@@ -25,6 +25,74 @@ async function driveJson<T>(
   return (await res.json()) as T;
 }
 
+export type DriveListedFile = {
+  id: string;
+  name: string;
+  mimeType?: string;
+};
+
+/** Non-trashed files directly in a folder (not recursive). */
+export async function listDriveFolderFiles(opts: {
+  accessToken: string;
+  folderId: string;
+  pageSize?: number;
+}): Promise<DriveListedFile[]> {
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 100, 1), 200);
+  const out: DriveListedFile[] = [];
+  let pageToken: string | undefined;
+  do {
+    const q = [
+      `'${opts.folderId}' in parents`,
+      "trashed = false",
+      `mimeType != 'application/vnd.google-apps.folder'`,
+    ].join(" and ");
+    const params = new URLSearchParams({
+      q,
+      spaces: "drive",
+      fields: "nextPageToken,files(id,name,mimeType)",
+      pageSize: String(pageSize),
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const json = await driveJson<{
+      files?: Array<{ id?: string; name?: string; mimeType?: string }>;
+      nextPageToken?: string;
+    }>(
+      opts.accessToken,
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    );
+    for (const f of json.files ?? []) {
+      const id = typeof f.id === "string" ? f.id.trim() : "";
+      const name = typeof f.name === "string" ? f.name.trim() : "";
+      if (!id || !name) continue;
+      out.push({
+        id,
+        name,
+        ...(typeof f.mimeType === "string" ? { mimeType: f.mimeType } : {}),
+      });
+    }
+    pageToken = json.nextPageToken?.trim() || undefined;
+  } while (pageToken && out.length < 400);
+  return out;
+}
+
+export async function downloadDriveFileJson(opts: {
+  accessToken: string;
+  fileId: string;
+}): Promise<unknown> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(opts.fileId)}?alt=media`,
+    { headers: { Authorization: `Bearer ${opts.accessToken}` } },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Drive download ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
+    );
+  }
+  const text = await res.text();
+  return JSON.parse(text) as unknown;
+}
+
 export async function findChildFolder(opts: {
   accessToken: string;
   parentId: string;
