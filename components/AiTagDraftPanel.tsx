@@ -324,7 +324,7 @@ export default function AiTagDraftPanel({
   }, [canEdit, purchaseEnabled, refreshBalance]);
 
   const matchSidecarsFromDrive = useCallback(async () => {
-    if (!canEdit || !game.teamId) return;
+    if (!canEdit) return;
     setAttachBusy(true);
     setError(null);
     try {
@@ -348,7 +348,7 @@ export default function AiTagDraftPanel({
         throw new Error(
           data.scannedJson
             ? `Found ${data.scannedJson} JSON in Drive but none matched a YouTube name.`
-            : "No sidecar JSON in this game’s Drive vault.",
+            : "No sidecar JSON in My Film Drive (or team vault).",
         );
       }
       onEventsChanged();
@@ -358,14 +358,7 @@ export default function AiTagDraftPanel({
     } finally {
       setAttachBusy(false);
     }
-  }, [
-    canEdit,
-    game.teamId,
-    game.id,
-    currentDisplayName,
-    onEventsChanged,
-    onRefresh,
-  ]);
+  }, [canEdit, game.id, currentDisplayName, onEventsChanged, onRefresh]);
 
   useEffect(() => {
     void refreshBalance();
@@ -651,7 +644,7 @@ export default function AiTagDraftPanel({
             No Game Cap marks yet — match vault{" "}
             <span className="font-mono">.json</span> to the same-name YouTube,
             then re-run AI Tag.
-            {canEdit && game.teamId ? (
+            {canEdit ? (
               <>
                 {" "}
                 <button

@@ -1,4 +1,3 @@
-import type { AdminGameEvent } from "@/lib/ai/game-context";
 import type { AiTagKind } from "@/lib/ai/tag-schema";
 
 /** Mark already on the game timeline used as a prior for AI Tag. */
@@ -9,6 +8,15 @@ export type TagAnchorHint = {
   label: string;
   /** Origin for prompt wording / UI. */
   source: "gamecap" | "timeline";
+};
+
+type TimelineEventLike = {
+  id?: string;
+  type?: string;
+  t?: number;
+  label?: string;
+  sourceId?: string;
+  payload?: Record<string, unknown> | null;
 };
 
 const GAMECAP_TO_KIND: Record<string, AiTagKind> = {
@@ -58,7 +66,7 @@ const LABEL_TO_KIND: Record<string, AiTagKind> = {
   turnover: "turnover",
 };
 
-function kindFromEvent(ev: AdminGameEvent): AiTagKind {
+function kindFromEvent(ev: TimelineEventLike): AiTagKind {
   const payload =
     ev.payload && typeof ev.payload === "object"
       ? (ev.payload as Record<string, unknown>)
@@ -81,7 +89,7 @@ function kindFromEvent(ev: AdminGameEvent): AiTagKind {
   return "coach_mark";
 }
 
-function isUsableTimelineEvent(ev: AdminGameEvent): boolean {
+function isUsableTimelineEvent(ev: TimelineEventLike): boolean {
   if (typeof ev.t !== "number" || !Number.isFinite(ev.t) || ev.t < 0) {
     return false;
   }
@@ -98,7 +106,7 @@ function isUsableTimelineEvent(ev: AdminGameEvent): boolean {
  * sidecar imports + coach tags). Game time → source time via offset.
  */
 export function buildTagAnchorHints(
-  events: AdminGameEvent[],
+  events: TimelineEventLike[],
   opts: {
     /** Seconds added to game time to reach the tagged source's playback time. */
     sourceOffsetFromGameTime?: number;

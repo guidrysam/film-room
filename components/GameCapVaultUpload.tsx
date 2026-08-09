@@ -25,6 +25,8 @@ import {
 export type GameCapVaultUploadProps = {
   game: Game;
   team?: Team | null;
+  /** True when the signed-in user connected My Film Drive. */
+  userDriveConnected?: boolean;
   currentUid: string;
   currentDisplayName?: string | null;
   /** Preselect slot from query `?angle=main`. */
@@ -50,11 +52,13 @@ const slotChip =
   "rounded-lg border px-3 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
 /**
- * Upload a kit angle into the team Google Drive vault and attach as a game source.
+ * Upload a kit angle into your personal Drive (My Film) and attach as a game source.
+ * Team vault is only used if personal Drive is not connected.
  */
 export default function GameCapVaultUpload({
   game,
   team,
+  userDriveConnected = false,
   currentUid,
   currentDisplayName,
   initialAngleSlot,
@@ -76,7 +80,8 @@ export default function GameCapVaultUpload({
     null,
   );
 
-  const driveConnected = Boolean(team?.drive?.rootFolderId);
+  const driveConnected =
+    userDriveConnected || Boolean(team?.drive?.rootFolderId);
 
   const onFileChosen = useCallback(async (next: File | null) => {
     setFile(next);
@@ -98,7 +103,7 @@ export default function GameCapVaultUpload({
   const startUpload = useCallback(async () => {
     if (!user || !file) return;
     if (!driveConnected) {
-      setError("Connect Google Drive for this team in Team Settings first.");
+      setError("Connect Google Drive in My Film first.");
       return;
     }
 
@@ -245,20 +250,13 @@ export default function GameCapVaultUpload({
   if (!driveConnected) {
     return (
       <div className="rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-3 text-sm text-amber-100">
-        <p className="font-medium">Team Drive not connected</p>
+        <p className="font-medium">Connect your Drive</p>
         <p className="mt-1 text-xs text-amber-200/90">
-          A coach or admin must connect Google Drive in{" "}
-          {team ? (
-            <a
-              className="underline hover:text-white"
-              href={`/team/${team.id}/setup`}
-            >
-              Team Settings
-            </a>
-          ) : (
-            "Team Settings"
-          )}{" "}
-          before vault uploads.
+          Film uploads use your personal Google Drive.{" "}
+          <a className="underline hover:text-white" href="/app/film">
+            Connect in My Film
+          </a>
+          .
         </p>
       </div>
     );

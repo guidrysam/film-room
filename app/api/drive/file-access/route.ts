@@ -2,13 +2,14 @@ import {
   driveAuthErrorResponse,
   requireGameVaultContributor,
 } from "@/lib/drive/auth";
-import { getTeamVaultAccessToken } from "@/lib/drive/team-vault";
+import { resolveDriveDownloadToken } from "@/lib/drive/resolve-vault";
 import { adminFirestore } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
 
 /**
- * Mint a short-lived vault access token to download a Drive file for AI proxy publish.
+ * Mint a short-lived access token to download a Drive file (AI proxy publish).
+ * Prefers the actor's personal Drive token; falls back to team vault.
  * Body: { gameId, sourceId }
  */
 export async function POST(request: Request) {
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { teamId } = await requireGameVaultContributor(request, gameId);
+    const { uid, teamId } = await requireGameVaultContributor(request, gameId);
     const sourceSnap = await adminFirestore
       .collection("games")
       .doc(gameId)
@@ -48,19 +49,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const gameSnap = await adminFirestore.collection("games").doc(gameId).get();
-    const gameTeamId =
-      typeof gameSnap.data()?.teamId === "string"
-        ? String(gameSnap.data()?.teamId).trim()
-        : "";
-    if (gameTeamId && gameTeamId !== teamId) {
-      return Response.json({ error: "Game team mismatch." }, { status: 400 });
-    }
+    const { accessToken, scope } = await resolveDriveDownloadToken({
+      uid,
+      teamId,
+    });
 
-    const { accessToken } = await getTeamVaultAccessToken(teamId);
     return Response.json({
       accessToken,
       driveFileId,
+      vaultScope: scope,
       fileName:
         typeof source.label === "string" && source.label.trim()
           ? `${source.label.trim()}.mp4`

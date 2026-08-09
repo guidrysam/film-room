@@ -7,8 +7,8 @@ import { attachSidecarsFromDriveByName } from "@/lib/drive/attach-sidecars-by-na
 export const runtime = "nodejs";
 
 /**
- * Match Game Cap sidecar JSON files in the game Drive vault to same-stem
- * YouTube/upload sources and import marks onto the game timeline.
+ * Match Game Cap sidecar JSON in personal My Film Drive (preferred) and
+ * optional team game vault to same-stem YouTube/upload sources.
  * Body: { gameId, createdByName? }
  */
 export async function POST(request: Request) {

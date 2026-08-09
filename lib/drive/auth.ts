@@ -13,11 +13,14 @@ export async function requireTeamDriveAdmin(
   return { uid: actor.uid };
 }
 
-/** Game contributor or team admin/coach/parent may upload to vault. */
+/**
+ * Game film contributor. Team is optional — personal games (no teamId) are
+ * allowed when the actor owns or can edit the game.
+ */
 export async function requireGameVaultContributor(
   request: Request,
   gameId: string,
-): Promise<{ uid: string; teamId: string }> {
+): Promise<{ uid: string; teamId?: string }> {
   const uid = await requireBearerUid(request);
   const gameSnap = await adminFirestore.collection("games").doc(gameId).get();
   if (!gameSnap.exists) throw new Error("GAME_NOT_FOUND");
@@ -25,21 +28,23 @@ export async function requireGameVaultContributor(
   const teamId =
     typeof game.teamId === "string" && game.teamId.trim()
       ? game.teamId.trim()
-      : "";
-  if (!teamId) throw new Error("GAME_HAS_NO_TEAM");
+      : undefined;
 
   const contributors =
     game.contributors && typeof game.contributors === "object"
       ? (game.contributors as Record<string, string>)
       : {};
   const contribRole = contributors[uid];
-  if (
+  const isGameEditor =
     game.ownerId === uid ||
     contribRole === "owner" ||
-    contribRole === "editor"
-  ) {
-    return { uid, teamId };
+    contribRole === "editor";
+
+  if (isGameEditor) {
+    return { uid, ...(teamId ? { teamId } : {}) };
   }
+
+  if (!teamId) throw new Error("TEAM_ACCESS_DENIED");
 
   const teamSnap = await adminFirestore.collection("teams").doc(teamId).get();
   if (!teamSnap.exists) throw new Error("TEAM_NOT_FOUND");
@@ -74,22 +79,27 @@ export function driveAuthErrorResponse(err: unknown): Response {
   }
   if (msg === "DRIVE_NOT_CONNECTED") {
     return Response.json(
-      { error: "Connect Google Drive for this team first." },
+      {
+        error:
+          "Connect Google Drive in My Film first (team vault is optional).",
+      },
       { status: 400 },
     );
   }
   if (msg === "USER_DRIVE_NOT_CONNECTED") {
     return Response.json(
       {
-        error:
-          "Connect your Google Drive in My Film first, then upload without a game.",
+        error: "Connect your Google Drive in My Film first.",
       },
       { status: 400 },
     );
   }
   if (msg === "GAME_HAS_NO_TEAM" || msg === "GAME_TEAM_MISMATCH") {
     return Response.json(
-      { error: "This game is not linked to a team vault." },
+      {
+        error:
+          "This game has no team link — use your personal Drive in My Film.",
+      },
       { status: 400 },
     );
   }

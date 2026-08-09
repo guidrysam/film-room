@@ -15,6 +15,7 @@ import {
   ensureGameDriveFolders,
   getTeamVaultAccessToken,
 } from "@/lib/drive/team-vault";
+import { getUserVaultAccessToken } from "@/lib/drive/user-vault";
 import {
   parseGameCapSidecar,
   sidecarEventsToTimelineInputs,
@@ -42,6 +43,12 @@ type GameSourceRow = {
   angleSlot?: string;
   offsetFromGameTime?: number;
   videoId?: string;
+};
+
+type ListedJson = {
+  id: string;
+  name: string;
+  accessToken: string;
 };
 
 function eventDocId(opts: {
@@ -72,36 +79,83 @@ function pickMatchingSource(
   return scored[0]?.source ?? null;
 }
 
+async function collectJsonFromFolders(
+  accessToken: string,
+  folderIds: string[],
+): Promise<ListedJson[]> {
+  const unique = Array.from(new Set(folderIds.filter(Boolean)));
+  const listed = (
+    await Promise.all(
+      unique.map((folderId) => listDriveFolderFiles({ accessToken, folderId })),
+    )
+  ).flat();
+  const byId = new Map<string, ListedJson>();
+  for (const f of listed) {
+    if (!isJsonDriveName(f.name)) continue;
+    byId.set(f.id, { id: f.id, name: f.name, accessToken });
+  }
+  return [...byId.values()];
+}
+
 /**
- * Find Game Cap `.json` sidecars in the game vault (raw + game folder),
- * match each to a same-stem YouTube/upload source, and import marks.
+ * Find Game Cap `.json` sidecars in personal My Film (preferred) and optional
+ * team game vault, match each to a same-stem YouTube/upload source, import marks.
  */
 export async function attachSidecarsFromDriveByName(opts: {
   gameId: string;
-  teamId: string;
   uid: string;
+  teamId?: string;
   createdByName?: string;
 }): Promise<AttachSidecarsResult> {
-  const { accessToken } = await getTeamVaultAccessToken(opts.teamId);
-  const folders = await ensureGameDriveFolders({
-    teamId: opts.teamId,
-    gameId: opts.gameId,
-  });
+  const jsonById = new Map<string, ListedJson>();
 
-  const folderIds = Array.from(
-    new Set([folders.driveRawFolderId, folders.driveFolderId].filter(Boolean)),
-  );
-  const listed = (
-    await Promise.all(
-      folderIds.map((folderId) =>
-        listDriveFolderFiles({ accessToken, folderId }),
-      ),
-    )
-  ).flat();
+  try {
+    const user = await getUserVaultAccessToken(opts.uid);
+    for (const f of await collectJsonFromFolders(user.accessToken, [
+      user.inboxFolderId,
+      user.rootFolderId,
+    ])) {
+      jsonById.set(f.id, f);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg !== "USER_DRIVE_NOT_CONNECTED") throw err;
+  }
 
-  const byId = new Map<string, (typeof listed)[number]>();
-  for (const f of listed) byId.set(f.id, f);
-  const jsonFiles = [...byId.values()].filter((f) => isJsonDriveName(f.name));
+  if (opts.teamId) {
+    try {
+      const team = await getTeamVaultAccessToken(opts.teamId);
+      const folders = await ensureGameDriveFolders({
+        teamId: opts.teamId,
+        gameId: opts.gameId,
+      });
+      for (const f of await collectJsonFromFolders(team.accessToken, [
+        folders.driveRawFolderId,
+        folders.driveFolderId,
+      ])) {
+        if (!jsonById.has(f.id)) jsonById.set(f.id, f);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg !== "DRIVE_NOT_CONNECTED") throw err;
+    }
+  }
+
+  if (jsonById.size === 0) {
+    // Nothing to scan — distinguish no Drive at all vs empty folders.
+    try {
+      await getUserVaultAccessToken(opts.uid);
+    } catch {
+      if (!opts.teamId) throw new Error("USER_DRIVE_NOT_CONNECTED");
+      try {
+        await getTeamVaultAccessToken(opts.teamId);
+      } catch {
+        throw new Error("USER_DRIVE_NOT_CONNECTED");
+      }
+    }
+  }
+
+  const jsonFiles = [...jsonById.values()];
 
   const sourcesSnap = await adminFirestore
     .collection("games")
@@ -160,7 +214,7 @@ export async function attachSidecarsFromDriveByName(opts: {
     let raw: unknown;
     try {
       raw = await downloadDriveFileJson({
-        accessToken,
+        accessToken: jsonFile.accessToken,
         fileId: jsonFile.id,
       });
     } catch (e) {

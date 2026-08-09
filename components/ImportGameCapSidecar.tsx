@@ -40,7 +40,7 @@ export default function ImportGameCapSidecar({
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const hasTeamVault = Boolean(game.teamId);
+  const canMatchDrive = true; // personal My Film preferred; team vault optional fallback
   const mainSource = useMemo(() => {
     const bySlot = sources.find((s) => s.angleSlot === "main");
     if (bySlot) return bySlot;
@@ -185,7 +185,7 @@ export default function ImportGameCapSidecar({
         }}
       />
       <div className="mt-3 flex flex-wrap gap-2">
-        {hasTeamVault ? (
+        {canMatchDrive ? (
           <button
             type="button"
             className={primaryBtn}
@@ -197,7 +197,7 @@ export default function ImportGameCapSidecar({
         ) : null}
         <button
           type="button"
-          className={hasTeamVault ? ghostBtn : primaryBtn}
+          className={canMatchDrive ? ghostBtn : primaryBtn}
           disabled={busy !== null}
           onClick={() => inputRef.current?.click()}
         >

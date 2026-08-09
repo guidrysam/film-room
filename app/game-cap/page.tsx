@@ -28,6 +28,7 @@ import {
 } from "@/lib/teams";
 import { gameCapUrl, teamSetupUrl } from "@/lib/team-routes";
 import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
+import { getUserDrivePublic } from "@/lib/film-sources";
 import SportSelect from "@/components/SportSelect";
 import { sportLabel } from "@/lib/sports";
 
@@ -86,12 +87,16 @@ function GameCapPageInner() {
   const [defaultGameVisibility, setDefaultGameVisibility] = useState<
     "private" | "link"
   >("private");
+  const [userDriveConnected, setUserDriveConnected] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     void loadUserPrivacySettings(user.uid).then((s) => {
       setDefaultGameVisibility(s.defaultGameVisibility);
     });
+    void getUserDrivePublic(user.uid)
+      .then((d) => setUserDriveConnected(Boolean(d?.rootFolderId)))
+      .catch(() => setUserDriveConnected(false));
   }, [user]);
 
   const teamRole = useMemo(() => {
@@ -252,8 +257,8 @@ function GameCapPageInner() {
             Add Video
           </h1>
           <p className="mb-8 text-sm leading-relaxed text-zinc-300">
-            Sign in to select your team, create games, attach YouTube videos,
-            and open Review.
+            Sign in to connect My Film, attach YouTube videos, and open Review.
+            Teams are optional.
           </p>
           <button
             type="button"
@@ -506,7 +511,7 @@ function GameCapPageInner() {
                         : "border-white/10 bg-white/[0.03] text-zinc-300 hover:bg-white/[0.06]"
                     }`}
                   >
-                    Upload to team vault
+                    Upload to My Drive
                   </button>
                   <button
                     type="button"
@@ -544,6 +549,7 @@ function GameCapPageInner() {
                   <GameCapVaultUpload
                     game={selectedGame}
                     team={selectedTeam}
+                    userDriveConnected={userDriveConnected}
                     currentUid={user.uid}
                     currentDisplayName={user.displayName}
                     initialAngleSlot={initialAngleSlot}

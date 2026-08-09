@@ -29,6 +29,7 @@ import {
   teamSetupUrl,
   teamStatsUrl,
 } from "@/lib/team-routes";
+import { getUserDrivePublic } from "@/lib/film-sources";
 
 export type GameDashboardProps = {
   gameId: string;
@@ -73,14 +74,19 @@ export default function GameDashboard({
   const [data, setData] = useState<GameDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("vault");
   const [sourcesKey, setSourcesKey] = useState(0);
+  const [userDriveConnected, setUserDriveConnected] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const loaded = await loadGameDashboard(gameId, currentUid);
+      const [loaded, drive] = await Promise.all([
+        loadGameDashboard(gameId, currentUid),
+        getUserDrivePublic(currentUid).catch(() => null),
+      ]);
+      setUserDriveConnected(Boolean(drive?.rootFolderId));
       if (!loaded) {
         setError("Game not found or access denied.");
         setData(null);
@@ -278,7 +284,7 @@ export default function GameDashboard({
                     : "border-white/10 bg-white/[0.03] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
                 }`}
               >
-                Upload to team vault
+                Upload to My Drive
               </button>
               <button
                 type="button"
@@ -316,6 +322,7 @@ export default function GameDashboard({
               <GameCapVaultUpload
                 game={game}
                 team={team}
+                userDriveConnected={userDriveConnected}
                 currentUid={currentUid}
                 currentDisplayName={currentDisplayName}
                 onComplete={handleSourcesChanged}

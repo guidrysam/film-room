@@ -3,10 +3,7 @@ import {
   requireGameVaultContributor,
 } from "@/lib/drive/auth";
 import { isAngleSlot, labelForAngleSlot } from "@/lib/drive/angle-slots";
-import {
-  ensureGameDriveFolders,
-  getTeamVaultAccessToken,
-} from "@/lib/drive/team-vault";
+import { resolvePreferredDriveVault } from "@/lib/drive/resolve-vault";
 import { getUserVaultAccessToken } from "@/lib/drive/user-vault";
 import { requireBearerUid } from "@/lib/ai/auth";
 
@@ -15,11 +12,11 @@ export const runtime = "nodejs";
 /**
  * Mint a short-lived Drive access token and target folder for vault upload.
  *
- * Body: { fileName, angleSlot, mimeType?, sizeBytes?, gameId? }
- * - With gameId → team game vault (existing Game Cap path).
- * - Without gameId → signed-in user's My Film Inbox.
+ * Prefers the signed-in user's My Film Drive. Team vault is fallback only.
  *
- * Response always includes rawFolderId (Mac client field name stays stable).
+ * Body: { fileName, angleSlot, mimeType?, sizeBytes?, gameId? }
+ * - With gameId → personal (preferred) or team game vault; attach to that game.
+ * - Without gameId → My Film Inbox.
  */
 export async function POST(request: Request) {
   try {
@@ -66,18 +63,22 @@ export async function POST(request: Request) {
         request,
         gameId,
       );
-      const folders = await ensureGameDriveFolders({ teamId, gameId });
-      const { accessToken } = await getTeamVaultAccessToken(teamId);
+      const vault = await resolvePreferredDriveVault({
+        uid,
+        teamId,
+        gameId,
+      });
       return Response.json({
-        accessToken,
-        rawFolderId: folders.driveRawFolderId,
-        driveFolderId: folders.driveFolderId,
+        accessToken: vault.accessToken,
+        rawFolderId: vault.uploadFolderId,
+        driveFolderId: vault.driveFolderId,
         uploadName,
         angleSlot,
         angleLabel: labelForAngleSlot(angleSlot),
-        teamId,
+        teamId: teamId ?? null,
         gameId,
-        scope: "game",
+        scope: vault.scope === "user" ? "user_game" : "game",
+        vaultScope: vault.scope,
         uid,
         mimeType,
         ...(sizeBytes != null ? { sizeBytes } : {}),
@@ -93,10 +94,10 @@ export async function POST(request: Request) {
       uploadName,
       angleSlot,
       angleLabel: labelForAngleSlot(angleSlot),
-      /** Always present for Mac decoder stability (null = inbox). */
       teamId: null,
       gameId: null,
       scope: "inbox",
+      vaultScope: "user",
       uid,
       mimeType,
       ...(sizeBytes != null ? { sizeBytes } : {}),
