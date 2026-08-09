@@ -28,6 +28,7 @@ import {
   normalizeYoutubePrivacy,
 } from "@/lib/ai/youtube-gemini-access";
 import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
+import { buildTagAnchorHints } from "@/lib/ai/tag-anchors";
 import {
   fetchYouTubeVideoMeta,
   metaToSourcePatch,
@@ -45,7 +46,12 @@ const dangerBtn =
 export type AiTagDraftPanelProps = {
   game: Game;
   sources: GameVideoSource[];
-  events?: Array<{ t: number; payload?: Record<string, unknown> | null }>;
+  events?: Array<{
+    t: number;
+    type?: string;
+    label?: string;
+    payload?: Record<string, unknown> | null;
+  }>;
   currentUid: string;
   currentDisplayName?: string | null;
   canEdit: boolean;
@@ -195,6 +201,28 @@ export default function AiTagDraftPanel({
     youtubeSources.find((s) => s.id === selectedSourceId) ??
     youtubeSources[0] ??
     null;
+
+  const knownMarkCount = useMemo(() => {
+    const offset =
+      typeof primary?.offsetFromGameTime === "number" &&
+      Number.isFinite(primary.offsetFromGameTime)
+        ? primary.offsetFromGameTime
+        : 0;
+    return buildTagAnchorHints(events, {
+      sourceOffsetFromGameTime: offset,
+    }).length;
+  }, [events, primary?.offsetFromGameTime]);
+
+  const gameCapMarkCount = useMemo(() => {
+    const offset =
+      typeof primary?.offsetFromGameTime === "number" &&
+      Number.isFinite(primary.offsetFromGameTime)
+        ? primary.offsetFromGameTime
+        : 0;
+    return buildTagAnchorHints(events, {
+      sourceOffsetFromGameTime: offset,
+    }).filter((a) => a.source === "gamecap").length;
+  }, [events, primary?.offsetFromGameTime]);
 
   const secondaries = useMemo(
     () => youtubeSources.filter((s) => s.id !== primary?.id),
@@ -559,6 +587,27 @@ export default function AiTagDraftPanel({
         AI Tag watches the film in half-windows for denser events. For lining up
         cams, use <span className="text-zinc-300">Sync angles → Audio sync</span>{" "}
         — AI Sync is best-effort only. Credits debit on AI success.
+        {knownMarkCount > 0 ? (
+          <>
+            {" "}
+            Using{" "}
+            <span className="text-zinc-300">
+              {knownMarkCount} timeline mark
+              {knownMarkCount === 1 ? "" : "s"}
+              {gameCapMarkCount > 0
+                ? ` (${gameCapMarkCount} from Game Cap)`
+                : ""}
+            </span>{" "}
+            as accuracy priors.
+          </>
+        ) : (
+          <>
+            {" "}
+            No Game Cap marks on this game yet — import the sidecar JSON from
+            the game dashboard (or re-upload with sidecar) so AI can lock to
+            your live tags.
+          </>
+        )}
       </p>
 
       {nonPublicAngles.length > 0 ? (

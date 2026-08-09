@@ -7,10 +7,12 @@ import {
 } from "@/lib/ai/jobs";
 import {
   fetchYoutubeMetaServer,
+  listGameEventsAdmin,
   listGameSourcesAdmin,
   listTeamRosterNames,
   loadGameBillingContext,
 } from "@/lib/ai/game-context";
+import { buildTagAnchorHints } from "@/lib/ai/tag-anchors";
 import { runTagGameAnalysis } from "@/lib/ai/tag-game";
 import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
 import {
@@ -121,6 +123,16 @@ export async function POST(request: Request) {
       ? await listTeamRosterNames(ctx.teamId)
       : [];
 
+    const existingEvents = await listGameEventsAdmin(gameId);
+    const sourceOffset =
+      typeof primary.offsetFromGameTime === "number" &&
+      Number.isFinite(primary.offsetFromGameTime)
+        ? (primary.offsetFromGameTime as number)
+        : 0;
+    const knownMarks = buildTagAnchorHints(existingEvents, {
+      sourceOffsetFromGameTime: sourceOffset,
+    });
+
     const result = await runTagGameAnalysis({
       videoId,
       title: meta?.title,
@@ -133,6 +145,7 @@ export async function POST(request: Request) {
           : undefined),
       sport: ctx.sport,
       rosterNames,
+      knownMarks,
     });
 
     await markAiJobReady({
@@ -152,6 +165,7 @@ export async function POST(request: Request) {
       balance: debit.balance,
       drafts: result.drafts,
       notes: result.notes,
+      knownMarksUsed: knownMarks.length,
       suggestedKickoffOffsetSec: result.suggestedKickoffOffsetSec,
       modelId: "modelId" in result ? result.modelId : undefined,
     });

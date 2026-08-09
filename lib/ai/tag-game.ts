@@ -13,6 +13,11 @@ import {
   planTagWindows,
   shiftDraftsToVideoTime,
 } from "@/lib/ai/tag-windows";
+import {
+  anchorsInWindow,
+  formatAnchorsForPrompt,
+  type TagAnchorHint,
+} from "@/lib/ai/tag-anchors";
 import type { AiTagResult } from "@/lib/ai/tag-schema";
 import { isBasketballSport, normalizeSportId } from "@/lib/sports";
 
@@ -24,6 +29,8 @@ export type TagGameInput = {
   privacyStatus?: string;
   sport?: string;
   rosterNames?: string[];
+  /** Existing Game Cap / coach marks as accuracy priors (source time). */
+  knownMarks?: TagAnchorHint[];
   /** Prefer Gemini YouTube URL when public. */
   allowYoutubeUrl?: boolean;
 };
@@ -162,14 +169,26 @@ export async function runTagGameAnalysis(
     ? "Return PRIMARY structure (if visible) + ALL field goals + EXTENDED 3PT/shots/rebounds/blocks/steals/assists/fouls/open looks/turnovers in THIS clip."
     : "Return PRIMARY structure (if visible) + ALL goals + EXTENDED shots/saves/corners/stops/chances/turnovers in THIS clip.";
 
+  const knownMarks = input.knownMarks ?? [];
+  const markHint =
+    knownMarks.length > 0
+      ? `Coach/Game Cap priors: ${knownMarks.length} known marks on this film — treat as strong time anchors when the video agrees.`
+      : "";
+
   try {
     const windowParts: Array<{ drafts: AiTagResult["drafts"]; notes?: string }> =
       [];
     let modelId: string | undefined;
 
     for (const window of windows) {
+      const windowAnchors = anchorsInWindow(
+        knownMarks,
+        window.startSec,
+        window.endSec,
+      );
       const userText = [
         baseMeta,
+        markHint,
         "",
         `Window: ${window.label}`,
         `ClipStartSec (absolute in full video): ${window.startSec}`,
@@ -177,8 +196,11 @@ export async function runTagGameAnalysis(
         `Clip duration ≈ ${Math.round((window.endSec - window.startSec) / 60)} minutes.`,
         denseHint,
         "tSec is relative to clip start (0 = first frame of this clip).",
+        formatAnchorsForPrompt(windowAnchors, window.startSec),
         "You MUST watch the attached YouTube clip. Do not invent timestamps from duration alone.",
-      ].join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
 
       const { object, modelId: mid } = await geminiTagGame({
         system: tagSystemForSport(sportId),
@@ -211,9 +233,16 @@ export async function runTagGameAnalysis(
       windows.length > 1
         ? `Tagged in ${windows.length} half-windows for denser coverage.`
         : undefined;
+    const priorsNote =
+      knownMarks.length > 0
+        ? `Used ${knownMarks.length} Game Cap/coach marks as priors.`
+        : undefined;
     return {
       ...merged,
-      notes: [passNote, merged.notes].filter(Boolean).join(" ").slice(0, 500),
+      notes: [passNote, priorsNote, merged.notes]
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 500),
       modelId,
       watchedVideo: true,
     };
