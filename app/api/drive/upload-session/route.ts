@@ -93,6 +93,9 @@ export async function POST(request: Request) {
       uploadName,
       angleSlot,
       angleLabel: labelForAngleSlot(angleSlot),
+      /** Always present for Mac decoder stability (null = inbox). */
+      teamId: null,
+      gameId: null,
       scope: "inbox",
       uid,
       mimeType,
