@@ -49,6 +49,11 @@ service cloud.firestore {
       }
     }
 
+    // Cleared channel-sync work items (don't re-stack from YouTube).
+    match /users/{userId}/youtubeDismissals/{videoId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     match /users/{userId}/persons/{personId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }

@@ -14,7 +14,12 @@ import { firestore } from "@/lib/firebase";
 
 export type FilmOrganizeKind = "game" | "practice" | "other";
 
-export type FilmSourceStatus = "ready" | "analyzing" | "published" | "error";
+export type FilmSourceStatus =
+  | "ready"
+  | "analyzing"
+  | "published"
+  | "error"
+  | "dismissed";
 
 export type UserDrivePublic = {
   connectedByUid: string;
@@ -72,7 +77,8 @@ export function parseFilmSource(
     raw.status === "analyzing" ||
     raw.status === "published" ||
     raw.status === "error" ||
-    raw.status === "ready"
+    raw.status === "ready" ||
+    raw.status === "dismissed"
       ? raw.status
       : "ready";
   return {
