@@ -30,7 +30,10 @@ export type FilmSource = {
   label: string;
   organizeKind: FilmOrganizeKind;
   status: FilmSourceStatus;
-  driveFileId: string;
+  kind?: "upload" | "youtube";
+  driveFileId?: string;
+  videoId?: string;
+  youtubeVideoId?: string;
   angleSlot?: string;
   url?: string;
   marksImported?: number;
@@ -82,8 +85,14 @@ export function parseFilmSource(
         : id,
     organizeKind,
     status,
-    driveFileId:
-      typeof raw.driveFileId === "string" ? raw.driveFileId : "",
+    kind: raw.kind === "youtube" ? "youtube" : "upload",
+    ...(trimOrUndef(raw.driveFileId)
+      ? { driveFileId: String(raw.driveFileId) }
+      : {}),
+    ...(trimOrUndef(raw.videoId) ? { videoId: String(raw.videoId) } : {}),
+    ...(trimOrUndef(raw.youtubeVideoId)
+      ? { youtubeVideoId: String(raw.youtubeVideoId) }
+      : {}),
     ...(trimOrUndef(raw.angleSlot) ? { angleSlot: String(raw.angleSlot) } : {}),
     ...(trimOrUndef(raw.url) ? { url: String(raw.url) } : {}),
     ...(typeof raw.marksImported === "number"
@@ -133,6 +142,34 @@ export async function getUserDrivePublic(
       : {}),
   };
 }
+
+export async function getUserYouTubeUploadPublic(
+  uid: string,
+): Promise<UserYouTubeUploadPublic | null> {
+  const snap = await getDoc(doc(firestore, "users", uid));
+  if (!snap.exists()) return null;
+  const data = snap.data() ?? {};
+  const yt =
+    data.youtubeUpload && typeof data.youtubeUpload === "object"
+      ? (data.youtubeUpload as Record<string, unknown>)
+      : null;
+  if (!yt) return null;
+  const connectedAt = trimOrUndef(yt.connectedAt);
+  if (!connectedAt) return null;
+  return {
+    connectedAt,
+    ...(trimOrUndef(yt.channelId) ? { channelId: String(yt.channelId) } : {}),
+    ...(trimOrUndef(yt.channelTitle)
+      ? { channelTitle: String(yt.channelTitle) }
+      : {}),
+  };
+}
+
+export type UserYouTubeUploadPublic = {
+  connectedAt: string;
+  channelId?: string;
+  channelTitle?: string;
+};
 
 export async function listMyFilmSources(
   uid: string,

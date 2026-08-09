@@ -1,6 +1,7 @@
 import { adminFirestore } from "@/lib/firebase-admin";
 import { requireBearerUid } from "@/lib/ai/auth";
 import { readUserDrivePublicConfig } from "@/lib/drive/user-vault";
+import { readUserYouTubeUploadPublic } from "@/lib/youtube/user-upload-oauth";
 
 export const runtime = "nodejs";
 
@@ -129,6 +130,7 @@ export async function GET(request: Request) {
     }
 
     const userDrive = await readUserDrivePublicConfig(uid);
+    const userYouTube = await readUserYouTubeUploadPublic(uid);
     const inboxSnap = await adminFirestore
       .collection("users")
       .doc(uid)
@@ -155,6 +157,7 @@ export async function GET(request: Request) {
               : "other",
           status:
             typeof data.status === "string" ? data.status : "ready",
+          kind: data.kind === "youtube" ? "youtube" : "upload",
         };
       }) ?? [];
 
@@ -169,6 +172,16 @@ export async function GET(request: Request) {
         uploadWithoutGame: Boolean(userDrive?.rootFolderId),
         openPath: "/app/film",
         recent: recentInbox,
+        youtubeUploadConnected: Boolean(userYouTube?.connectedAt),
+        youtubeChannelTitle: userYouTube?.channelTitle ?? null,
+      },
+      /** Alias for Game Cap sync docs that expect userDrive. */
+      userDrive: {
+        driveConnected: Boolean(userDrive?.rootFolderId),
+        uploadWithoutGame: Boolean(userDrive?.rootFolderId),
+        inboxFolderId: userDrive?.inboxFolderId ?? null,
+        rootFolderId: userDrive?.rootFolderId ?? null,
+        youtubeUploadConnected: Boolean(userYouTube?.connectedAt),
       },
     });
   } catch (err) {

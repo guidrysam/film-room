@@ -5,17 +5,24 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import UserDriveConnect from "@/components/UserDriveConnect";
+import UserYouTubeUploadConnect from "@/components/UserYouTubeUploadConnect";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
   getUserDrivePublic,
+  getUserYouTubeUploadPublic,
   listMyFilmSources,
   setFilmSourceReviewGame,
   updateFilmSourceOrganize,
   type FilmOrganizeKind,
   type FilmSource,
   type UserDrivePublic,
+  type UserYouTubeUploadPublic,
 } from "@/lib/film-sources";
-import { addGameSourceFromDriveUpload, createGame } from "@/lib/games";
+import {
+  addGameSourceFromDriveUpload,
+  addGameSourceFromYouTubeUpload,
+  createGame,
+} from "@/lib/games";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 
 const panelClass =
@@ -34,6 +41,7 @@ export default function MyFilmPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [drive, setDrive] = useState<UserDrivePublic | null>(null);
+  const [youtube, setYoutube] = useState<UserYouTubeUploadPublic | null>(null);
   const [sources, setSources] = useState<FilmSource[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,11 +52,13 @@ export default function MyFilmPage() {
     setListLoading(true);
     setError(null);
     try {
-      const [d, rows] = await Promise.all([
+      const [d, yt, rows] = await Promise.all([
         getUserDrivePublic(user.uid),
+        getUserYouTubeUploadPublic(user.uid),
         listMyFilmSources(user.uid),
       ]);
       setDrive(d);
+      setYoutube(yt);
       setSources(rows);
     } catch (e) {
       console.error("[my-film]", e);
@@ -81,8 +91,10 @@ export default function MyFilmPage() {
       router.push(`/game/${source.reviewGameId}/review`);
       return;
     }
-    if (!source.driveFileId) {
-      setError("This item has no Drive file.");
+    const ytId = source.youtubeVideoId || source.videoId;
+    const isYoutube = source.kind === "youtube" || Boolean(ytId);
+    if (!isYoutube && !source.driveFileId) {
+      setError("This item has no playable source.");
       return;
     }
     setBusyId(source.id);
@@ -92,18 +104,32 @@ export default function MyFilmPage() {
         source.label ||
         (source.organizeKind === "practice" ? "Practice" : "My Film");
       const gameId = await createGame(user.uid, { title });
-      const slot = isAngleSlot(source.angleSlot) ? source.angleSlot : "main";
-      await addGameSourceFromDriveUpload(gameId, user.uid, {
-        driveFileId: source.driveFileId,
-        label: source.label,
-        angleSlot: slot,
-        ...(source.recordedStartTime
-          ? { recordedStartTime: source.recordedStartTime }
-          : {}),
-        ...(typeof source.durationSec === "number"
-          ? { durationSec: source.durationSec }
-          : {}),
-      });
+      if (isYoutube && ytId) {
+        await addGameSourceFromYouTubeUpload(gameId, user.uid, {
+          videoId: ytId,
+          label: source.label,
+          youtubePrivacyStatus: "unlisted",
+          ...(source.recordedStartTime
+            ? { recordedStartTime: source.recordedStartTime }
+            : {}),
+          ...(typeof source.durationSec === "number"
+            ? { durationSec: source.durationSec }
+            : {}),
+        });
+      } else {
+        const slot = isAngleSlot(source.angleSlot) ? source.angleSlot : "main";
+        await addGameSourceFromDriveUpload(gameId, user.uid, {
+          driveFileId: source.driveFileId!,
+          label: source.label,
+          angleSlot: slot,
+          ...(source.recordedStartTime
+            ? { recordedStartTime: source.recordedStartTime }
+            : {}),
+          ...(typeof source.durationSec === "number"
+            ? { durationSec: source.durationSec }
+            : {}),
+        });
+      }
       await setFilmSourceReviewGame(user.uid, source.id, gameId);
       router.push(`/game/${gameId}/review`);
     } catch (e) {
@@ -159,6 +185,10 @@ export default function MyFilmPage() {
 
       <div className="space-y-5">
         <UserDriveConnect drive={drive} onChanged={() => void refresh()} />
+        <UserYouTubeUploadConnect
+          youtube={youtube}
+          onChanged={() => void refresh()}
+        />
 
         <section className={panelClass}>
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -229,12 +259,23 @@ export default function MyFilmPage() {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {source.url || source.driveFileId ? (
+                    {source.kind === "youtube" ||
+                    source.youtubeVideoId ||
+                    source.videoId ? (
+                      <a
+                        className={ghostBtn}
+                        href={`https://www.youtube.com/watch?v=${encodeURIComponent(source.youtubeVideoId || source.videoId || "")}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open on YouTube
+                      </a>
+                    ) : source.url || source.driveFileId ? (
                       <a
                         className={ghostBtn}
                         href={
                           source.url ||
-                          `https://drive.google.com/file/d/${encodeURIComponent(source.driveFileId)}/view`
+                          `https://drive.google.com/file/d/${encodeURIComponent(source.driveFileId!)}/view`
                         }
                         target="_blank"
                         rel="noreferrer"
