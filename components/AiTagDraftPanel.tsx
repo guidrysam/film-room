@@ -625,41 +625,42 @@ export default function AiTagDraftPanel({
         AI Tag watches the film in half-windows for denser events. For lining up
         cams, use <span className="text-zinc-300">Sync angles → Audio sync</span>{" "}
         — AI Sync is best-effort only. Credits debit on AI success.
-        {knownMarkCount > 0 ? (
-          <>
-            {" "}
-            Using{" "}
-            <span className="text-zinc-300">
-              {knownMarkCount} timeline mark
-              {knownMarkCount === 1 ? "" : "s"}
-              {gameCapMarkCount > 0
-                ? ` (${gameCapMarkCount} from Game Cap)`
-                : ""}
-            </span>{" "}
-            as accuracy priors.
-          </>
-        ) : (
-          <>
-            {" "}
-            No Game Cap marks yet — match vault{" "}
-            <span className="font-mono">.json</span> to the same-name YouTube,
-            then re-run AI Tag.
-            {canEdit ? (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  className="text-zinc-300 underline decoration-white/20 underline-offset-2 hover:text-white"
-                  disabled={attachBusy}
-                  onClick={() => void matchSidecarsFromDrive()}
-                >
-                  {attachBusy ? "Matching Drive…" : "Match sidecars from Drive"}
-                </button>
-              </>
-            ) : null}
-          </>
-        )}
       </p>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
+        {gameCapMarkCount > 0 ? (
+          <span className="rounded-md border border-emerald-500/30 bg-emerald-950/35 px-2 py-1 text-emerald-100">
+            Sidecar matched · {gameCapMarkCount} Game Cap mark
+            {gameCapMarkCount === 1 ? "" : "s"}
+            {knownMarkCount > gameCapMarkCount
+              ? ` (+${knownMarkCount - gameCapMarkCount} other)`
+              : ""}
+          </span>
+        ) : knownMarkCount > 0 ? (
+          <span className="rounded-md border border-amber-500/30 bg-amber-950/35 px-2 py-1 text-amber-100">
+            {knownMarkCount} timeline mark{knownMarkCount === 1 ? "" : "s"} · no
+            Game Cap sidecar detected yet
+          </span>
+        ) : (
+          <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-zinc-400">
+            Sidecar not matched
+          </span>
+        )}
+        {canEdit ? (
+          <button
+            type="button"
+            className={ghostBtn}
+            disabled={attachBusy || busy !== null}
+            onClick={() => void matchSidecarsFromDrive()}
+          >
+            {attachBusy
+              ? "Matching…"
+              : gameCapMarkCount > 0
+                ? "Re-match from Drive"
+                : "Match sidecars from Drive"}
+          </button>
+        ) : null}
+      </div>
 
       {nonPublicAngles.length > 0 ? (
         <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-snug text-amber-100/90">
