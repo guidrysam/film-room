@@ -180,11 +180,7 @@ export default function DashboardPage() {
           </button>
           {signInError ? (
             <p className="mb-4 text-xs text-rose-300">{signInError}</p>
-          ) : (
-            <p className="mb-4 text-[11px] text-zinc-500">
-              If nothing opens, allow popups for this site, then try again.
-            </p>
-          )}
+          ) : null}
           <p className="mb-6 text-sm text-zinc-400">
             Player?{" "}
             <Link
