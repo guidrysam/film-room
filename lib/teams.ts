@@ -563,6 +563,15 @@ export function canContributeTeam(
   );
 }
 
+/** Shared team logo used on highlight reel title cards. */
+export function canEditTeamBranding(
+  team: Team,
+  uid: string,
+  club?: TeamClubContext | null,
+): boolean {
+  return canContributeTeam(team, uid, club);
+}
+
 export function canViewTeam(
   team: Team,
   uid: string,

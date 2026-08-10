@@ -38,7 +38,7 @@ function firestoreErrorMessage(err: unknown, fallback: string): string {
     const code = typeof o.code === "string" ? o.code : "";
     const msg = typeof o.message === "string" ? o.message.trim() : "";
     if (code === "permission-denied") {
-      return "Permission denied — only team admins can save the logo.";
+      return "Permission denied — you need to be a team coach or parent to save the logo.";
     }
     if (msg && code) return `${msg} (${code})`;
     if (msg) return msg;

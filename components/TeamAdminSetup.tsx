@@ -14,7 +14,12 @@ import {
   readTeamCreateImportSummary,
   type TeamCreateImportSummary,
 } from "@/lib/roster-import";
-import { canCoachTeam, canManageTeam, type Team } from "@/lib/teams";
+import {
+  canCoachTeam,
+  canEditTeamBranding,
+  canManageTeam,
+  type Team,
+} from "@/lib/teams";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -27,6 +32,7 @@ export type TeamAdminSetupProps = {
 /**
  * Team administration for operators (admins). Coaches use Games and Review;
  * roster import and invites stay with the person who maintains Film Room.
+ * Parents can update shared team branding (logo).
  */
 export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps) {
   const [createSummary] = useState<TeamCreateImportSummary | null>(() => {
@@ -41,13 +47,42 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
   }, [team]);
 
   const isOperator = canManageTeam(teamState, currentUid);
+  const canBrand = canEditTeamBranding(teamState, currentUid);
+  const isCoach = canCoachTeam(teamState, currentUid);
 
-  if (!canCoachTeam(teamState, currentUid)) {
+  if (!isCoach && !canBrand) {
     return (
       <div className={panelClass}>
         <p className="text-sm text-zinc-400">
-          Team setup is available to coaches and admins only.
+          Team setup is available to coaches, admins, and parents (logo only).
         </p>
+      </div>
+    );
+  }
+
+  if (!isOperator && !isCoach) {
+    return (
+      <div className="space-y-5">
+        <section className={panelClass}>
+          <h2 className="mb-1 text-sm font-semibold text-white">Branding</h2>
+          <p className="mb-3 text-xs leading-relaxed text-zinc-500">
+            Team logo appears on highlight reel title screens. Parents can
+            upload or replace it for the whole team.
+          </p>
+          <TeamLogoUpload
+            team={teamState}
+            onUpdated={(logoUrl) =>
+              setTeamState((prev) => ({ ...prev, logoUrl }))
+            }
+          />
+        </section>
+        <div className={panelClass}>
+          <p className="text-sm font-medium text-white">Need a song for the reel?</p>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+            Open a game → <strong className="font-medium text-zinc-200">Highlights</strong>{" "}
+            → Build Highlight Reel → Preview → Soundtrack.
+          </p>
+        </div>
       </div>
     );
   }

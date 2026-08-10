@@ -20,7 +20,8 @@ import {
 } from "@/lib/game-stats";
 import { gameReviewUrl } from "@/lib/player-profile";
 import { canContributeGameSources } from "@/lib/games";
-import { canCoachTeam } from "@/lib/teams";
+import { canCoachTeam, canEditTeamBranding } from "@/lib/teams";
+import TeamLogoUpload from "@/components/TeamLogoUpload";
 import {
   gameCapUrl,
   teamFilmRoomUrl,
@@ -137,6 +138,11 @@ export default function GameDashboard({
   const canAttach = useMemo(() => {
     if (!data) return false;
     return canContributeGameSources(data.game, currentUid, data.teamRole);
+  }, [data, currentUid]);
+
+  const canBrandTeam = useMemo(() => {
+    if (!data?.team) return false;
+    return canEditTeamBranding(data.team, currentUid);
   }, [data, currentUid]);
 
   const canManageStats = useMemo(() => {
@@ -410,9 +416,40 @@ export default function GameDashboard({
           <h2 className="mb-2 text-sm font-semibold text-white">Highlights</h2>
           <p className="mb-3 text-xs text-zinc-400">
             {highlightDrafts.length === 0
-              ? "Cut a multi-angle highlight reel from this game."
+              ? "Cut a multi-angle highlight reel from this game. Upload a team logo and soundtrack here or in the reel studio."
               : `${highlightDrafts.length} highlight reel${highlightDrafts.length === 1 ? "" : "s"} in progress.`}
           </p>
+
+          {data.team && canBrandTeam ? (
+            <div className="mb-3">
+              <TeamLogoUpload
+                team={data.team}
+                onUpdated={(logoUrl) => {
+                  setData((prev) =>
+                    prev?.team
+                      ? { ...prev, team: { ...prev.team, logoUrl } }
+                      : prev,
+                  );
+                }}
+              />
+            </div>
+          ) : null}
+
+          <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-3">
+            <p className="text-xs font-semibold text-zinc-100">Soundtrack</p>
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+              Upload the song inside Highlight Reel Studio (Preview → Soundtrack).
+              The song length is the length to shoot for, and it plays under the
+              reel.
+            </p>
+            <Link
+              href={`/game/${game.id}/reel`}
+              className={`${ghostBtn} mt-3 inline-flex`}
+            >
+              Open reel to upload song
+            </Link>
+          </div>
+
           <div className="mb-3 flex flex-wrap gap-2">
             <Link href={`/game/${game.id}/reel`} className={primaryBtn}>
               Build Highlight Reel
@@ -432,6 +469,7 @@ export default function GameDashboard({
                     <span className="text-[10px] text-zinc-500">
                       {d.moments.length}{" "}
                       {d.moments.length === 1 ? "moment" : "moments"}
+                      {d.soundtrack ? " · song" : ""}
                     </span>
                   </span>
                   <Link href={`/game/${game.id}/reel`} className={ghostBtn}>

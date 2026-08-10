@@ -283,6 +283,12 @@ service cloud.firestore {
 
       allow update: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
 
+      // Parents/coaches may update team branding (logo) without full admin.
+      allow update: if request.auth != null
+        && canTeamContributeSources(teamId, request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['logoUrl', 'updatedAt']);
+
       allow delete: if request.auth != null &&
                        resource.data.ownerId == request.auth.uid;
 
