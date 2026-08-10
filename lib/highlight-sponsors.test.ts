@@ -30,7 +30,7 @@ describe("normalizeHighlightSponsors", () => {
 });
 
 describe("sponsorInterstitialForCut", () => {
-  it("cycles logos across cuts (logo only, no text)", () => {
+  it("cycles logos and shows default thank-you copy", () => {
     const sponsors = [
       { logoUrl: "data:image/png;base64,a" },
       { logoUrl: "data:image/png;base64,b" },
@@ -39,7 +39,7 @@ describe("sponsorInterstitialForCut", () => {
     const second = sponsorInterstitialForCut(sponsors, 1);
     const third = sponsorInterstitialForCut(sponsors, 2);
     assert.equal(first?.kind, "thanks");
-    assert.equal(first?.headline, "");
+    assert.equal(first?.headline, "Thank you to our sponsors");
     assert.equal(first?.subtitle, undefined);
     assert.equal(first?.logos[0]?.logoUrl, "data:image/png;base64,a");
     assert.equal(second?.logos[0]?.logoUrl, "data:image/png;base64,b");

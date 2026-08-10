@@ -54,6 +54,8 @@ export type HighlightReelSharePayload = {
   soundtrack?: HighlightSoundtrack;
   /** Sponsor logos for black-cut thank-yous. */
   sponsors?: HighlightSponsorLogo[];
+  /** Custom thank-you copy on sponsor cuts. */
+  thankYouMessage?: string;
 };
 
 export type SharedHighlightReelLookupResult =
@@ -145,6 +147,7 @@ export function buildHighlightReelSharePayload(input: {
   club?: Pick<{ name?: string; logoUrl?: string }, "name" | "logoUrl"> | null;
   titleLogoSource?: import("@/lib/highlight-reel-cards").ReelTitleLogoSource | null;
   titleLogoUrl?: string | null;
+  thankYouMessage?: string | null;
 }): HighlightReelSharePayload {
   const playable = input.sources.filter((s) => gameSourceToVideoAngle(s) != null);
   const shareSources: HighlightReelShareSource[] = [];
@@ -158,6 +161,7 @@ export function buildHighlightReelSharePayload(input: {
     });
   }
   const sponsors = normalizeHighlightSponsors(input.sponsors);
+  const thankYouMessage = input.thankYouMessage?.trim() || "";
   return {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: input.reelName.trim() || "Highlight reel",
@@ -172,6 +176,7 @@ export function buildHighlightReelSharePayload(input: {
     ...(input.scoreboard ? { scoreboard: input.scoreboard } : {}),
     ...(input.soundtrack ? { soundtrack: input.soundtrack } : {}),
     ...(sponsors.length > 0 ? { sponsors } : {}),
+    ...(thankYouMessage ? { thankYouMessage } : {}),
   };
 }
 
@@ -205,6 +210,10 @@ export function parseHighlightReelSharePayload(
   const scoreboard = parseShareScoreboard(v.scoreboard);
   const soundtrack = normalizeHighlightSoundtrack(v.soundtrack);
   const sponsors = normalizeHighlightSponsors(v.sponsors);
+  const thankYouMessage =
+    typeof v.thankYouMessage === "string" && v.thankYouMessage.trim()
+      ? v.thankYouMessage.trim()
+      : undefined;
   return {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: v.reelName.trim() || "Highlight reel",
@@ -223,6 +232,7 @@ export function parseHighlightReelSharePayload(
     ...(scoreboard ? { scoreboard } : {}),
     ...(soundtrack ? { soundtrack } : {}),
     ...(sponsors.length > 0 ? { sponsors } : {}),
+    ...(thankYouMessage ? { thankYouMessage } : {}),
   };
 }
 

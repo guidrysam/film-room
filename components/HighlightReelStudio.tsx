@@ -243,6 +243,7 @@ export default function HighlightReelStudio({
   const [sponsors, setSponsors] = useState<HighlightSponsorLogo[]>([]);
   const [sponsorBusy, setSponsorBusy] = useState(false);
   const [sponsorMessage, setSponsorMessage] = useState<string | null>(null);
+  const [thankYouMessage, setThankYouMessage] = useState("");
   const sponsorFileRef = useRef<HTMLInputElement | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -472,6 +473,7 @@ export default function HighlightReelStudio({
     setSoundtrackMessage(null);
     setSponsors([]);
     setSponsorMessage(null);
+    setThankYouMessage("");
     setTitleLogoSource("auto");
     setTitleLogoUrl(null);
     setCrestMessage(null);
@@ -487,6 +489,7 @@ export default function HighlightReelStudio({
     setSoundtrackMessage(null);
     setSponsors(reel.sponsors ? reel.sponsors.map((s) => ({ ...s })) : []);
     setSponsorMessage(null);
+    setThankYouMessage(reel.thankYouMessage ?? "");
     setTitleLogoSource(reel.titleLogoSource ?? "auto");
     setTitleLogoUrl(reel.titleLogoUrl ?? null);
     setCrestMessage(null);
@@ -783,6 +786,7 @@ export default function HighlightReelStudio({
             sponsors,
             titleLogoSource,
             titleLogoUrl,
+            thankYouMessage,
           ),
         });
       } else {
@@ -794,6 +798,7 @@ export default function HighlightReelStudio({
           sponsors,
           titleLogoSource,
           titleLogoUrl,
+          thankYouMessage,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setEditingId(id);
@@ -814,6 +819,7 @@ export default function HighlightReelStudio({
     sponsors,
     titleLogoSource,
     titleLogoUrl,
+    thankYouMessage,
     editingId,
     gameId,
     name,
@@ -1042,6 +1048,7 @@ export default function HighlightReelStudio({
         club,
         titleLogoSource,
         titleLogoUrl,
+        thankYouMessage,
       });
       const shareId = await ensureHighlightReelSharing(
         gameId,
@@ -1084,6 +1091,7 @@ export default function HighlightReelStudio({
     club,
     titleLogoSource,
     titleLogoUrl,
+    thankYouMessage,
     gameId,
     currentUid,
   ]);
@@ -1507,8 +1515,21 @@ export default function HighlightReelStudio({
               </div>
             </div>
             <p className="mt-1 text-[10px] text-zinc-500">
-              Logos only on black cuts between clips (~¾s outbound + 4s inbound).
+              Logos cycle on black cuts between clips (~¾s outbound + 4s inbound).
             </p>
+            <label className="mt-2 block text-[10px] text-zinc-400">
+              Thank-you message
+              <input
+                type="text"
+                value={thankYouMessage}
+                onChange={(e) => {
+                  setThankYouMessage(e.target.value);
+                  setDirty(true);
+                }}
+                placeholder="Thank you to our sponsors"
+                className={`${inputClass} mt-1 w-full`}
+              />
+            </label>
             {sponsors.length > 0 ? (
               <ul className="mt-2 flex flex-wrap gap-2">
                 {sponsors.map((s) => (
@@ -1554,6 +1575,7 @@ export default function HighlightReelStudio({
             scoreboard={scoreboard}
             soundtrackUrl={soundtrackUrl}
             sponsors={sponsors}
+            thankYouMessage={thankYouMessage.trim() || null}
             videoIdForSource={videoIdForSource}
             labelForSource={labelForSource}
             onEnded={handleReelEnded}

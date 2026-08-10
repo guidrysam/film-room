@@ -164,6 +164,7 @@ export default function SharedHighlightReelPage() {
                   : null
               }
               sponsors={payload.sponsors ?? null}
+              thankYouMessage={payload.thankYouMessage ?? null}
               videoIdForSource={videoIdForSource}
               labelForSource={labelForSource}
             />

@@ -55,6 +55,11 @@ export default function ReelInterstitial({ card }: ReelInterstitialProps) {
     const single = card.logos.length === 1;
     return (
       <div className="flex h-full w-full flex-col items-center justify-center px-4 text-center sm:px-6">
+        {card.headline.trim() ? (
+          <p className="mb-5 max-w-[92%] text-balance text-lg font-semibold tracking-tight text-white sm:mb-6 sm:text-2xl">
+            {card.headline}
+          </p>
+        ) : null}
         <ul
           className={`grid w-full max-w-2xl place-items-center gap-6 ${
             single
@@ -75,16 +80,16 @@ export default function ReelInterstitial({ card }: ReelInterstitialProps) {
                 alt=""
                 className={
                   single
-                    ? "h-[min(70vh,24rem)] w-[min(70vh,24rem)] rounded-3xl bg-white object-contain p-5 shadow-2xl shadow-black/55 sm:h-[min(72vh,28rem)] sm:w-[min(72vh,28rem)]"
+                    ? "h-[min(48vh,16rem)] w-[min(48vh,16rem)] rounded-3xl bg-white object-contain p-4 shadow-2xl shadow-black/55 sm:h-[min(52vh,18rem)] sm:w-[min(52vh,18rem)]"
                     : "h-28 w-28 rounded-2xl bg-white object-contain p-2.5 shadow-xl shadow-black/45 sm:h-32 sm:w-32"
                 }
               />
             </li>
           ))}
         </ul>
-        {card.headline.trim() ? (
-          <p className="mt-6 max-w-[92%] text-balance text-xl font-semibold tracking-tight text-white sm:text-2xl">
-            {card.headline}
+        {card.subtitle?.trim() ? (
+          <p className="mt-4 max-w-[85%] text-sm text-zinc-300">
+            {card.subtitle}
           </p>
         ) : null}
       </div>

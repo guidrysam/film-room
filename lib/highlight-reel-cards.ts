@@ -2,7 +2,7 @@ import type { Game } from "@/lib/games";
 import type { Team } from "@/lib/teams";
 import type { ReelStep } from "@/lib/highlight-draft";
 
-export const REEL_TITLE_HOLD_MS = 2800;
+export const REEL_TITLE_HOLD_MS = 4800;
 export const REEL_STAT_HOLD_MS = 1600;
 export const REEL_THANKS_HOLD_MS = 3200;
 
@@ -49,10 +49,10 @@ export function sponsorInterstitialForCut(
   if (list.length === 0) return null;
   const i = ((cutIndex % list.length) + list.length) % list.length;
   const logo = list[i]!;
-  const message = opts?.message?.trim() || "";
+  const message =
+    opts?.message?.trim() || "Thank you to our sponsors";
   return {
     kind: "thanks",
-    // Empty headline = logo-only black cut (no filename / default copy).
     headline: message,
     logos: [logo],
   };

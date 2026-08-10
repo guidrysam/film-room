@@ -77,6 +77,8 @@ export type HighlightDraftMeta = {
   titleLogoSource?: ReelTitleLogoSource;
   /** Logo URL when {@link titleLogoSource} is `custom` (any of my club/team crests). */
   titleLogoUrl?: string;
+  /** Custom thank-you copy on black sponsor cuts. */
+  thankYouMessage?: string;
 };
 
 export type HighlightDraft = {
@@ -89,6 +91,7 @@ export type HighlightDraft = {
   sponsors?: HighlightSponsorLogo[];
   titleLogoSource?: ReelTitleLogoSource;
   titleLogoUrl?: string;
+  thankYouMessage?: string;
   createdBy?: string;
   createdByName?: string;
 };
@@ -164,9 +167,11 @@ export function serializeHighlightDraftMeta(
   sponsors?: HighlightSponsorLogo[] | null,
   titleLogoSource?: ReelTitleLogoSource | null,
   titleLogoUrl?: string | null,
+  thankYouMessage?: string | null,
 ): string {
   const customLogo =
     titleLogoSource === "custom" ? titleLogoUrl?.trim() || "" : "";
+  const thanks = thankYouMessage?.trim() || "";
   const meta: HighlightDraftMeta = {
     schema: HIGHLIGHT_DRAFT_SCHEMA,
     moments,
@@ -177,6 +182,7 @@ export function serializeHighlightDraftMeta(
       ? { titleLogoSource }
       : {}),
     ...(customLogo ? { titleLogoUrl: customLogo } : {}),
+    ...(thanks ? { thankYouMessage: thanks } : {}),
   };
   return JSON.stringify(meta);
 }
@@ -236,6 +242,10 @@ export function parseHighlightDraftMeta(
         : undefined;
     const resolvedSource =
       titleLogoSource ?? (titleLogoUrl ? ("custom" as const) : undefined);
+    const thankYouMessage =
+      typeof raw.thankYouMessage === "string" && raw.thankYouMessage.trim()
+        ? raw.thankYouMessage.trim()
+        : undefined;
     return {
       schema: HIGHLIGHT_DRAFT_SCHEMA,
       moments,
@@ -246,6 +256,7 @@ export function parseHighlightDraftMeta(
       ...(resolvedSource === "custom" && titleLogoUrl
         ? { titleLogoUrl }
         : {}),
+      ...(thankYouMessage ? { thankYouMessage } : {}),
     };
   } catch {
     return null;
@@ -310,6 +321,7 @@ export function highlightDraftFromTrack(track: DirectorTrack): HighlightDraft | 
       : {}),
     ...(meta.titleLogoSource ? { titleLogoSource: meta.titleLogoSource } : {}),
     ...(meta.titleLogoUrl ? { titleLogoUrl: meta.titleLogoUrl } : {}),
+    ...(meta.thankYouMessage ? { thankYouMessage: meta.thankYouMessage } : {}),
     ...(track.createdBy ? { createdBy: track.createdBy } : {}),
     ...(track.createdByName ? { createdByName: track.createdByName } : {}),
   };
@@ -598,6 +610,7 @@ export async function createHighlightReel(
     sponsors?: HighlightSponsorLogo[] | null;
     titleLogoSource?: ReelTitleLogoSource | null;
     titleLogoUrl?: string | null;
+    thankYouMessage?: string | null;
   },
 ): Promise<string> {
   if (input.moments.length === 0) {
@@ -622,6 +635,7 @@ export async function createHighlightReel(
       input.sponsors ?? null,
       input.titleLogoSource ?? null,
       input.titleLogoUrl ?? null,
+      input.thankYouMessage ?? null,
     ),
     ...(input.createdByName ? { createdByName: input.createdByName } : {}),
   });

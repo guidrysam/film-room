@@ -263,7 +263,7 @@ export default function MyFilmPage() {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-white">
-            {source.label}
+            {formatGameCapMogoDisplayName(source.label) || source.label}
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {source.organizeKind}

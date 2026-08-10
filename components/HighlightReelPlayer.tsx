@@ -85,6 +85,8 @@ export type HighlightReelPlayerProps = {
   soundtrackUrl?: string | null;
   /** Sponsor logos cycled on black cuts between clips. */
   sponsors?: HighlightSponsorLogo[] | null;
+  /** Custom thank-you copy on sponsor cuts (default if omitted). */
+  thankYouMessage?: string | null;
   onEnded?: () => void;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -101,6 +103,7 @@ const HighlightReelPlayer = forwardRef<
     scoreboard,
     soundtrackUrl,
     sponsors,
+    thankYouMessage,
     onEnded,
     onPlayingChange,
   },
@@ -124,6 +127,7 @@ const HighlightReelPlayer = forwardRef<
   const scoreboardRef = useRef(scoreboard);
   const soundtrackUrlRef = useRef(soundtrackUrl);
   const sponsorsRef = useRef(sponsors);
+  const thankYouMessageRef = useRef(thankYouMessage);
   const cutIndexRef = useRef(0);
   useEffect(() => {
     stepsRef.current = steps;
@@ -139,6 +143,9 @@ const HighlightReelPlayer = forwardRef<
   });
   useEffect(() => {
     sponsorsRef.current = sponsors;
+  });
+  useEffect(() => {
+    thankYouMessageRef.current = thankYouMessage;
   });
 
   const playingRef = useRef(false);
@@ -512,8 +519,11 @@ const HighlightReelPlayer = forwardRef<
     ) => {
       const { alreadyBlack = false, segmentStarted = false } = options ?? {};
       const step = stepsRef.current[index];
-      const stat = statInterstitialFromStep(step);
-      setInterstitial(stat);
+      // Keep the title card on-screen through first-clip preroll so YouTube
+      // chrome stays covered under the branded black.
+      if (!(alreadyBlack && segmentStarted)) {
+        setInterstitial(statInterstitialFromStep(step));
+      }
 
       try {
         if (!alreadyBlack) {
@@ -569,6 +579,7 @@ const HighlightReelPlayer = forwardRef<
         const sponsorCard = sponsorInterstitialForCut(
           sponsorsRef.current,
           cut,
+          { message: thankYouMessageRef.current },
         );
         if (sponsorCard) {
           setInterstitial(sponsorCard);
