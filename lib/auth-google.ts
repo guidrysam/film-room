@@ -11,10 +11,26 @@ import { auth } from "@/lib/firebase";
 
 const provider = new GoogleAuthProvider();
 
+function authErrorCode(err: unknown): string {
+  if (!err || typeof err !== "object") return "";
+  return "code" in err ? String((err as { code?: unknown }).code) : "";
+}
+
 function isPopupBlockedError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const code = "code" in err ? String((err as { code?: unknown }).code) : "";
-  return code === "auth/popup-blocked";
+  return authErrorCode(err) === "auth/popup-blocked";
+}
+
+/** Friendlier copy for common Google sign-in failures. */
+export function formatGoogleSignInError(err: unknown): string {
+  const code = authErrorCode(err);
+  if (code === "auth/unauthorized-domain") {
+    return "This site isn’t approved for Google sign-in. Use https://film-room-gray.vercel.app (not a preview link).";
+  }
+  if (code === "auth/popup-blocked") {
+    return "The sign-in popup was blocked. Trying again in this tab…";
+  }
+  if (err instanceof Error && err.message.trim()) return err.message;
+  return "Sign-in failed. Try again.";
 }
 
 /**

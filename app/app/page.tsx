@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
-import { signInWithGoogle, signOutUser } from "@/lib/auth-google";
+import { formatGoogleSignInError, signInWithGoogle, signOutUser } from "@/lib/auth-google";
 import BatchEventInvite from "@/components/BatchEventInvite";
 import { listAccessibleGames } from "@/lib/accessible-games";
 import type { Game } from "@/lib/games";
@@ -174,11 +174,7 @@ export default function DashboardPage() {
                   if (cred == null) return;
                 })
                 .catch((err) => {
-                  const message =
-                    err instanceof Error && err.message.trim()
-                      ? err.message
-                      : "Sign-in failed. Try again.";
-                  setSignInError(message);
+                  setSignInError(formatGoogleSignInError(err));
                 })
                 .finally(() => setSigningIn(false));
             }}
