@@ -25,6 +25,7 @@ import {
   createGame,
 } from "@/lib/games";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
+import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -190,13 +191,14 @@ export default function MyFilmPage() {
     setError(null);
     try {
       const title =
+        formatGameCapMogoDisplayName(source.label || "") ||
         source.label ||
         (source.organizeKind === "practice" ? "Practice" : "My Film");
       const gameId = await createGame(user.uid, { title });
       if (isYoutube && ytId) {
         await addGameSourceFromYouTubeUpload(gameId, user.uid, {
           videoId: ytId,
-          label: source.label,
+          label: formatGameCapMogoDisplayName(source.label) || source.label,
           youtubePrivacyStatus: "unlisted",
           ...(source.recordedStartTime
             ? { recordedStartTime: source.recordedStartTime }
@@ -209,7 +211,7 @@ export default function MyFilmPage() {
         const slot = isAngleSlot(source.angleSlot) ? source.angleSlot : "main";
         await addGameSourceFromDriveUpload(gameId, user.uid, {
           driveFileId: source.driveFileId!,
-          label: source.label,
+          label: formatGameCapMogoDisplayName(source.label) || source.label,
           angleSlot: slot,
           ...(source.recordedStartTime
             ? { recordedStartTime: source.recordedStartTime }

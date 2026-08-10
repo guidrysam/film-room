@@ -3,7 +3,10 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminFirestore } from "@/lib/firebase-admin";
 import { getUserYouTubeUploadAccessToken } from "@/lib/youtube/user-upload-oauth";
-import { isGameCapMogoYouTubeVideo } from "@/lib/youtube/mogo-match";
+import {
+  formatGameCapMogoDisplayName,
+  isGameCapMogoYouTubeVideo,
+} from "@/lib/youtube/mogo-match";
 
 export type ChannelVideoRow = {
   videoId: string;
@@ -162,7 +165,10 @@ export async function syncGameCapMogoChannelToInbox(
     }
 
     const sourceRef = filmCol.doc();
-    const label = row.title.replace(/\.mov$/i, "").trim() || row.videoId;
+    const label =
+      formatGameCapMogoDisplayName(row.title) ||
+      row.title.replace(/\.mov$/i, "").trim() ||
+      row.videoId;
     await sourceRef.set({
       id: sourceRef.id,
       ownerUid: uid,
