@@ -86,7 +86,10 @@ export default function SharedHighlightReelPage() {
 
   const handleWatch = useCallback(() => {
     setStarted(true);
-    window.setTimeout(() => playerRef.current?.play(), 120);
+    // Player is already mounted at full size under the overlay — kick play
+    // immediately (user gesture) and once more after layout settles.
+    playerRef.current?.play();
+    window.setTimeout(() => playerRef.current?.play(), 80);
   }, []);
 
   if (loading) {
@@ -140,9 +143,9 @@ export default function SharedHighlightReelPage() {
           ) : null}
         </header>
 
-        <div className={panelClass}>
+        <div className={`${panelClass} relative overflow-hidden`}>
           {!started ? (
-            <div className="flex flex-col items-center py-10 text-center">
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#030306]/95 px-4 text-center backdrop-blur-[2px]">
               <p className="max-w-md text-sm leading-relaxed text-zinc-400">
                 Press play to watch the full highlight reel — no sign-in required.
               </p>
@@ -152,23 +155,22 @@ export default function SharedHighlightReelPage() {
             </div>
           ) : null}
 
-          <div className={started ? undefined : "sr-only"} aria-hidden={!started}>
-            <HighlightReelPlayer
-              ref={playerRef}
-              steps={payload.steps}
-              titleCard={payload.titleCard}
-              scoreboard={payload.scoreboard ?? null}
-              soundtrackUrl={
-                payload.soundtrack
-                  ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
-                  : null
-              }
-              sponsors={payload.sponsors ?? null}
-              thankYouMessage={payload.thankYouMessage ?? null}
-              videoIdForSource={videoIdForSource}
-              labelForSource={labelForSource}
-            />
-          </div>
+          <HighlightReelPlayer
+            ref={playerRef}
+            steps={payload.steps}
+            titleCard={payload.titleCard}
+            scoreboard={payload.scoreboard ?? null}
+            soundtrackUrl={
+              payload.soundtrack
+                ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
+                : null
+            }
+            sponsors={payload.sponsors ?? null}
+            thankYouMessage={payload.thankYouMessage ?? null}
+            videoIdForSource={videoIdForSource}
+            labelForSource={labelForSource}
+            autoPlay={started}
+          />
         </div>
 
         <p className="mt-6 text-center text-xs text-zinc-600">

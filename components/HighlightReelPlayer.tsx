@@ -87,6 +87,11 @@ export type HighlightReelPlayerProps = {
   sponsors?: HighlightSponsorLogo[] | null;
   /** Custom thank-you copy on sponsor cuts (default if omitted). */
   thankYouMessage?: string | null;
+  /**
+   * When true, start the reel once the YouTube player is ready
+   * (shared watch page — user already pressed Watch).
+   */
+  autoPlay?: boolean;
   onEnded?: () => void;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -104,6 +109,7 @@ const HighlightReelPlayer = forwardRef<
     soundtrackUrl,
     sponsors,
     thankYouMessage,
+    autoPlay = false,
     onEnded,
     onPlayingChange,
   },
@@ -364,7 +370,9 @@ const HighlightReelPlayer = forwardRef<
           resolve();
           return;
         }
-        const deadline = Date.now() + 4000;
+        // Shared/mobile players often need longer than a few seconds to leave
+        // UNSTARTED after loadVideoById — keep kicking until deadline.
+        const deadline = Date.now() + 10000;
         const playbackStart = reelPlaybackStartSec(
           step.sourceStartTime,
           REEL_USE_BLACK_TRANSITIONS,
@@ -379,23 +387,26 @@ const HighlightReelPlayer = forwardRef<
           try {
             const state = player.getPlayerState?.();
             const current = player.getCurrentTime?.() ?? 0;
-            const timeOk = current + 0.35 >= playbackStart;
+            const timeOk =
+              playbackStart <= 0.5
+                ? current >= 0
+                : current + 0.55 >= playbackStart;
             const playingOk =
-              state === YT_PLAYING || (state === YT_BUFFERING && timeOk);
+              state === YT_PLAYING || state === YT_BUFFERING;
             if (timeOk && playingOk) {
               resolve();
               return;
             }
             if (
-              timeOk &&
-              (state === YT_PAUSED ||
-                state === YT_CUED ||
-                state === YT_UNSTARTED ||
-                state === YT_BUFFERING)
+              state === YT_PAUSED ||
+              state === YT_CUED ||
+              state === YT_UNSTARTED ||
+              state === YT_BUFFERING
             ) {
               kickPlayback(player);
             }
             if (Date.now() >= deadline) {
+              kickPlayback(player);
               resolve();
               return;
             }
@@ -522,16 +533,26 @@ const HighlightReelPlayer = forwardRef<
       // Keep the title card on-screen through first-clip preroll so YouTube
       // chrome stays covered under the branded black.
       if (!(alreadyBlack && segmentStarted)) {
-        setInterstitial(statInterstitialFromStep(step));
+        setInterstitial(step ? statInterstitialFromStep(step) : null);
       }
 
+      const clearCover = () => {
+        setInterstitial(null);
+        setFadeOpaque(false);
+      };
+
       try {
+        if (!step) {
+          clearCover();
+          return;
+        }
         if (!alreadyBlack) {
           setFadeOpaque(true);
           if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
           if (seq !== playSeqRef.current || !playingRef.current) return;
         } else if (segmentStarted) {
-          ensureSegmentPlaying(index, pass, true);
+          // Force a fresh seek/play — reuse-only kick often no-ops while cued.
+          ensureSegmentPlaying(index, pass, false);
         } else {
           ensureSegmentPlaying(index, pass, false);
         }
@@ -542,13 +563,13 @@ const HighlightReelPlayer = forwardRef<
         await delayMs(reelPrerollWallMs(step.speed));
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
-        setInterstitial(null);
-        setFadeOpaque(false);
+        clearCover();
         await delayMs(REEL_FADE_OUT_MS);
+      } catch {
+        if (seq === playSeqRef.current) clearCover();
       } finally {
         if (seq !== playSeqRef.current || !playingRef.current) {
-          setInterstitial(null);
-          setFadeOpaque(false);
+          clearCover();
         }
       }
     },
@@ -632,20 +653,32 @@ const HighlightReelPlayer = forwardRef<
 
     const title = titleCardRef.current;
     let segmentStarted = false;
-    if (title) {
-      setInterstitial({ kind: "title", ...title });
-      setFadeOpaque(true);
-      ensureSegmentPlaying(0, 0, false);
-      segmentStarted = true;
-      await delayMs(REEL_FADE_IN_MS);
-      await delayMs(REEL_TITLE_HOLD_MS);
-      if (seq !== playSeqRef.current || !playingRef.current) return;
-    }
+    try {
+      if (title) {
+        setInterstitial({ kind: "title", ...title });
+        setFadeOpaque(true);
+        ensureSegmentPlaying(0, 0, false);
+        segmentStarted = true;
+        await delayMs(REEL_FADE_IN_MS);
+        await delayMs(REEL_TITLE_HOLD_MS);
+        if (seq !== playSeqRef.current) return;
+        if (!playingRef.current) {
+          setInterstitial(null);
+          setFadeOpaque(false);
+          return;
+        }
+      }
 
-    await presentSegmentUnderBlack(0, 0, seq, {
-      alreadyBlack: !!title,
-      segmentStarted,
-    });
+      await presentSegmentUnderBlack(0, 0, seq, {
+        alreadyBlack: !!title,
+        segmentStarted,
+      });
+    } catch {
+      if (seq === playSeqRef.current) {
+        setInterstitial(null);
+        setFadeOpaque(false);
+      }
+    }
   }, [
     ensureSegmentPlaying,
     loadStep,
@@ -703,6 +736,16 @@ const HighlightReelPlayer = forwardRef<
   }, [beginPlayback, ready, setPlayingState]);
 
   useImperativeHandle(ref, () => ({ play, stop }), [play, stop]);
+
+  /** Shared watch page: start after Watch while player finishes becoming ready. */
+  useEffect(() => {
+    if (!autoPlay || playingRef.current) return;
+    if (!ready || !playerRef.current) {
+      pendingPlayRef.current = true;
+      return;
+    }
+    play();
+  }, [autoPlay, ready, play]);
 
   useEffect(() => {
     if (!ready || playingRef.current) return;
