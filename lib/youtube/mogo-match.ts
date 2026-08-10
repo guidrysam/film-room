@@ -9,8 +9,8 @@ export function isGameCapMogoYouTubeVideo(
   if (/GameCapMOGO/i.test(t)) return true;
   if (/Game\s*Cap\s*MOGO/i.test(t)) return true;
   if (/Uploaded from Game Cap MOGO/i.test(d)) return true;
-  // Drive-style session name: "Main — GameCapMOGO-...."
-  if (/GameCapMOGO-\d{4}-\d{2}-\d{2}/i.test(t)) return true;
+  // Drive-style / spaced session names
+  if (/GameCapMOGO[-_\s]+\d{4}/i.test(t)) return true;
   return false;
 }
 
@@ -18,11 +18,15 @@ const ANGLE_PREFIX_RE =
   /^(Main|Goal A|Goal B|Offense|Defense)\s*[—–-]\s*/i;
 
 /**
- * MOGO stamps filenames with an ISO-like token where `:` becomes `-`, e.g.
- * `GameCapMOGO-2026-08-08T21-49-23.592Z-282e4e1`.
+ * MOGO stamps filenames with an ISO-like token. Colons (and sometimes other
+ * separators) become hyphens or spaces, e.g.
+ * `GameCapMOGO-2026-08-08T21-49-23.592Z-282e4e1`
+ * `GameCapMOGO 2026 08 08T21 49 23 592Z 282ae4a1`
  */
 const MOGO_STAMP_RE =
-  /GameCapMOGO[-_\s]+(\d{4})[-_]?(\d{2})[-_]?(\d{2})T(\d{2})[-:_\s]?(\d{2})[-:_\s]?(\d{2})(?:[.\-_](\d{1,3}))?Z?/i;
+  /GameCapMOGO[-_\s]+(\d{4})[-_\s]*(\d{2})[-_\s]*(\d{2})T(\d{2})[-:_\s]*(\d{2})[-:_\s]*(\d{2})(?:[.\-_\s]+(\d{1,3}))?Z?/i;
+
+const TRAILING_HEX_ID_RE = /^[a-f0-9]{6,10}\b/i;
 
 export function parseGameCapMogoRecordedAt(raw: string): Date | null {
   const m = MOGO_STAMP_RE.exec(raw.trim());
@@ -37,6 +41,7 @@ export function parseGameCapMogoRecordedAt(raw: string): Date | null {
 /**
  * Turn a MOGO coded title into a plain-English label, e.g.
  * `Main — GameCapMOGO-2026-08-08T21-49-23.592Z-…` → `Main · Aug 8, 2026, 5:49 PM`
+ * `GameCapMOGO 2026 08 08T21 49 23 592Z … highlights` → `Aug 8, 2026, 5:49 PM · highlights`
  * Falls back to the original string when it isn't a MOGO stamp.
  */
 export function formatGameCapMogoDisplayName(
@@ -61,5 +66,15 @@ export function formatGameCapMogoDisplayName(
     ...(opts?.timeZone ? { timeZone: opts.timeZone } : {}),
   });
 
-  return angle ? `${angle} · ${when}` : when;
+  const rest = title
+    .replace(ANGLE_PREFIX_RE, "")
+    .replace(MOGO_STAMP_RE, "")
+    .replace(/^[.\-_\/\s]+/, "")
+    .replace(TRAILING_HEX_ID_RE, "")
+    .replace(/^[.\-_\/\s]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const base = angle ? `${angle} · ${when}` : when;
+  return rest ? `${base} · ${rest}` : base;
 }

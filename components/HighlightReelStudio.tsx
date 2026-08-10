@@ -31,6 +31,7 @@ import {
   listMyBrandLogos,
   type BrandLogoOption,
 } from "@/lib/brand-logos";
+import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 import {
   buildReelTitleCard,
   type ReelTitleLogoSource,
@@ -483,7 +484,7 @@ export default function HighlightReelStudio({
 
   const loadReel = useCallback((reel: HighlightDraft) => {
     setEditingId(reel.id);
-    setName(reel.name);
+    setName(formatGameCapMogoDisplayName(reel.name));
     setMoments(reel.moments.map((m) => ({ ...m })));
     setSoundtrack(reel.soundtrack ?? null);
     setSoundtrackMessage(null);
@@ -554,7 +555,9 @@ export default function HighlightReelStudio({
       const nextMoments = generated.map(inputToMoment);
       if (mode === "replace") {
         setEditingId(null);
-        setName(`${game.title.trim() || "Game"} highlights`);
+        setName(
+          `${formatGameCapMogoDisplayName(game.title.trim() || "Game")} highlights`,
+        );
         setVisibility("private");
         setMoments(nextMoments);
         setDirty(true);
@@ -659,7 +662,9 @@ export default function HighlightReelStudio({
       const nextMoments = generated.map(inputToMoment);
       if (mode === "replace") {
         setEditingId(null);
-        setName(`${game.title.trim() || "Game"} AI cut`);
+        setName(
+          `${formatGameCapMogoDisplayName(game.title.trim() || "Game")} AI cut`,
+        );
         setVisibility("private");
         setMoments(nextMoments);
         setDirty(true);

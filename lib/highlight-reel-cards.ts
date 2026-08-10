@@ -1,6 +1,7 @@
 import type { Game } from "@/lib/games";
 import type { Team } from "@/lib/teams";
 import type { ReelStep } from "@/lib/highlight-draft";
+import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 
 export const REEL_TITLE_HOLD_MS = 4800;
 export const REEL_STAT_HOLD_MS = 1600;
@@ -123,11 +124,12 @@ export function buildReelTitleCard(
 ): ReelTitleCard {
   const teamName = team?.name?.trim() ?? game.homeTeam?.trim();
   const opponent = game.opponent?.trim() ?? game.awayTeam?.trim();
-  const headline =
+  const rawHeadline =
     reelName?.trim() ||
     game.title?.trim() ||
     (teamName && opponent ? `${teamName} vs ${opponent}` : teamName) ||
     "Highlights";
+  const headline = formatGameCapMogoDisplayName(rawHeadline);
 
   const meta: string[] = [];
   if (

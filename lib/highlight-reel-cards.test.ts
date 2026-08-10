@@ -71,6 +71,16 @@ describe("buildReelTitleCard", () => {
     );
     assert.equal(card.logoUrl, "https://example.com/other-club.png");
   });
+
+  it("humanizes MOGO coded reel names on the title card", () => {
+    const card = buildReelTitleCard(
+      { ...game, title: "GameCapMOGO 2026 08 08T21 49 23 592Z 282ae4a1" },
+      null,
+      "GameCapMOGO 2026 08 08T21 49 23 592Z 282ae4a1 highlights",
+    );
+    assert.match(card.headline, /Aug 8, 2026/);
+    assert.doesNotMatch(card.headline, /GameCapMOGO/i);
+  });
 });
 
 describe("buildReelStatCard", () => {
