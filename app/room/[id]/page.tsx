@@ -7313,6 +7313,7 @@ function RoomContent() {
     if (!u) {
       try {
         const cred = await signInWithGoogle();
+        if (!cred) return; // redirect sign-in in progress
         u = cred.user;
       } catch {
         return;
@@ -7447,6 +7448,7 @@ function RoomContent() {
     if (!uid) {
       try {
         const cred = await signInWithGoogle();
+        if (!cred) return; // redirect sign-in in progress
         uid = cred.user.uid;
       } catch {
         return;
