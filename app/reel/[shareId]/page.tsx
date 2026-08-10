@@ -17,7 +17,44 @@ const panelClass =
 const primaryBtn =
   "rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-950/35 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 disabled:cursor-not-allowed disabled:opacity-50";
 
+const ghostBtn =
+  "rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-sm transition hover:bg-white/10";
+
 const LOAD_TIMEOUT_MS = 20_000;
+
+function fullscreenElement(): Element | null {
+  const doc = document as Document & {
+    webkitFullscreenElement?: Element | null;
+  };
+  return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+}
+
+async function requestElementFullscreen(el: HTMLElement): Promise<void> {
+  const anyEl = el as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void;
+  };
+  if (typeof el.requestFullscreen === "function") {
+    await el.requestFullscreen();
+    return;
+  }
+  if (typeof anyEl.webkitRequestFullscreen === "function") {
+    await anyEl.webkitRequestFullscreen();
+  }
+}
+
+async function exitDocumentFullscreen(): Promise<void> {
+  const doc = document as Document & {
+    webkitExitFullscreen?: () => Promise<void> | void;
+  };
+  if (fullscreenElement() == null) return;
+  if (typeof document.exitFullscreen === "function") {
+    await document.exitFullscreen();
+    return;
+  }
+  if (typeof doc.webkitExitFullscreen === "function") {
+    await doc.webkitExitFullscreen();
+  }
+}
 
 export default function SharedHighlightReelPage() {
   const params = useParams();
@@ -29,8 +66,10 @@ export default function SharedHighlightReelPage() {
   const [notFound, setNotFound] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const playerRef = useRef<HighlightReelPlayerHandle | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!shareId) {
@@ -48,10 +87,10 @@ export default function SharedHighlightReelPage() {
       setQueryError(null);
       setPayload(null);
       try {
-        const res = await fetch(
-          `/api/reel/${encodeURIComponent(shareId)}`,
-          { signal: controller.signal, cache: "no-store" },
-        );
+        const res = await fetch(`/api/reel/${encodeURIComponent(shareId)}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
         const result = (await res.json().catch(() => null)) as
           | SharedHighlightReelLookupResult
           | null;
@@ -102,6 +141,21 @@ export default function SharedHighlightReelPage() {
     };
   }, [shareId]);
 
+  useEffect(() => {
+    const sync = () => {
+      setIsFullscreen(fullscreenElement() === stageRef.current);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync as EventListener);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener(
+        "webkitfullscreenchange",
+        sync as EventListener,
+      );
+    };
+  }, []);
+
   const sourceMap = useMemo(() => {
     const map = new Map<string, { videoId: string; label?: string }>();
     for (const s of payload?.sources ?? []) {
@@ -119,11 +173,30 @@ export default function SharedHighlightReelPage() {
     [sourceMap],
   );
 
+  const enterFullscreen = useCallback(async () => {
+    const el = stageRef.current;
+    if (!el) return;
+    try {
+      await requestElementFullscreen(el);
+    } catch {
+      /* fullscreen blocked — still play inline */
+    }
+  }, []);
+
+  const leaveFullscreen = useCallback(async () => {
+    try {
+      await exitDocumentFullscreen();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const handleWatch = useCallback(() => {
     setStarted(true);
     playerRef.current?.play();
     window.setTimeout(() => playerRef.current?.play(), 80);
-  }, []);
+    void enterFullscreen();
+  }, [enterFullscreen]);
 
   if (loading) {
     return (
@@ -186,34 +259,72 @@ export default function SharedHighlightReelPage() {
           ) : null}
         </header>
 
-        <div className={`${panelClass} relative overflow-hidden`}>
+        <div
+          ref={stageRef}
+          className={
+            isFullscreen
+              ? "relative flex h-full w-full items-center justify-center bg-black"
+              : `${panelClass} relative overflow-hidden`
+          }
+        >
           {!started ? (
             <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#030306]/95 px-4 text-center backdrop-blur-[2px]">
               <p className="max-w-md text-sm leading-relaxed text-zinc-400">
-                Press play to watch the full highlight reel — no sign-in required.
+                Press play to watch fullscreen — no sign-in required.
               </p>
-              <button type="button" onClick={handleWatch} className={`${primaryBtn} mt-5`}>
+              <button
+                type="button"
+                onClick={handleWatch}
+                className={`${primaryBtn} mt-5`}
+              >
                 ▶ Watch highlights
               </button>
             </div>
           ) : null}
 
-          <HighlightReelPlayer
-            ref={playerRef}
-            steps={payload.steps}
-            titleCard={payload.titleCard}
-            scoreboard={payload.scoreboard ?? null}
-            soundtrackUrl={
-              payload.soundtrack
-                ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
-                : null
+          {isFullscreen ? (
+            <button
+              type="button"
+              onClick={() => void leaveFullscreen()}
+              className="absolute right-3 top-3 z-[60] flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-black/55 text-xl leading-none text-white shadow-lg backdrop-blur-sm transition hover:bg-black/75"
+              aria-label="Exit fullscreen"
+              title="Exit fullscreen"
+            >
+              ×
+            </button>
+          ) : started ? (
+            <button
+              type="button"
+              onClick={() => void enterFullscreen()}
+              className={`${ghostBtn} absolute right-3 top-3 z-[60]`}
+            >
+              Full screen
+            </button>
+          ) : null}
+
+          <div
+            className={
+              isFullscreen ? "aspect-video w-full max-w-[100vw]" : undefined
             }
-            sponsors={payload.sponsors ?? null}
-            thankYouMessage={payload.thankYouMessage ?? null}
-            videoIdForSource={videoIdForSource}
-            labelForSource={labelForSource}
-            autoPlay={started}
-          />
+          >
+            <HighlightReelPlayer
+              ref={playerRef}
+              steps={payload.steps}
+              titleCard={payload.titleCard}
+              scoreboard={payload.scoreboard ?? null}
+              soundtrackUrl={
+                payload.soundtrack
+                  ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
+                  : null
+              }
+              sponsors={payload.sponsors ?? null}
+              thankYouMessage={payload.thankYouMessage ?? null}
+              videoIdForSource={videoIdForSource}
+              labelForSource={labelForSource}
+              autoPlay={started}
+              hideChrome={isFullscreen}
+            />
+          </div>
         </div>
 
         <p className="mt-6 text-center text-xs text-zinc-600">

@@ -92,6 +92,8 @@ export type HighlightReelPlayerProps = {
    * (shared watch page — user already pressed Watch).
    */
   autoPlay?: boolean;
+  /** Hide the transport chrome (shared fullscreen watch). */
+  hideChrome?: boolean;
   onEnded?: () => void;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -110,6 +112,7 @@ const HighlightReelPlayer = forwardRef<
     sponsors,
     thankYouMessage,
     autoPlay = false,
+    hideChrome = false,
     onEnded,
     onPlayingChange,
   },
@@ -921,12 +924,19 @@ const HighlightReelPlayer = forwardRef<
   );
 
   return (
-    <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black">
-      <audio ref={audioRef} preload="auto" className="hidden" />
+    <div
+      className={`overflow-hidden bg-black ${
+        hideChrome
+          ? "h-full w-full"
+          : "rounded-lg border border-white/[0.08]"
+      }`}
+    >      <audio ref={audioRef} preload="auto" className="hidden" />
       <div
         ref={setStageNode}
         data-reel-capture
-        className="relative aspect-video w-full overflow-hidden bg-black"
+        className={`relative overflow-hidden bg-black ${
+          hideChrome ? "h-full w-full" : "aspect-video w-full"
+        }`}
       >
         {firstVideoId ? (
           <YoutubeChromelessStage className="absolute inset-0 h-full w-full overflow-hidden bg-black">
@@ -990,25 +1000,27 @@ const HighlightReelPlayer = forwardRef<
         ) : null}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-white/[0.06] bg-zinc-950/60 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => (playing ? stop() : play())}
-          disabled={steps.length === 0}
-          className={`rounded-md border px-3 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-            playing
-              ? "border-amber-500/45 bg-amber-950/45 text-amber-100 hover:bg-amber-900/55"
-              : "border-blue-500/45 bg-blue-950/55 text-blue-100 hover:bg-blue-900/60"
-          }`}
-        >
-          {playing ? "Stop" : "▶ Play reel"}
-        </button>
-        <span className="text-[10px] text-zinc-500">
-          {steps.length} segment{steps.length === 1 ? "" : "s"}
-          {soundtrackUrl ? " · song bed" : ""}
-          {!REEL_USE_BLACK_TRANSITIONS ? " · direct cuts (no black)" : ""}
-        </span>
-      </div>
+      {!hideChrome ? (
+        <div className="flex items-center gap-2 border-t border-white/[0.06] bg-zinc-950/60 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => (playing ? stop() : play())}
+            disabled={steps.length === 0}
+            className={`rounded-md border px-3 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+              playing
+                ? "border-amber-500/45 bg-amber-950/45 text-amber-100 hover:bg-amber-900/55"
+                : "border-blue-500/45 bg-blue-950/55 text-blue-100 hover:bg-blue-900/60"
+            }`}
+          >
+            {playing ? "Stop" : "▶ Play reel"}
+          </button>
+          <span className="text-[10px] text-zinc-500">
+            {steps.length} segment{steps.length === 1 ? "" : "s"}
+            {soundtrackUrl ? " · song bed" : ""}
+            {!REEL_USE_BLACK_TRANSITIONS ? " · direct cuts (no black)" : ""}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 });
