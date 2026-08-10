@@ -14,9 +14,41 @@ const databaseURL =
     process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim()) ||
   "https://film-room-b7780-default-rtdb.firebaseio.com";
 
+/**
+ * Prefer the app host as authDomain so Safari redirect sign-in stays
+ * first-party (paired with `/__/auth` rewrite in next.config).
+ * Override with NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN when needed.
+ */
+function resolveAuthDomain(): string {
+  const explicit =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim()
+      : "";
+  if (explicit) return explicit;
+
+  const appUrl =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_APP_URL?.trim()
+      : "";
+  if (appUrl) {
+    try {
+      return new URL(appUrl).hostname;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // SSR + client must agree; use localhost in dev, production host otherwise.
+  if (typeof process !== "undefined" && process.env.NODE_ENV !== "production") {
+    return "localhost";
+  }
+
+  return "film-room-gray.vercel.app";
+}
+
 const firebaseConfig = {
   apiKey: "AIzaSyDoqx15Pb6GSHjPBACABkJaqAj6dAOlH_w",
-  authDomain: "film-room-b7780.firebaseapp.com",
+  authDomain: resolveAuthDomain(),
   databaseURL,
   projectId: "film-room-b7780",
   storageBucket: "film-room-b7780.firebasestorage.app",
