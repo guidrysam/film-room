@@ -52,21 +52,13 @@ export default function ReelInterstitial({ card }: ReelInterstitialProps) {
   }
 
   if (card.kind === "thanks") {
+    const single = card.logos.length === 1;
     return (
-      <div className="flex h-full w-full flex-col items-center justify-center px-6 text-center sm:px-10">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-zinc-400">
-          Sponsors
-        </p>
-        <h2 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
-          {card.headline}
-        </h2>
-        {card.subtitle ? (
-          <p className="mt-2 max-w-[90%] text-sm text-zinc-300">{card.subtitle}</p>
-        ) : null}
+      <div className="flex h-full w-full flex-col items-center justify-center px-4 text-center sm:px-6">
         <ul
-          className={`mt-6 grid w-full max-w-lg gap-4 ${
-            card.logos.length === 1
-              ? "grid-cols-1 place-items-center"
+          className={`grid w-full max-w-2xl place-items-center gap-6 ${
+            single
+              ? "grid-cols-1"
               : card.logos.length === 2
                 ? "grid-cols-2"
                 : "grid-cols-2 sm:grid-cols-3"
@@ -75,22 +67,26 @@ export default function ReelInterstitial({ card }: ReelInterstitialProps) {
           {card.logos.map((logo, i) => (
             <li
               key={`${logo.logoUrl.slice(0, 24)}_${i}`}
-              className="flex flex-col items-center gap-2"
+              className="flex flex-col items-center"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={logo.logoUrl}
-                alt={logo.name || "Sponsor"}
-                className="h-16 w-16 rounded-xl bg-white/95 object-contain p-1.5 shadow-lg shadow-black/40 sm:h-20 sm:w-20"
+                alt=""
+                className={
+                  single
+                    ? "h-[min(70vh,24rem)] w-[min(70vh,24rem)] rounded-3xl bg-white object-contain p-5 shadow-2xl shadow-black/55 sm:h-[min(72vh,28rem)] sm:w-[min(72vh,28rem)]"
+                    : "h-28 w-28 rounded-2xl bg-white object-contain p-2.5 shadow-xl shadow-black/45 sm:h-32 sm:w-32"
+                }
               />
-              {logo.name ? (
-                <span className="max-w-[7rem] truncate text-[10px] font-medium text-zinc-400">
-                  {logo.name}
-                </span>
-              ) : null}
             </li>
           ))}
         </ul>
+        {card.headline.trim() ? (
+          <p className="mt-6 max-w-[92%] text-balance text-xl font-semibold tracking-tight text-white sm:text-2xl">
+            {card.headline}
+          </p>
+        ) : null}
       </div>
     );
   }

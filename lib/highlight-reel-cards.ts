@@ -20,10 +20,60 @@ export type ReelStatCard = {
 };
 
 export type ReelThankYouCard = {
+  /** Main thank-you copy (customizable per reel). */
   headline: string;
   subtitle?: string;
   logos: Array<{ logoUrl: string; name?: string }>;
 };
+
+/**
+ * One sponsor thank-you for a single black cut (cycles through the list).
+ * Used between clips while YouTube chrome is covered.
+ */
+export function sponsorInterstitialForCut(
+  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
+  cutIndex: number,
+  opts?: { message?: string | null },
+): ReelInterstitial | null {
+  const list = (sponsors ?? [])
+    .map((s) => ({
+      logoUrl: s.logoUrl.trim(),
+    }))
+    .filter((s) => s.logoUrl.length > 0);
+  if (list.length === 0) return null;
+  const i = ((cutIndex % list.length) + list.length) % list.length;
+  const logo = list[i]!;
+  const message = opts?.message?.trim() || "";
+  return {
+    kind: "thanks",
+    // Empty headline = logo-only black cut (no filename / default copy).
+    headline: message,
+    logos: [logo],
+  };
+}
+
+/** End-card thanking sponsors (and optionally the team). */
+export function buildReelThankYouCard(
+  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
+  opts?: { teamName?: string | null; message?: string | null },
+): ReelThankYouCard | null {
+  const logos = (sponsors ?? [])
+    .map((s) => ({
+      logoUrl: s.logoUrl.trim(),
+      ...(s.name?.trim() ? { name: s.name.trim() } : {}),
+    }))
+    .filter((s) => s.logoUrl.length > 0);
+  if (logos.length === 0) return null;
+  const message = opts?.message?.trim();
+  const teamName = opts?.teamName?.trim();
+  return {
+    headline: message || "Thank you to our sponsors",
+    ...(teamName && !message
+      ? { subtitle: teamName }
+      : {}),
+    logos,
+  };
+}
 
 function formatGameDate(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
@@ -95,53 +145,6 @@ export function buildReelTitleCard(
     headline,
     ...(meta.length > 0 ? { subtitle: meta.join(" · ") } : {}),
     ...(logoUrl ? { logoUrl } : {}),
-  };
-}
-
-/** End-card / mid-cut thank you for sponsors. */
-export function buildReelThankYouCard(
-  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
-  opts?: { teamName?: string | null },
-): ReelThankYouCard | null {
-  const logos = (sponsors ?? [])
-    .map((s) => ({
-      logoUrl: s.logoUrl.trim(),
-      ...(s.name?.trim() ? { name: s.name.trim() } : {}),
-    }))
-    .filter((s) => s.logoUrl.length > 0);
-  if (logos.length === 0) return null;
-  const teamName = opts?.teamName?.trim();
-  return {
-    headline: "Thank you",
-    ...(teamName
-      ? { subtitle: `To our sponsors · ${teamName}` }
-      : { subtitle: "To our sponsors" }),
-    logos,
-  };
-}
-
-/**
- * One sponsor thank-you for a single black cut (cycles through the list).
- * Used between clips while YouTube chrome is covered.
- */
-export function sponsorInterstitialForCut(
-  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
-  cutIndex: number,
-): ReelInterstitial | null {
-  const list = (sponsors ?? [])
-    .map((s) => ({
-      logoUrl: s.logoUrl.trim(),
-      ...(s.name?.trim() ? { name: s.name.trim() } : {}),
-    }))
-    .filter((s) => s.logoUrl.length > 0);
-  if (list.length === 0) return null;
-  const i = ((cutIndex % list.length) + list.length) % list.length;
-  const logo = list[i]!;
-  return {
-    kind: "thanks",
-    headline: "Thank you",
-    ...(logo.name ? { subtitle: logo.name } : { subtitle: "Our sponsors" }),
-    logos: [logo],
   };
 }
 

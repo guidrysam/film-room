@@ -880,13 +880,11 @@ export default function HighlightReelStudio({
     setSponsorMessage(null);
     try {
       const logoUrl = await resizeLogoToDataUrl(file);
-      const base = file.name.replace(/\.[^.]+$/, "").trim().slice(0, 80);
       setSponsors((prev) => [
         ...prev,
         {
           id: newSponsorId(),
           logoUrl,
-          ...(base ? { name: base } : {}),
         },
       ]);
       setDirty(true);
@@ -1409,29 +1407,25 @@ export default function HighlightReelStudio({
               </div>
             </div>
             <p className="mt-1 text-[10px] text-zinc-500">
-              Logos cycle on the lengthened black between clips (~¾s outbound +
-              2s inbound) so YouTube chrome stays covered.
+              Logos only on black cuts between clips (~¾s outbound + 4s inbound).
             </p>
             {sponsors.length > 0 ? (
               <ul className="mt-2 flex flex-wrap gap-2">
                 {sponsors.map((s) => (
                   <li
                     key={s.id}
-                    className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-1"
+                    className="relative rounded-md border border-white/10 bg-white/[0.03] p-1"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={s.logoUrl}
-                      alt={s.name || "Sponsor"}
-                      className="h-8 w-8 rounded object-contain bg-white/90"
+                      alt=""
+                      className="h-10 w-10 rounded object-contain bg-white/90"
                     />
-                    <span className="max-w-[5.5rem] truncate text-[10px] text-zinc-400">
-                      {s.name || "Sponsor"}
-                    </span>
                     <button
                       type="button"
                       onClick={() => removeSponsor(s.id)}
-                      className="text-[10px] text-zinc-500 hover:text-rose-200"
+                      className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-zinc-800 text-[10px] text-zinc-400 ring-1 ring-white/10 hover:text-rose-200"
                       aria-label="Remove sponsor"
                     >
                       ×

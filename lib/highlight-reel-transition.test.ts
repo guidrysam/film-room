@@ -11,13 +11,13 @@ import {
 } from "./highlight-reel-transition";
 
 describe("reelTransitionLeadSec", () => {
-  it("uses a quarter-second lead on normal clips", () => {
+  it("uses outbound black lead on normal clips", () => {
     assert.equal(
       reelTransitionLeadSec({ sourceStartTime: 10, sourceEndTime: 25 }),
       REEL_PRE_TRANSITION_SEC,
     );
-    assert.equal(REEL_PRE_TRANSITION_SEC, 0.25);
-    assert.equal(REEL_SEGMENT_PREROLL_MS, 2000);
+    assert.equal(REEL_PRE_TRANSITION_SEC, 0.75);
+    assert.equal(REEL_SEGMENT_PREROLL_MS, 4000);
   });
 
   it("skips end black on clips too short to trim", () => {

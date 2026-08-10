@@ -30,17 +30,29 @@ describe("normalizeHighlightSponsors", () => {
 });
 
 describe("sponsorInterstitialForCut", () => {
-  it("cycles logos across cuts", () => {
+  it("cycles logos across cuts (logo only, no text)", () => {
     const sponsors = [
-      { logoUrl: "data:image/png;base64,a", name: "A" },
-      { logoUrl: "data:image/png;base64,b", name: "B" },
+      { logoUrl: "data:image/png;base64,a" },
+      { logoUrl: "data:image/png;base64,b" },
     ];
     const first = sponsorInterstitialForCut(sponsors, 0);
     const second = sponsorInterstitialForCut(sponsors, 1);
     const third = sponsorInterstitialForCut(sponsors, 2);
     assert.equal(first?.kind, "thanks");
-    assert.equal(first?.logos[0]?.name, "A");
-    assert.equal(second?.logos[0]?.name, "B");
-    assert.equal(third?.logos[0]?.name, "A");
+    assert.equal(first?.headline, "");
+    assert.equal(first?.subtitle, undefined);
+    assert.equal(first?.logos[0]?.logoUrl, "data:image/png;base64,a");
+    assert.equal(second?.logos[0]?.logoUrl, "data:image/png;base64,b");
+    assert.equal(third?.logos[0]?.logoUrl, "data:image/png;base64,a");
+  });
+
+  it("optional custom thank-you message", () => {
+    const card = sponsorInterstitialForCut(
+      [{ logoUrl: "data:image/png;base64,a" }],
+      0,
+      { message: "Thanks to our sponsors" },
+    );
+    assert.equal(card?.headline, "Thanks to our sponsors");
   });
 });
+
