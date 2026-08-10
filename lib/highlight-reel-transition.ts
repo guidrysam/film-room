@@ -12,7 +12,7 @@ export const REEL_FADE_OUT_MS = 500;
  */
 export const REEL_PRE_TRANSITION_SEC = 0.75;
 /** Wall-clock seconds under black to hide YouTube overlay before reveal. */
-export const REEL_CLIP_PREROLL_SEC = 4;
+export const REEL_CLIP_PREROLL_SEC = 5;
 /** Incoming clip plays under black this long before it is revealed. */
 export const REEL_SEGMENT_PREROLL_MS = REEL_CLIP_PREROLL_SEC * 1000;
 

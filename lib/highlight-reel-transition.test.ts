@@ -17,7 +17,7 @@ describe("reelTransitionLeadSec", () => {
       REEL_PRE_TRANSITION_SEC,
     );
     assert.equal(REEL_PRE_TRANSITION_SEC, 0.75);
-    assert.equal(REEL_SEGMENT_PREROLL_MS, 4000);
+    assert.equal(REEL_SEGMENT_PREROLL_MS, 5000);
   });
 
   it("skips end black on clips too short to trim", () => {

@@ -1515,7 +1515,7 @@ export default function HighlightReelStudio({
               </div>
             </div>
             <p className="mt-1 text-[10px] text-zinc-500">
-              Logos cycle on black cuts between clips (~¾s outbound + 4s inbound).
+              Logos cycle on black cuts between clips (~¾s outbound + 5s inbound).
             </p>
             <label className="mt-2 block text-[10px] text-zinc-400">
               Thank-you message
