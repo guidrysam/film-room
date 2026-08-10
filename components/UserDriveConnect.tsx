@@ -33,7 +33,9 @@ export default function UserDriveConnect({
     const params = new URLSearchParams(window.location.search);
     const driveParam = params.get("drive");
     if (driveParam === "connected") {
-      setBanner("Google Drive connected. Uploads land in Film Room / My Film / Inbox.");
+      setBanner(
+        "Google Drive connected. Reconnect once if sidecar match can’t see My Film / Inbox files (new read permission).",
+      );
       onChanged?.();
     } else if (driveParam === "error") {
       setError(params.get("message") || "Could not connect Google Drive.");
@@ -152,7 +154,8 @@ export default function UserDriveConnect({
             .
           </p>
           <p className="font-mono text-[11px] text-zinc-500">
-            Film Room / My Film / Inbox
+            Film Room / My Film / Inbox (also scans My Drive / My Film / Inbox
+            after reconnect)
           </p>
           <div className="flex flex-wrap gap-2">
             <a

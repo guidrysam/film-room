@@ -10,6 +10,7 @@ import {
 } from "@/lib/drive/sidecar-stem";
 import {
   downloadDriveFileJson,
+  findChildFolder,
   listDriveFolderFiles,
   listDriveFolderFilesRecursive,
   searchDriveFilesByNameContains,
@@ -23,6 +24,31 @@ import {
   parseGameCapSidecar,
   sidecarEventsToTimelineInputs,
 } from "@/lib/gamecap-sidecar";
+
+/** Also look under My Drive/My Film[/Inbox] (no Film Room parent). */
+async function resolveAltMyFilmFolders(
+  accessToken: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  try {
+    const myFilm = await findChildFolder({
+      accessToken,
+      parentId: "root",
+      name: "My Film",
+    });
+    if (!myFilm) return ids;
+    ids.push(myFilm);
+    const inbox = await findChildFolder({
+      accessToken,
+      parentId: myFilm,
+      name: "Inbox",
+    });
+    if (inbox) ids.push(inbox);
+  } catch (e) {
+    console.warn("[attach-sidecars] alt My Film lookup failed", e);
+  }
+  return ids;
+}
 
 export type AttachSidecarMatch = {
   jsonName: string;
@@ -158,7 +184,7 @@ export async function attachSidecarsFromDriveByName(opts: {
 
   try {
     const user = await getUserVaultAccessToken(opts.uid);
-    // Recursive walk of My Film (covers Inbox + nested folders).
+    // Recursive walk of Film Room / My Film (covers Inbox + nested folders).
     const recursive = await listDriveFolderFilesRecursive({
       accessToken: user.accessToken,
       folderId: user.rootFolderId,
@@ -167,7 +193,7 @@ export async function attachSidecarsFromDriveByName(opts: {
     });
     addJsonFiles(jsonById, user.accessToken, recursive);
     scanNotes.push(
-      `My Film recursive: ${recursive.length} files, ${[...jsonById.values()].length} json so far`,
+      `Film Room/My Film: ${recursive.length} files, ${jsonById.size} json`,
     );
 
     // Also walk Inbox explicitly if different from root.
@@ -181,15 +207,27 @@ export async function attachSidecarsFromDriveByName(opts: {
       addJsonFiles(jsonById, user.accessToken, inboxFiles);
     }
 
+    // Alternate layout used by some uploads: My Drive / My Film / Inbox
+    // (no "Film Room" parent). Requires drive.readonly after reconnect.
+    for (const altId of await resolveAltMyFilmFolders(user.accessToken)) {
+      const altFiles = await listDriveFolderFilesRecursive({
+        accessToken: user.accessToken,
+        folderId: altId,
+        maxDepth: 4,
+        maxFiles: 400,
+      });
+      addJsonFiles(jsonById, user.accessToken, altFiles);
+    }
+    scanNotes.push(`After alt My Film paths: ${jsonById.size} json`);
+
     // Drive-wide name search from each YouTube/source label.
-    const needles = new Set<string>(["GameCapMOGO", ".json"]);
+    const needles = new Set<string>(["GameCapMOGO"]);
     for (const s of sources) {
       if (typeof s.label === "string") {
         for (const n of searchNeedlesFromLabel(s.label)) needles.add(n);
       }
     }
     for (const needle of needles) {
-      if (needle === ".json") continue; // too broad alone
       try {
         const found = await searchDriveFilesByNameContains({
           accessToken: user.accessToken,
@@ -201,9 +239,12 @@ export async function attachSidecarsFromDriveByName(opts: {
         console.warn("[attach-sidecars] search failed", needle, e);
       }
     }
-    // Secondary: files literally named *.json via contains 'json' is noisy —
-    // instead search MovieCap-like fragments already covered.
     scanNotes.push(`After name search: ${jsonById.size} json candidates`);
+    if (jsonById.size === 0) {
+      scanNotes.push(
+        "If JSON is visible in Drive but still 0 here, reconnect Drive in My Film (needs read access).",
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : "";
     if (msg !== "USER_DRIVE_NOT_CONNECTED") throw err;

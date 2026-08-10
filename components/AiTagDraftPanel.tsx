@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
 import {
   addGameEvent,
@@ -29,6 +29,10 @@ import {
 } from "@/lib/ai/youtube-gemini-access";
 import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
 import { buildTagAnchorHints } from "@/lib/ai/tag-anchors";
+import {
+  parseGameCapSidecar,
+  sidecarEventsToTimelineInputs,
+} from "@/lib/gamecap-sidecar";
 import {
   fetchYouTubeVideoMeta,
   metaToSourcePatch,
@@ -192,6 +196,7 @@ export default function AiTagDraftPanel({
   >({});
   const [privacyRefreshing, setPrivacyRefreshing] = useState(false);
   const [attachBusy, setAttachBusy] = useState(false);
+  const sidecarInputRef = useRef<HTMLInputElement>(null);
 
   const youtubeSources = useMemo(
     () => sources.filter((s) => youtubeVideoIdForAnalysis(s) != null),
@@ -381,6 +386,54 @@ export default function AiTagDraftPanel({
       setAttachBusy(false);
     }
   }, [canEdit, game.id, currentDisplayName, onEventsChanged, onRefresh]);
+
+  const importSidecarFile = useCallback(
+    async (file: File) => {
+      if (!canEdit) return;
+      setAttachBusy(true);
+      setError(null);
+      try {
+        const text = await file.text();
+        const json = JSON.parse(text) as unknown;
+        const sidecar = parseGameCapSidecar(json);
+        const main =
+          sources.find((s) => s.angleSlot === "main") ??
+          primary ??
+          sources[0] ??
+          null;
+        const inputs = sidecarEventsToTimelineInputs(sidecar, {
+          mainOffsetFromGameTime: main?.offsetFromGameTime ?? 0,
+          sourceId: main?.id,
+          createdBy: currentUid,
+          createdByName: currentDisplayName ?? undefined,
+        });
+        if (inputs.length === 0) {
+          throw new Error("No timed events found in that JSON.");
+        }
+        for (const input of inputs) {
+          await addGameEvent(game.id, input);
+        }
+        onEventsChanged();
+        onRefresh();
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Could not import sidecar JSON.",
+        );
+      } finally {
+        setAttachBusy(false);
+      }
+    },
+    [
+      canEdit,
+      sources,
+      primary,
+      currentUid,
+      currentDisplayName,
+      game.id,
+      onEventsChanged,
+      onRefresh,
+    ],
+  );
 
   useEffect(() => {
     void refreshBalance();
@@ -669,20 +722,48 @@ export default function AiTagDraftPanel({
           </span>
         )}
         {canEdit ? (
-          <button
-            type="button"
-            className={ghostBtn}
-            disabled={attachBusy || busy !== null}
-            onClick={() => void matchSidecarsFromDrive()}
-          >
-            {attachBusy
-              ? "Matching…"
-              : gameCapMarkCount > 0
-                ? "Re-match from Drive"
-                : "Match sidecars from Drive"}
-          </button>
+          <>
+            <button
+              type="button"
+              className={ghostBtn}
+              disabled={attachBusy || busy !== null}
+              onClick={() => void matchSidecarsFromDrive()}
+            >
+              {attachBusy
+                ? "Matching…"
+                : gameCapMarkCount > 0
+                  ? "Re-match from Drive"
+                  : "Match sidecars from Drive"}
+            </button>
+            <button
+              type="button"
+              className={ghostBtn}
+              disabled={attachBusy || busy !== null}
+              onClick={() => sidecarInputRef.current?.click()}
+            >
+              Choose sidecar JSON
+            </button>
+            <input
+              ref={sidecarInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importSidecarFile(f);
+                e.target.value = "";
+              }}
+            />
+          </>
         ) : null}
       </div>
+      {canEdit && gameCapMarkCount === 0 ? (
+        <p className="mb-3 text-[10px] leading-snug text-zinc-500">
+          Drive match needs My Film reconnect (read access). Or download the{" "}
+          <span className="font-mono">.json</span> from Drive and use{" "}
+          <span className="text-zinc-300">Choose sidecar JSON</span>.
+        </p>
+      ) : null}
 
       {nonPublicAngles.length > 0 ? (
         <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-snug text-amber-100/90">

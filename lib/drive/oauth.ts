@@ -2,8 +2,13 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const DRIVE_OAUTH_SCOPE =
-  "https://www.googleapis.com/auth/drive.file";
+export const DRIVE_OAUTH_SCOPE = [
+  // Create/manage vault uploads opened by Film Room.
+  "https://www.googleapis.com/auth/drive.file",
+  // Read Game Cap JSON/MOV the user (or Mac) dropped into My Film that our
+  // app did not create — required for sidecar matching.
+  "https://www.googleapis.com/auth/drive.readonly",
+].join(" ");
 
 export function driveClientId(): string {
   const id = process.env.GOOGLE_DRIVE_CLIENT_ID?.trim();
@@ -112,8 +117,8 @@ export function buildDriveAuthorizeUrl(opts: {
   state: string;
 }): string {
   // Do NOT set include_granted_scopes — this OAuth client is also used for
-  // YouTube (`auth/youtube`). Google rejects requesting youtube + drive.file
-  // in one consent. Drive connect must stay drive.file-only.
+  // YouTube (`auth/youtube`). Google rejects mixing youtube + drive scopes
+  // in one consent. Drive connect stays Drive-only (file + readonly).
   const params = new URLSearchParams({
     client_id: driveClientId(),
     redirect_uri: driveOAuthRedirectUri(opts.appBaseUrl),
