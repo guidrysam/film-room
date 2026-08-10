@@ -342,14 +342,36 @@ export default function AiTagDraftPanel({
         scannedJson?: number;
         marksImported?: number;
         matched?: unknown[];
+        unmatchedJson?: string[];
+        scanNotes?: string[];
+        jsonSample?: string[];
       };
       if (!res.ok) throw new Error(data.error || "Drive match failed.");
       if (!data.matched?.length) {
-        throw new Error(
-          data.scannedJson
-            ? `Found ${data.scannedJson} JSON in Drive but none matched a YouTube name.`
-            : "No sidecar JSON in My Film Drive (or team vault).",
-        );
+        const bits: string[] = [];
+        if (data.scannedJson) {
+          bits.push(
+            `Found ${data.scannedJson} JSON but none matched this game’s YouTube name${
+              data.jsonSample?.length
+                ? ` (saw: ${data.jsonSample.slice(0, 3).join(", ")})`
+                : ""
+            }.`,
+          );
+          if (data.unmatchedJson?.length) {
+            bits.push(`Unmatched: ${data.unmatchedJson.slice(0, 4).join(", ")}`);
+          }
+        } else {
+          bits.push(
+            "No sidecar JSON found under My Film (recursive) or by GameCapMOGO name search.",
+          );
+          bits.push(
+            "Put the .json in Film Room / My Film / Inbox (or any My Film subfolder), or use Import Game Cap marks → Choose sidecar JSON on the game dashboard.",
+          );
+        }
+        if (data.scanNotes?.length) {
+          bits.push(data.scanNotes.slice(0, 2).join(" · "));
+        }
+        throw new Error(bits.join(" "));
       }
       onEventsChanged();
       onRefresh();

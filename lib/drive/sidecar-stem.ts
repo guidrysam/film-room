@@ -38,8 +38,9 @@ export function mediaStemsMatch(a: string, b: string): boolean {
   return ca.length > 0 && ca === cb;
 }
 
-export function isJsonDriveName(name: string): boolean {
-  return /\.json$/i.test(name.trim());
+export function isJsonDriveName(name: string, mimeType?: string): boolean {
+  if (/\.json$/i.test(name.trim())) return true;
+  return (mimeType ?? "").toLowerCase() === "application/json";
 }
 
 /** Prefer Main when choosing among multiple matched sources. */
