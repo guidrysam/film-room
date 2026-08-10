@@ -40,6 +40,8 @@ export default function DashboardPage() {
   const [url, setUrl] = useState("");
   const [quickReviewError, setQuickReviewError] = useState<string | null>(null);
   const [quickReviewStarting, setQuickReviewStarting] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -162,11 +164,27 @@ export default function DashboardPage() {
           </p>
           <button
             type="button"
-            onClick={() => void signInWithGoogle().catch(() => {})}
-            className="mb-8 w-full rounded-xl border border-white/10 bg-white py-3 text-sm font-semibold text-zinc-950 shadow-lg shadow-black/30 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306]"
+            disabled={signingIn}
+            onClick={() => {
+              setSignInError(null);
+              setSigningIn(true);
+              void signInWithGoogle()
+                .catch((err) => {
+                  const message =
+                    err instanceof Error && err.message.trim()
+                      ? err.message
+                      : "Sign-in failed. Try again.";
+                  setSignInError(message);
+                })
+                .finally(() => setSigningIn(false));
+            }}
+            className="mb-3 w-full rounded-xl border border-white/10 bg-white py-3 text-sm font-semibold text-zinc-950 shadow-lg shadow-black/30 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#030306] disabled:opacity-60"
           >
-            Sign in with Google
+            {signingIn ? "Signing in…" : "Sign in with Google"}
           </button>
+          {signInError ? (
+            <p className="mb-4 text-xs text-rose-300">{signInError}</p>
+          ) : null}
           <p className="mb-6 text-sm text-zinc-400">
             Player?{" "}
             <Link

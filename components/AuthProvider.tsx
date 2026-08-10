@@ -18,16 +18,44 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+const AUTH_READY_TIMEOUT_MS = 10_000;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+    let settled = false;
+    const finish = (next: User | null) => {
+      if (settled) {
+        setUser(next);
+        return;
+      }
+      settled = true;
+      setUser(next);
       setLoading(false);
-    });
-    return unsub;
+    };
+
+    const unsub = onAuthStateChanged(
+      auth,
+      (u) => finish(u),
+      (err) => {
+        console.error("[auth]", err);
+        finish(null);
+      },
+    );
+
+    const timeoutId = window.setTimeout(() => {
+      if (!settled) {
+        console.warn("[auth] timed out waiting for auth state");
+        finish(auth.currentUser);
+      }
+    }, AUTH_READY_TIMEOUT_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      unsub();
+    };
   }, []);
 
   const value = useMemo(() => ({ user, loading }), [user, loading]);
