@@ -28,6 +28,10 @@ import {
 } from "@/lib/highlight-sponsors";
 import { resizeLogoToDataUrl, uploadClubLogo, uploadTeamLogo } from "@/lib/team-logo";
 import {
+  listMyBrandLogos,
+  type BrandLogoOption,
+} from "@/lib/brand-logos";
+import {
   buildReelTitleCard,
   type ReelTitleLogoSource,
 } from "@/lib/highlight-reel-cards";
@@ -246,8 +250,10 @@ export default function HighlightReelStudio({
   const [rosterPlayers, setRosterPlayers] = useState<Player[]>([]);
   const [team, setTeam] = useState<Team | null>(null);
   const [club, setClub] = useState<Club | null>(null);
+  const [brandLogos, setBrandLogos] = useState<BrandLogoOption[]>([]);
   const [titleLogoSource, setTitleLogoSource] =
     useState<ReelTitleLogoSource>("auto");
+  const [titleLogoUrl, setTitleLogoUrl] = useState<string | null>(null);
   const [crestBusy, setCrestBusy] = useState(false);
   const [crestMessage, setCrestMessage] = useState<string | null>(null);
   const crestFileRef = useRef<HTMLInputElement | null>(null);
@@ -300,8 +306,9 @@ export default function HighlightReelStudio({
       buildReelTitleCard(game, team, name, {
         club,
         logoSource: titleLogoSource,
+        customLogoUrl: titleLogoUrl,
       }),
-    [game, team, club, name, titleLogoSource],
+    [game, team, club, name, titleLogoSource, titleLogoUrl],
   );
   const scoreboard = useMemo(() => {
     const names = scoreboardNamesForGame(game, team?.name);
@@ -424,6 +431,22 @@ export default function HighlightReelStudio({
     void loadUserPrivacySettings(currentUid).then(setPrivacySettings);
   }, [currentUid]);
 
+  const refreshBrandLogos = useCallback(async () => {
+    if (!currentUid) {
+      setBrandLogos([]);
+      return;
+    }
+    try {
+      setBrandLogos(await listMyBrandLogos(currentUid));
+    } catch {
+      setBrandLogos([]);
+    }
+  }, [currentUid]);
+
+  useEffect(() => {
+    void refreshBrandLogos();
+  }, [refreshBrandLogos, club?.logoUrl, team?.logoUrl]);
+
   useEffect(() => {
     if (!basePrimary && playableSources[0]) setBasePrimary(playableSources[0].id);
   }, [basePrimary, playableSources]);
@@ -450,6 +473,7 @@ export default function HighlightReelStudio({
     setSponsors([]);
     setSponsorMessage(null);
     setTitleLogoSource("auto");
+    setTitleLogoUrl(null);
     setCrestMessage(null);
     setDirty(false);
     setMessage(null);
@@ -464,6 +488,7 @@ export default function HighlightReelStudio({
     setSponsors(reel.sponsors ? reel.sponsors.map((s) => ({ ...s })) : []);
     setSponsorMessage(null);
     setTitleLogoSource(reel.titleLogoSource ?? "auto");
+    setTitleLogoUrl(reel.titleLogoUrl ?? null);
     setCrestMessage(null);
     setDirty(false);
     setMessage(null);
@@ -757,6 +782,7 @@ export default function HighlightReelStudio({
             soundtrack,
             sponsors,
             titleLogoSource,
+            titleLogoUrl,
           ),
         });
       } else {
@@ -767,6 +793,7 @@ export default function HighlightReelStudio({
           soundtrack,
           sponsors,
           titleLogoSource,
+          titleLogoUrl,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setEditingId(id);
@@ -786,6 +813,7 @@ export default function HighlightReelStudio({
     soundtrack,
     sponsors,
     titleLogoSource,
+    titleLogoUrl,
     editingId,
     gameId,
     name,
@@ -908,7 +936,25 @@ export default function HighlightReelStudio({
     club && canEditClubBranding(club, currentUid),
   );
   const canUploadTeamCrest = Boolean(
-    team && canEditTeamBranding(team, currentUid),
+    team && canEditTeamBranding(team, currentUid, club),
+  );
+
+  const selectBrandLogo = useCallback(
+    (option: BrandLogoOption) => {
+      if (option.kind === "club" && club?.id === option.entityId) {
+        setTitleLogoSource("club");
+        setTitleLogoUrl(null);
+      } else if (option.kind === "team" && team?.id === option.entityId) {
+        setTitleLogoSource("team");
+        setTitleLogoUrl(null);
+      } else {
+        setTitleLogoSource("custom");
+        setTitleLogoUrl(option.logoUrl);
+      }
+      setDirty(true);
+      setCrestMessage(`Using ${option.label} logo on the title card.`);
+    },
+    [club?.id, team?.id],
   );
 
   const handleCrestUpload = useCallback(
@@ -921,20 +967,24 @@ export default function HighlightReelStudio({
           const url = await uploadClubLogo(club.id, file);
           setClub((prev) => (prev ? { ...prev, logoUrl: url } : prev));
           setTitleLogoSource("club");
+          setTitleLogoUrl(null);
           setCrestMessage("Club logo saved — used on the title card.");
         } else if (team && canUploadTeamCrest) {
           const url = await uploadTeamLogo(team.id, file);
           setTeam((prev) => (prev ? { ...prev, logoUrl: url } : prev));
           setTitleLogoSource("team");
+          setTitleLogoUrl(null);
           setCrestMessage("Team logo saved — used on the title card.");
         } else {
-          throw new Error(
-            club
-              ? "You need club parent/coach access to upload the club logo."
-              : "Join this game’s team to upload a logo.",
+          const url = await resizeLogoToDataUrl(file);
+          setTitleLogoSource("custom");
+          setTitleLogoUrl(url);
+          setCrestMessage(
+            "Logo saved on this reel. To reuse it next game, upload it on a club or team you belong to.",
           );
         }
         setDirty(true);
+        await refreshBrandLogos();
       } catch (e) {
         setCrestMessage(
           e instanceof Error ? e.message : "Could not upload logo.",
@@ -944,7 +994,13 @@ export default function HighlightReelStudio({
         if (crestFileRef.current) crestFileRef.current.value = "";
       }
     },
-    [club, team, canUploadClubCrest, canUploadTeamCrest],
+    [
+      club,
+      team,
+      canUploadClubCrest,
+      canUploadTeamCrest,
+      refreshBrandLogos,
+    ],
   );
 
   const handleSave = useCallback(() => {
@@ -985,6 +1041,7 @@ export default function HighlightReelStudio({
         sponsors,
         club,
         titleLogoSource,
+        titleLogoUrl,
       });
       const shareId = await ensureHighlightReelSharing(
         gameId,
@@ -1026,6 +1083,7 @@ export default function HighlightReelStudio({
     sponsors,
     club,
     titleLogoSource,
+    titleLogoUrl,
     gameId,
     currentUid,
   ]);
@@ -1219,7 +1277,7 @@ export default function HighlightReelStudio({
           <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] font-semibold text-zinc-300">
-                Club / team logo
+                Title logo
               </p>
               <div className="flex flex-wrap items-center gap-1.5">
                 <input
@@ -1233,63 +1291,105 @@ export default function HighlightReelStudio({
                 />
                 <button
                   type="button"
-                  disabled={crestBusy || (!canUploadClubCrest && !canUploadTeamCrest)}
+                  disabled={crestBusy}
                   onClick={() => crestFileRef.current?.click()}
                   className={ghostBtn}
                   title={
-                    club
-                      ? "Upload club crest (saved on the club)"
-                      : "Upload team logo"
+                    canUploadClubCrest
+                      ? "Upload and save on this club"
+                      : canUploadTeamCrest
+                        ? "Upload and save on this team"
+                        : "Upload a logo for this reel"
                   }
                 >
-                  {crestBusy
-                    ? "Uploading…"
-                    : club
-                      ? "Upload club logo"
-                      : "Upload team logo"}
+                  {crestBusy ? "Uploading…" : "Upload logo"}
                 </button>
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-3">
-              {titleCard.logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={titleCard.logoUrl}
-                  alt=""
-                  className="h-12 w-12 rounded-full object-cover ring-1 ring-white/15"
-                />
-              ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06] text-[9px] text-zinc-500">
-                  None
-                </div>
-              )}
-              <label className="text-[10px] text-zinc-400">
-                Title card uses{" "}
-                <select
-                  value={titleLogoSource}
-                  onChange={(e) => {
-                    setTitleLogoSource(e.target.value as ReelTitleLogoSource);
-                    setDirty(true);
-                  }}
-                  className={`${inputClass} ml-1 py-0.5`}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleLogoSource("auto");
+                  setTitleLogoUrl(null);
+                  setDirty(true);
+                  setCrestMessage(null);
+                }}
+                className={`rounded-md px-2 py-1 text-[10px] ${
+                  titleLogoSource === "auto"
+                    ? "bg-white/15 text-white"
+                    : "bg-white/[0.04] text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Auto
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleLogoSource("none");
+                  setTitleLogoUrl(null);
+                  setDirty(true);
+                  setCrestMessage(null);
+                }}
+                className={`rounded-md px-2 py-1 text-[10px] ${
+                  titleLogoSource === "none"
+                    ? "bg-white/15 text-white"
+                    : "bg-white/[0.04] text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                None
+              </button>
+              {brandLogos.map((option) => {
+                const explicitlySelected =
+                  (titleLogoSource === "club" &&
+                    option.kind === "club" &&
+                    option.entityId === club?.id) ||
+                  (titleLogoSource === "team" &&
+                    option.kind === "team" &&
+                    option.entityId === team?.id) ||
+                  (titleLogoSource === "custom" &&
+                    Boolean(titleLogoUrl) &&
+                    titleLogoUrl === option.logoUrl);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    title={`${option.label} (${option.kind})`}
+                    onClick={() => selectBrandLogo(option)}
+                    className={`rounded-full p-0.5 ring-2 ${
+                      explicitlySelected
+                        ? "ring-sky-400"
+                        : "ring-transparent hover:ring-white/20"
+                    }`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={option.logoUrl}
+                      alt=""
+                      className="h-10 w-10 rounded-full object-cover bg-white/90"
+                    />
+                  </button>
+                );
+              })}
+              {titleLogoSource === "custom" &&
+              titleLogoUrl &&
+              !brandLogos.some((o) => o.logoUrl === titleLogoUrl) ? (
+                <span
+                  title="Logo saved on this reel"
+                  className="rounded-full p-0.5 ring-2 ring-sky-400"
                 >
-                  <option value="auto">
-                    Auto (club, then team)
-                  </option>
-                  <option value="club" disabled={!club?.logoUrl}>
-                    Club logo{club?.logoUrl ? "" : " (none yet)"}
-                  </option>
-                  <option value="team" disabled={!team?.logoUrl}>
-                    Team logo{team?.logoUrl ? "" : " (none yet)"}
-                  </option>
-                  <option value="none">No logo</option>
-                </select>
-              </label>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={titleLogoUrl}
+                    alt=""
+                    className="h-10 w-10 rounded-full object-cover bg-white/90"
+                  />
+                </span>
+              ) : null}
             </div>
             <p className="mt-1.5 text-[10px] text-zinc-500">
-              {club
-                ? `Club crest for ${club.name}. Uploading saves it for every reel in this club.`
-                : "This game has no club — uploads save on the team instead."}
+              Pick any logo from clubs or teams you belong to. Upload works
+              even when this game isn’t under a club.
             </p>
             {crestMessage ? (
               <p className="mt-1 text-[10px] text-zinc-400">{crestMessage}</p>

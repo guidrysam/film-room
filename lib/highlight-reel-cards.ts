@@ -6,7 +6,13 @@ export const REEL_TITLE_HOLD_MS = 2800;
 export const REEL_STAT_HOLD_MS = 1600;
 export const REEL_THANKS_HOLD_MS = 3200;
 
-export type ReelTitleLogoSource = "auto" | "club" | "team" | "none";
+export type ReelTitleLogoSource =
+  | "auto"
+  | "club"
+  | "team"
+  /** Explicit logo URL stored on the reel (any club/team crest the editor picks). */
+  | "custom"
+  | "none";
 
 export type ReelTitleCard = {
   headline: string;
@@ -90,12 +96,15 @@ function formatGameDate(iso: string): string {
 export function resolveReelTitleLogoUrl(opts: {
   clubLogoUrl?: string | null;
   teamLogoUrl?: string | null;
+  customLogoUrl?: string | null;
   source?: ReelTitleLogoSource | null;
 }): string | undefined {
   const club = opts.clubLogoUrl?.trim() || "";
   const team = opts.teamLogoUrl?.trim() || "";
+  const custom = opts.customLogoUrl?.trim() || "";
   const source = opts.source ?? "auto";
   if (source === "none") return undefined;
+  if (source === "custom") return custom || club || team || undefined;
   if (source === "club") return club || undefined;
   if (source === "team") return team || undefined;
   return club || team || undefined;
@@ -109,6 +118,7 @@ export function buildReelTitleCard(
   opts?: {
     club?: Pick<{ name?: string; logoUrl?: string }, "name" | "logoUrl"> | null;
     logoSource?: ReelTitleLogoSource | null;
+    customLogoUrl?: string | null;
   },
 ): ReelTitleCard {
   const teamName = team?.name?.trim() ?? game.homeTeam?.trim();
@@ -138,6 +148,7 @@ export function buildReelTitleCard(
   const logoUrl = resolveReelTitleLogoUrl({
     clubLogoUrl: opts?.club?.logoUrl,
     teamLogoUrl: team?.logoUrl,
+    customLogoUrl: opts?.customLogoUrl,
     source: opts?.logoSource,
   });
 

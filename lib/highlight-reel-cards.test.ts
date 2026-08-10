@@ -57,6 +57,20 @@ describe("buildReelTitleCard", () => {
     );
     assert.equal(card.logoUrl, "https://example.com/team.png");
   });
+
+  it("uses a custom logo picked from another club", () => {
+    const card = buildReelTitleCard(
+      game,
+      { name: "Team", logoUrl: "https://example.com/team.png" },
+      "Highlights",
+      {
+        club: { name: "Club", logoUrl: "https://example.com/club.png" },
+        logoSource: "custom",
+        customLogoUrl: "https://example.com/other-club.png",
+      },
+    );
+    assert.equal(card.logoUrl, "https://example.com/other-club.png");
+  });
 });
 
 describe("buildReelStatCard", () => {
