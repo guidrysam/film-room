@@ -26,7 +26,23 @@ import {
   newSponsorId,
   type HighlightSponsorLogo,
 } from "@/lib/highlight-sponsors";
-import { resizeLogoToDataUrl } from "@/lib/team-logo";
+import { resizeLogoToDataUrl, uploadClubLogo, uploadTeamLogo } from "@/lib/team-logo";
+import {
+  buildReelTitleCard,
+  type ReelTitleLogoSource,
+} from "@/lib/highlight-reel-cards";
+import {
+  canEditClubBranding,
+  getClub,
+  type Club,
+} from "@/lib/clubs";
+import {
+  canEditTeamBranding,
+  getTeam,
+  listTeamPlayers,
+  type Player,
+  type Team,
+} from "@/lib/teams";
 import {
   deleteDirectorTrack,
   updateDirectorTrack,
@@ -67,7 +83,6 @@ import {
 import type { AiCutProposalDraft } from "@/lib/ai/cut-schema";
 import { proposeCutCreditsForMarkCount } from "@/lib/billing/pricing";
 import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
-import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
 import {
   countReelEventGroups,
   groupHighlightMoments,
@@ -81,7 +96,6 @@ import {
   replaceReelMomentGroup,
   type ReelMomentGroup,
 } from "@/lib/highlight-reel-groups";
-import { getTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
 import {
   downloadRecording,
   isReelRecordingSupported,
@@ -231,6 +245,12 @@ export default function HighlightReelStudio({
   const [message, setMessage] = useState<string | null>(null);
   const [rosterPlayers, setRosterPlayers] = useState<Player[]>([]);
   const [team, setTeam] = useState<Team | null>(null);
+  const [club, setClub] = useState<Club | null>(null);
+  const [titleLogoSource, setTitleLogoSource] =
+    useState<ReelTitleLogoSource>("auto");
+  const [crestBusy, setCrestBusy] = useState(false);
+  const [crestMessage, setCrestMessage] = useState<string | null>(null);
+  const crestFileRef = useRef<HTMLInputElement | null>(null);
 
   // Preset + segment-add controls.
   const [baseTimeStr, setBaseTimeStr] = useState("0");
@@ -276,8 +296,12 @@ export default function HighlightReelStudio({
     [steps, moments, playerNameForId],
   );
   const titleCard = useMemo(
-    () => buildReelTitleCard(game, team, name),
-    [game, team, name],
+    () =>
+      buildReelTitleCard(game, team, name, {
+        club,
+        logoSource: titleLogoSource,
+      }),
+    [game, team, club, name, titleLogoSource],
   );
   const scoreboard = useMemo(() => {
     const names = scoreboardNamesForGame(game, team?.name);
@@ -357,16 +381,32 @@ export default function HighlightReelStudio({
     const teamId = game.teamId?.trim();
     if (!teamId) {
       setTeam(null);
+      setClub(null);
       setRosterPlayers([]);
       return;
     }
     let cancelled = false;
     void getTeam(teamId)
-      .then((loaded) => {
-        if (!cancelled) setTeam(loaded);
+      .then(async (loaded) => {
+        if (cancelled) return;
+        setTeam(loaded);
+        const clubId = loaded?.clubId?.trim();
+        if (!clubId) {
+          setClub(null);
+          return;
+        }
+        try {
+          const c = await getClub(clubId);
+          if (!cancelled) setClub(c);
+        } catch {
+          if (!cancelled) setClub(null);
+        }
       })
       .catch(() => {
-        if (!cancelled) setTeam(null);
+        if (!cancelled) {
+          setTeam(null);
+          setClub(null);
+        }
       });
     void listTeamPlayers(teamId)
       .then((players) => {
@@ -409,6 +449,8 @@ export default function HighlightReelStudio({
     setSoundtrackMessage(null);
     setSponsors([]);
     setSponsorMessage(null);
+    setTitleLogoSource("auto");
+    setCrestMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -421,6 +463,8 @@ export default function HighlightReelStudio({
     setSoundtrackMessage(null);
     setSponsors(reel.sponsors ? reel.sponsors.map((s) => ({ ...s })) : []);
     setSponsorMessage(null);
+    setTitleLogoSource(reel.titleLogoSource ?? "auto");
+    setCrestMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -712,6 +756,7 @@ export default function HighlightReelStudio({
             undefined,
             soundtrack,
             sponsors,
+            titleLogoSource,
           ),
         });
       } else {
@@ -721,6 +766,7 @@ export default function HighlightReelStudio({
           visibility,
           soundtrack,
           sponsors,
+          titleLogoSource,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setEditingId(id);
@@ -739,6 +785,7 @@ export default function HighlightReelStudio({
     moments,
     soundtrack,
     sponsors,
+    titleLogoSource,
     editingId,
     gameId,
     name,
@@ -859,6 +906,49 @@ export default function HighlightReelStudio({
     setDirty(true);
   }, []);
 
+  const canUploadClubCrest = Boolean(
+    club && canEditClubBranding(club, currentUid),
+  );
+  const canUploadTeamCrest = Boolean(
+    team && canEditTeamBranding(team, currentUid),
+  );
+
+  const handleCrestUpload = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      setCrestBusy(true);
+      setCrestMessage(null);
+      try {
+        if (club && canUploadClubCrest) {
+          const url = await uploadClubLogo(club.id, file);
+          setClub((prev) => (prev ? { ...prev, logoUrl: url } : prev));
+          setTitleLogoSource("club");
+          setCrestMessage("Club logo saved — used on the title card.");
+        } else if (team && canUploadTeamCrest) {
+          const url = await uploadTeamLogo(team.id, file);
+          setTeam((prev) => (prev ? { ...prev, logoUrl: url } : prev));
+          setTitleLogoSource("team");
+          setCrestMessage("Team logo saved — used on the title card.");
+        } else {
+          throw new Error(
+            club
+              ? "You need club parent/coach access to upload the club logo."
+              : "Join this game’s team to upload a logo.",
+          );
+        }
+        setDirty(true);
+      } catch (e) {
+        setCrestMessage(
+          e instanceof Error ? e.message : "Could not upload logo.",
+        );
+      } finally {
+        setCrestBusy(false);
+        if (crestFileRef.current) crestFileRef.current.value = "";
+      }
+    },
+    [club, team, canUploadClubCrest, canUploadTeamCrest],
+  );
+
   const handleSave = useCallback(() => {
     void persistReel();
   }, [persistReel]);
@@ -895,6 +985,8 @@ export default function HighlightReelStudio({
         scoreboard,
         soundtrack,
         sponsors,
+        club,
+        titleLogoSource,
       });
       const shareId = await ensureHighlightReelSharing(
         gameId,
@@ -934,6 +1026,8 @@ export default function HighlightReelStudio({
     scoreboard,
     soundtrack,
     sponsors,
+    club,
+    titleLogoSource,
     gameId,
     currentUid,
   ]);
@@ -1122,6 +1216,86 @@ export default function HighlightReelStudio({
                 ? ` · song ${formatTimelineSeconds(soundtrack.durationSec)}`
                 : ""}
             </span>
+          </div>
+
+          <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-zinc-300">
+                Club / team logo
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  ref={crestFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) =>
+                    void handleCrestUpload(e.target.files?.[0] ?? null)
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={crestBusy || (!canUploadClubCrest && !canUploadTeamCrest)}
+                  onClick={() => crestFileRef.current?.click()}
+                  className={ghostBtn}
+                  title={
+                    club
+                      ? "Upload club crest (saved on the club)"
+                      : "Upload team logo"
+                  }
+                >
+                  {crestBusy
+                    ? "Uploading…"
+                    : club
+                      ? "Upload club logo"
+                      : "Upload team logo"}
+                </button>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              {titleCard.logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={titleCard.logoUrl}
+                  alt=""
+                  className="h-12 w-12 rounded-full object-cover ring-1 ring-white/15"
+                />
+              ) : (
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.06] text-[9px] text-zinc-500">
+                  None
+                </div>
+              )}
+              <label className="text-[10px] text-zinc-400">
+                Title card uses{" "}
+                <select
+                  value={titleLogoSource}
+                  onChange={(e) => {
+                    setTitleLogoSource(e.target.value as ReelTitleLogoSource);
+                    setDirty(true);
+                  }}
+                  className={`${inputClass} ml-1 py-0.5`}
+                >
+                  <option value="auto">
+                    Auto (club, then team)
+                  </option>
+                  <option value="club" disabled={!club?.logoUrl}>
+                    Club logo{club?.logoUrl ? "" : " (none yet)"}
+                  </option>
+                  <option value="team" disabled={!team?.logoUrl}>
+                    Team logo{team?.logoUrl ? "" : " (none yet)"}
+                  </option>
+                  <option value="none">No logo</option>
+                </select>
+              </label>
+            </div>
+            <p className="mt-1.5 text-[10px] text-zinc-500">
+              {club
+                ? `Club crest for ${club.name}. Uploading saves it for every reel in this club.`
+                : "This game has no club — uploads save on the team instead."}
+            </p>
+            {crestMessage ? (
+              <p className="mt-1 text-[10px] text-zinc-400">{crestMessage}</p>
+            ) : null}
           </div>
 
           <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2">

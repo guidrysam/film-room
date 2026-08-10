@@ -6,6 +6,8 @@ export const REEL_TITLE_HOLD_MS = 2800;
 export const REEL_STAT_HOLD_MS = 1600;
 export const REEL_THANKS_HOLD_MS = 3200;
 
+export type ReelTitleLogoSource = "auto" | "club" | "team" | "none";
+
 export type ReelTitleCard = {
   headline: string;
   subtitle?: string;
@@ -35,11 +37,29 @@ function formatGameDate(iso: string): string {
   });
 }
 
+export function resolveReelTitleLogoUrl(opts: {
+  clubLogoUrl?: string | null;
+  teamLogoUrl?: string | null;
+  source?: ReelTitleLogoSource | null;
+}): string | undefined {
+  const club = opts.clubLogoUrl?.trim() || "";
+  const team = opts.teamLogoUrl?.trim() || "";
+  const source = opts.source ?? "auto";
+  if (source === "none") return undefined;
+  if (source === "club") return club || undefined;
+  if (source === "team") return team || undefined;
+  return club || team || undefined;
+}
+
 /** Title card shown on black before the reel starts. */
 export function buildReelTitleCard(
   game: Game,
   team: Pick<Team, "name" | "logoUrl"> | null,
   reelName?: string,
+  opts?: {
+    club?: Pick<{ name?: string; logoUrl?: string }, "name" | "logoUrl"> | null;
+    logoSource?: ReelTitleLogoSource | null;
+  },
 ): ReelTitleCard {
   const teamName = team?.name?.trim() ?? game.homeTeam?.trim();
   const opponent = game.opponent?.trim() ?? game.awayTeam?.trim();
@@ -65,10 +85,16 @@ export function buildReelTitleCard(
   if (game.date?.trim()) meta.push(formatGameDate(game.date));
   if (game.location?.trim()) meta.push(game.location.trim());
 
+  const logoUrl = resolveReelTitleLogoUrl({
+    clubLogoUrl: opts?.club?.logoUrl,
+    teamLogoUrl: team?.logoUrl,
+    source: opts?.logoSource,
+  });
+
   return {
     headline,
     ...(meta.length > 0 ? { subtitle: meta.join(" · ") } : {}),
-    ...(team?.logoUrl?.trim() ? { logoUrl: team.logoUrl.trim() } : {}),
+    ...(logoUrl ? { logoUrl } : {}),
   };
 }
 

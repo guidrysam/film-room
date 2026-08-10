@@ -138,6 +138,13 @@ service cloud.firestore {
       allow read: if canReadClubResource();
       allow create: if isValidNewClubCreate();
       allow update: if request.auth != null && isClubAdmin(clubId, request.auth.uid);
+      // Club crest / branding — club staff and club parents.
+      allow update: if request.auth != null
+        && (isClubAdmin(clubId, request.auth.uid) ||
+            clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
+            clubRoleOf(clubId, request.auth.uid) == 'club_parent')
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['logoUrl', 'updatedAt']);
       allow delete: if request.auth != null &&
                        resource.data.ownerId == request.auth.uid;
 

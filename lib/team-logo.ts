@@ -133,3 +133,32 @@ export async function uploadTeamLogo(
     throw new Error(firestoreErrorMessage(err, "Could not upload logo."));
   }
 }
+
+/** Save a club crest on the club doc (resized client-side). */
+export async function uploadClubLogo(
+  clubId: string,
+  file: File,
+  onStage?: (stage: LogoUploadStage) => void,
+): Promise<string> {
+  if (file.size > MAX_INPUT_BYTES) {
+    throw new Error("Logo must be 2 MB or smaller.");
+  }
+
+  onStage?.("auth");
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Sign in to upload a logo.");
+  }
+  await user.getIdToken(true);
+
+  try {
+    onStage?.("prepare");
+    const dataUrl = await resizeLogoToDataUrl(file);
+    onStage?.("save");
+    const { updateClub } = await import("@/lib/clubs");
+    await updateClub(clubId, { logoUrl: dataUrl });
+    return dataUrl;
+  } catch (err) {
+    throw new Error(firestoreErrorMessage(err, "Could not upload club logo."));
+  }
+}

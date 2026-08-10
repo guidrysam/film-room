@@ -31,6 +31,32 @@ describe("buildReelTitleCard", () => {
     assert.match(card.subtitle ?? "", /Jul/);
     assert.equal(card.logoUrl, "https://example.com/logo.png");
   });
+
+  it("prefers club logo in auto mode", () => {
+    const card = buildReelTitleCard(
+      game,
+      { name: "Team", logoUrl: "https://example.com/team.png" },
+      "Highlights",
+      {
+        club: { name: "Club", logoUrl: "https://example.com/club.png" },
+        logoSource: "auto",
+      },
+    );
+    assert.equal(card.logoUrl, "https://example.com/club.png");
+  });
+
+  it("can force team logo when both exist", () => {
+    const card = buildReelTitleCard(
+      game,
+      { name: "Team", logoUrl: "https://example.com/team.png" },
+      "Highlights",
+      {
+        club: { name: "Club", logoUrl: "https://example.com/club.png" },
+        logoSource: "team",
+      },
+    );
+    assert.equal(card.logoUrl, "https://example.com/team.png");
+  });
 });
 
 describe("buildReelStatCard", () => {

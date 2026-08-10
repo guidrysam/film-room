@@ -1,6 +1,7 @@
 import {
   arrayUnion,
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -41,6 +42,8 @@ export type Club = {
   id: string;
   name: string;
   sport?: string;
+  /** Club crest used on highlight reel titles (data URL or https). */
+  logoUrl?: string;
   ownerId: string;
   members: Record<string, ClubMemberRole>;
   memberUids: string[];
@@ -100,6 +103,7 @@ function parseClub(id: string, raw: Record<string, unknown>): Club {
     members,
     memberUids,
     ...(sport ? { sport } : {}),
+    ...(trimOrUndef(raw.logoUrl) ? { logoUrl: (raw.logoUrl as string).trim() } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -145,6 +149,45 @@ export function isClubParent(club: Club, uid: string): boolean {
 export function isClubMember(club: Club, uid: string): boolean {
   if (!uid) return false;
   return club.ownerId === uid || club.members[uid] != null;
+}
+
+/** Club admins/coaches/parents may update shared crest branding. */
+export function canEditClubBranding(club: Club, uid: string): boolean {
+  if (!uid) return false;
+  if (canManageClub(club, uid)) return true;
+  const role = club.members[uid];
+  return role === "club_coach" || role === "club_parent";
+}
+
+export async function updateClub(
+  clubId: string,
+  patch: Partial<Pick<Club, "name" | "sport" | "logoUrl">> & {
+    logoUrl?: string | null;
+  },
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in required.");
+  await user.getIdToken(true);
+  const data: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof patch.name === "string" && patch.name.trim()) {
+    data.name = patch.name.trim();
+  }
+  if (patch.sport !== undefined) {
+    const sport = canonicalizeSportForStorage(patch.sport);
+    if (sport) data.sport = sport;
+  }
+  if (patch.logoUrl === null) {
+    data.logoUrl = deleteField();
+  } else if (typeof patch.logoUrl === "string" && patch.logoUrl.trim()) {
+    data.logoUrl = patch.logoUrl.trim();
+  }
+  try {
+    await updateDoc(doc(clubsCol(), clubId), data);
+  } catch (error) {
+    throw formatFirestoreWriteError(error, "Could not update club.");
+  }
 }
 
 export async function createClub(

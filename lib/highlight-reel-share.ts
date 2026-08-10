@@ -142,6 +142,8 @@ export function buildHighlightReelSharePayload(input: {
   scoreboard?: HighlightReelShareScoreboard | null;
   soundtrack?: HighlightSoundtrack | null;
   sponsors?: HighlightSponsorLogo[] | null;
+  club?: Pick<{ name?: string; logoUrl?: string }, "name" | "logoUrl"> | null;
+  titleLogoSource?: import("@/lib/highlight-reel-cards").ReelTitleLogoSource | null;
 }): HighlightReelSharePayload {
   const playable = input.sources.filter((s) => gameSourceToVideoAngle(s) != null);
   const shareSources: HighlightReelShareSource[] = [];
@@ -159,7 +161,10 @@ export function buildHighlightReelSharePayload(input: {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: input.reelName.trim() || "Highlight reel",
     gameTitle: input.game.title?.trim() || "Highlights",
-    titleCard: buildReelTitleCard(input.game, input.team, input.reelName),
+    titleCard: buildReelTitleCard(input.game, input.team, input.reelName, {
+      club: input.club ?? null,
+      logoSource: input.titleLogoSource ?? "auto",
+    }),
     steps: input.previewSteps,
     sources: shareSources,
     ...(input.scoreboard ? { scoreboard: input.scoreboard } : {}),

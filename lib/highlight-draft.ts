@@ -16,6 +16,7 @@ import {
   normalizeHighlightSponsors,
   type HighlightSponsorLogo,
 } from "@/lib/highlight-sponsors";
+import type { ReelTitleLogoSource } from "@/lib/highlight-reel-cards";
 
 /**
  * Highlight draft moments stored as DirectorTracks (`kind: "highlight"`).
@@ -72,6 +73,8 @@ export type HighlightDraftMeta = {
   soundtrack?: HighlightSoundtrack;
   /** Sponsor logos for the thank-you end card. */
   sponsors?: HighlightSponsorLogo[];
+  /** Which crest to show on the opening title card. */
+  titleLogoSource?: ReelTitleLogoSource;
 };
 
 export type HighlightDraft = {
@@ -82,6 +85,7 @@ export type HighlightDraft = {
   playerIds?: string[];
   soundtrack?: HighlightSoundtrack;
   sponsors?: HighlightSponsorLogo[];
+  titleLogoSource?: ReelTitleLogoSource;
   createdBy?: string;
   createdByName?: string;
 };
@@ -155,6 +159,7 @@ export function serializeHighlightDraftMeta(
   playerIds?: string[],
   soundtrack?: HighlightSoundtrack | null,
   sponsors?: HighlightSponsorLogo[] | null,
+  titleLogoSource?: ReelTitleLogoSource | null,
 ): string {
   const meta: HighlightDraftMeta = {
     schema: HIGHLIGHT_DRAFT_SCHEMA,
@@ -162,6 +167,9 @@ export function serializeHighlightDraftMeta(
     ...(playerIds && playerIds.length > 0 ? { playerIds } : {}),
     ...(soundtrack ? { soundtrack } : {}),
     ...(sponsors && sponsors.length > 0 ? { sponsors } : {}),
+    ...(titleLogoSource && titleLogoSource !== "auto"
+      ? { titleLogoSource }
+      : {}),
   };
   return JSON.stringify(meta);
 }
@@ -214,16 +222,25 @@ export function parseHighlightDraftMeta(
     const draftPlayerIds = parsePlayerIds(raw.playerIds);
     const soundtrack = normalizeHighlightSoundtrack(raw.soundtrack);
     const sponsors = normalizeHighlightSponsors(raw.sponsors);
+    const titleLogoSource = parseTitleLogoSource(raw.titleLogoSource);
     return {
       schema: HIGHLIGHT_DRAFT_SCHEMA,
       moments,
       ...(draftPlayerIds.length > 0 ? { playerIds: draftPlayerIds } : {}),
       ...(soundtrack ? { soundtrack } : {}),
       ...(sponsors.length > 0 ? { sponsors } : {}),
+      ...(titleLogoSource ? { titleLogoSource } : {}),
     };
   } catch {
     return null;
   }
+}
+
+function parseTitleLogoSource(raw: unknown): ReelTitleLogoSource | undefined {
+  if (raw === "club" || raw === "team" || raw === "none" || raw === "auto") {
+    return raw;
+  }
+  return undefined;
 }
 
 /** Instruction events for each highlight moment (no rendered video). */
@@ -269,6 +286,7 @@ export function highlightDraftFromTrack(track: DirectorTrack): HighlightDraft | 
     ...(meta.sponsors && meta.sponsors.length > 0
       ? { sponsors: meta.sponsors }
       : {}),
+    ...(meta.titleLogoSource ? { titleLogoSource: meta.titleLogoSource } : {}),
     ...(track.createdBy ? { createdBy: track.createdBy } : {}),
     ...(track.createdByName ? { createdByName: track.createdByName } : {}),
   };
@@ -555,6 +573,7 @@ export async function createHighlightReel(
     playerIds?: string[];
     soundtrack?: HighlightSoundtrack | null;
     sponsors?: HighlightSponsorLogo[] | null;
+    titleLogoSource?: ReelTitleLogoSource | null;
   },
 ): Promise<string> {
   if (input.moments.length === 0) {
@@ -577,6 +596,7 @@ export async function createHighlightReel(
       draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
       input.soundtrack ?? null,
       input.sponsors ?? null,
+      input.titleLogoSource ?? null,
     ),
     ...(input.createdByName ? { createdByName: input.createdByName } : {}),
   });
