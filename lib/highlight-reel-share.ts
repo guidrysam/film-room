@@ -18,6 +18,10 @@ import {
   type HighlightSoundtrack,
 } from "@/lib/highlight-soundtrack";
 import {
+  normalizeHighlightSponsors,
+  type HighlightSponsorLogo,
+} from "@/lib/highlight-sponsors";
+import {
   expiresTimestampFromDays,
   isPastExpiry,
 } from "@/lib/user-privacy-settings";
@@ -48,6 +52,8 @@ export type HighlightReelSharePayload = {
   scoreboard?: HighlightReelShareScoreboard;
   /** Drive soundtrack metadata (stream via /api/reel/{shareId}/soundtrack). */
   soundtrack?: HighlightSoundtrack;
+  /** Sponsor logos for black-cut thank-yous. */
+  sponsors?: HighlightSponsorLogo[];
 };
 
 export type SharedHighlightReelLookupResult =
@@ -135,6 +141,7 @@ export function buildHighlightReelSharePayload(input: {
   sources: GameVideoSource[];
   scoreboard?: HighlightReelShareScoreboard | null;
   soundtrack?: HighlightSoundtrack | null;
+  sponsors?: HighlightSponsorLogo[] | null;
 }): HighlightReelSharePayload {
   const playable = input.sources.filter((s) => gameSourceToVideoAngle(s) != null);
   const shareSources: HighlightReelShareSource[] = [];
@@ -147,6 +154,7 @@ export function buildHighlightReelSharePayload(input: {
       ...(s.label?.trim() ? { label: s.label.trim() } : {}),
     });
   }
+  const sponsors = normalizeHighlightSponsors(input.sponsors);
   return {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: input.reelName.trim() || "Highlight reel",
@@ -156,6 +164,7 @@ export function buildHighlightReelSharePayload(input: {
     sources: shareSources,
     ...(input.scoreboard ? { scoreboard: input.scoreboard } : {}),
     ...(input.soundtrack ? { soundtrack: input.soundtrack } : {}),
+    ...(sponsors.length > 0 ? { sponsors } : {}),
   };
 }
 
@@ -188,6 +197,7 @@ export function parseHighlightReelSharePayload(
   if (sources.length === 0) return null;
   const scoreboard = parseShareScoreboard(v.scoreboard);
   const soundtrack = normalizeHighlightSoundtrack(v.soundtrack);
+  const sponsors = normalizeHighlightSponsors(v.sponsors);
   return {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: v.reelName.trim() || "Highlight reel",
@@ -205,6 +215,7 @@ export function parseHighlightReelSharePayload(
     sources,
     ...(scoreboard ? { scoreboard } : {}),
     ...(soundtrack ? { soundtrack } : {}),
+    ...(sponsors.length > 0 ? { sponsors } : {}),
   };
 }
 

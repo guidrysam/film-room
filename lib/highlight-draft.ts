@@ -12,6 +12,10 @@ import {
   normalizeHighlightSoundtrack,
   type HighlightSoundtrack,
 } from "@/lib/highlight-soundtrack";
+import {
+  normalizeHighlightSponsors,
+  type HighlightSponsorLogo,
+} from "@/lib/highlight-sponsors";
 
 /**
  * Highlight draft moments stored as DirectorTracks (`kind: "highlight"`).
@@ -66,6 +70,8 @@ export type HighlightDraftMeta = {
   playerIds?: string[];
   /** Drive audio bed for preview / share / length target. */
   soundtrack?: HighlightSoundtrack;
+  /** Sponsor logos for the thank-you end card. */
+  sponsors?: HighlightSponsorLogo[];
 };
 
 export type HighlightDraft = {
@@ -75,6 +81,7 @@ export type HighlightDraft = {
   moments: HighlightMoment[];
   playerIds?: string[];
   soundtrack?: HighlightSoundtrack;
+  sponsors?: HighlightSponsorLogo[];
   createdBy?: string;
   createdByName?: string;
 };
@@ -147,12 +154,14 @@ export function serializeHighlightDraftMeta(
   moments: HighlightMoment[],
   playerIds?: string[],
   soundtrack?: HighlightSoundtrack | null,
+  sponsors?: HighlightSponsorLogo[] | null,
 ): string {
   const meta: HighlightDraftMeta = {
     schema: HIGHLIGHT_DRAFT_SCHEMA,
     moments,
     ...(playerIds && playerIds.length > 0 ? { playerIds } : {}),
     ...(soundtrack ? { soundtrack } : {}),
+    ...(sponsors && sponsors.length > 0 ? { sponsors } : {}),
   };
   return JSON.stringify(meta);
 }
@@ -204,11 +213,13 @@ export function parseHighlightDraftMeta(
     }
     const draftPlayerIds = parsePlayerIds(raw.playerIds);
     const soundtrack = normalizeHighlightSoundtrack(raw.soundtrack);
+    const sponsors = normalizeHighlightSponsors(raw.sponsors);
     return {
       schema: HIGHLIGHT_DRAFT_SCHEMA,
       moments,
       ...(draftPlayerIds.length > 0 ? { playerIds: draftPlayerIds } : {}),
       ...(soundtrack ? { soundtrack } : {}),
+      ...(sponsors.length > 0 ? { sponsors } : {}),
     };
   } catch {
     return null;
@@ -255,6 +266,9 @@ export function highlightDraftFromTrack(track: DirectorTrack): HighlightDraft | 
       ? { playerIds: meta.playerIds }
       : {}),
     ...(meta.soundtrack ? { soundtrack: meta.soundtrack } : {}),
+    ...(meta.sponsors && meta.sponsors.length > 0
+      ? { sponsors: meta.sponsors }
+      : {}),
     ...(track.createdBy ? { createdBy: track.createdBy } : {}),
     ...(track.createdByName ? { createdByName: track.createdByName } : {}),
   };
@@ -540,6 +554,7 @@ export async function createHighlightReel(
     visibility?: CutVisibility;
     playerIds?: string[];
     soundtrack?: HighlightSoundtrack | null;
+    sponsors?: HighlightSponsorLogo[] | null;
   },
 ): Promise<string> {
   if (input.moments.length === 0) {
@@ -561,6 +576,7 @@ export async function createHighlightReel(
       moments,
       draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
       input.soundtrack ?? null,
+      input.sponsors ?? null,
     ),
     ...(input.createdByName ? { createdByName: input.createdByName } : {}),
   });

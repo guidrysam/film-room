@@ -4,6 +4,7 @@ import type { ReelStep } from "@/lib/highlight-draft";
 
 export const REEL_TITLE_HOLD_MS = 2800;
 export const REEL_STAT_HOLD_MS = 1600;
+export const REEL_THANKS_HOLD_MS = 3200;
 
 export type ReelTitleCard = {
   headline: string;
@@ -14,6 +15,12 @@ export type ReelTitleCard = {
 export type ReelStatCard = {
   headline?: string;
   lines: string[];
+};
+
+export type ReelThankYouCard = {
+  headline: string;
+  subtitle?: string;
+  logos: Array<{ logoUrl: string; name?: string }>;
 };
 
 function formatGameDate(iso: string): string {
@@ -43,9 +50,16 @@ export function buildReelTitleCard(
     "Highlights";
 
   const meta: string[] = [];
-  if (teamName && opponent && !headline.toLowerCase().includes(opponent.toLowerCase())) {
+  if (
+    teamName &&
+    opponent &&
+    !headline.toLowerCase().includes(opponent.toLowerCase())
+  ) {
     meta.push(`${teamName} vs ${opponent}`);
-  } else if (teamName && !headline.toLowerCase().includes(teamName.toLowerCase())) {
+  } else if (
+    teamName &&
+    !headline.toLowerCase().includes(teamName.toLowerCase())
+  ) {
     meta.push(teamName);
   }
   if (game.date?.trim()) meta.push(formatGameDate(game.date));
@@ -55,6 +69,53 @@ export function buildReelTitleCard(
     headline,
     ...(meta.length > 0 ? { subtitle: meta.join(" · ") } : {}),
     ...(team?.logoUrl?.trim() ? { logoUrl: team.logoUrl.trim() } : {}),
+  };
+}
+
+/** End-card / mid-cut thank you for sponsors. */
+export function buildReelThankYouCard(
+  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
+  opts?: { teamName?: string | null },
+): ReelThankYouCard | null {
+  const logos = (sponsors ?? [])
+    .map((s) => ({
+      logoUrl: s.logoUrl.trim(),
+      ...(s.name?.trim() ? { name: s.name.trim() } : {}),
+    }))
+    .filter((s) => s.logoUrl.length > 0);
+  if (logos.length === 0) return null;
+  const teamName = opts?.teamName?.trim();
+  return {
+    headline: "Thank you",
+    ...(teamName
+      ? { subtitle: `To our sponsors · ${teamName}` }
+      : { subtitle: "To our sponsors" }),
+    logos,
+  };
+}
+
+/**
+ * One sponsor thank-you for a single black cut (cycles through the list).
+ * Used between clips while YouTube chrome is covered.
+ */
+export function sponsorInterstitialForCut(
+  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
+  cutIndex: number,
+): ReelInterstitial | null {
+  const list = (sponsors ?? [])
+    .map((s) => ({
+      logoUrl: s.logoUrl.trim(),
+      ...(s.name?.trim() ? { name: s.name.trim() } : {}),
+    }))
+    .filter((s) => s.logoUrl.length > 0);
+  if (list.length === 0) return null;
+  const i = ((cutIndex % list.length) + list.length) % list.length;
+  const logo = list[i]!;
+  return {
+    kind: "thanks",
+    headline: "Thank you",
+    ...(logo.name ? { subtitle: logo.name } : { subtitle: "Our sponsors" }),
+    logos: [logo],
   };
 }
 
@@ -81,7 +142,8 @@ export function buildReelStatCard(
 
 export type ReelInterstitial =
   | ({ kind: "title" } & ReelTitleCard)
-  | ({ kind: "stat" } & ReelStatCard);
+  | ({ kind: "stat" } & ReelStatCard)
+  | ({ kind: "thanks" } & ReelThankYouCard);
 
 export function statInterstitialFromStep(
   step: ReelStep | undefined,

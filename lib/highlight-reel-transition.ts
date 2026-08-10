@@ -6,8 +6,11 @@ export const REEL_FADE_IN_MS = 450;
 export const REEL_FADE_HOLD_MS = 650;
 export const REEL_FADE_OUT_MS = 500;
 
-/** Black over the tail of the outgoing clip before the cut. */
-export const REEL_PRE_TRANSITION_SEC = 0.25;
+/**
+ * Black over the tail of the outgoing clip before the cut —
+ * long enough to start covering YouTube chrome before the switch.
+ */
+export const REEL_PRE_TRANSITION_SEC = 0.75;
 /** Wall-clock seconds under black to hide YouTube overlay before reveal. */
 export const REEL_CLIP_PREROLL_SEC = 2;
 /** Incoming clip plays under black this long before it is revealed. */

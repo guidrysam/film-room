@@ -23,10 +23,12 @@ import {
 } from "@/lib/game-scoreboard";
 import {
   REEL_TITLE_HOLD_MS,
+  sponsorInterstitialForCut,
   statInterstitialFromStep,
   type ReelInterstitial as ReelInterstitialCard,
   type ReelTitleCard,
 } from "@/lib/highlight-reel-cards";
+import type { HighlightSponsorLogo } from "@/lib/highlight-sponsors";
 import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
   REEL_FADE_IN_MS,
@@ -81,6 +83,8 @@ export type HighlightReelPlayerProps = {
    * When set, YouTube segment audio is muted so the song is the bed.
    */
   soundtrackUrl?: string | null;
+  /** Sponsor logos cycled on black cuts between clips. */
+  sponsors?: HighlightSponsorLogo[] | null;
   onEnded?: () => void;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -96,6 +100,7 @@ const HighlightReelPlayer = forwardRef<
     titleCard,
     scoreboard,
     soundtrackUrl,
+    sponsors,
     onEnded,
     onPlayingChange,
   },
@@ -118,6 +123,8 @@ const HighlightReelPlayer = forwardRef<
   const titleCardRef = useRef(titleCard);
   const scoreboardRef = useRef(scoreboard);
   const soundtrackUrlRef = useRef(soundtrackUrl);
+  const sponsorsRef = useRef(sponsors);
+  const cutIndexRef = useRef(0);
   useEffect(() => {
     stepsRef.current = steps;
   });
@@ -129,6 +136,9 @@ const HighlightReelPlayer = forwardRef<
   });
   useEffect(() => {
     soundtrackUrlRef.current = soundtrackUrl;
+  });
+  useEffect(() => {
+    sponsorsRef.current = sponsors;
   });
 
   const playingRef = useRef(false);
@@ -555,7 +565,14 @@ const HighlightReelPlayer = forwardRef<
       }
 
       try {
-        if (kind === "event") {
+        const cut = cutIndexRef.current++;
+        const sponsorCard = sponsorInterstitialForCut(
+          sponsorsRef.current,
+          cut,
+        );
+        if (sponsorCard) {
+          setInterstitial(sponsorCard);
+        } else if (kind === "event") {
           setInterstitial(statInterstitialFromStep(toStep));
         } else {
           setInterstitial(null);
@@ -590,6 +607,7 @@ const HighlightReelPlayer = forwardRef<
 
   const beginPlayback = useCallback(async () => {
     const seq = ++playSeqRef.current;
+    cutIndexRef.current = 0;
     setPlayingState(true);
     void startSoundtrack();
     applyYouTubeMuteForSoundtrack();

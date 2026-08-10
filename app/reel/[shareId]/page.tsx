@@ -163,6 +163,7 @@ export default function SharedHighlightReelPage() {
                   ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
                   : null
               }
+              sponsors={payload.sponsors ?? null}
               videoIdForSource={videoIdForSource}
               labelForSource={labelForSource}
             />

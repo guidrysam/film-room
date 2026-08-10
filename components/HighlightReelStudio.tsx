@@ -22,6 +22,12 @@ import {
   type HighlightSoundtrack,
 } from "@/lib/highlight-soundtrack";
 import {
+  MAX_REEL_SPONSORS,
+  newSponsorId,
+  type HighlightSponsorLogo,
+} from "@/lib/highlight-sponsors";
+import { resizeLogoToDataUrl } from "@/lib/team-logo";
+import {
   deleteDirectorTrack,
   updateDirectorTrack,
   type CutVisibility,
@@ -216,6 +222,10 @@ export default function HighlightReelStudio({
   );
   const soundtrackFileRef = useRef<HTMLInputElement | null>(null);
   const soundtrackBlobUrlRef = useRef<string | null>(null);
+  const [sponsors, setSponsors] = useState<HighlightSponsorLogo[]>([]);
+  const [sponsorBusy, setSponsorBusy] = useState(false);
+  const [sponsorMessage, setSponsorMessage] = useState<string | null>(null);
+  const sponsorFileRef = useRef<HTMLInputElement | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -397,6 +407,8 @@ export default function HighlightReelStudio({
     setMoments([]);
     setSoundtrack(null);
     setSoundtrackMessage(null);
+    setSponsors([]);
+    setSponsorMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -407,6 +419,8 @@ export default function HighlightReelStudio({
     setMoments(reel.moments.map((m) => ({ ...m })));
     setSoundtrack(reel.soundtrack ?? null);
     setSoundtrackMessage(null);
+    setSponsors(reel.sponsors ? reel.sponsors.map((s) => ({ ...s })) : []);
+    setSponsorMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -697,6 +711,7 @@ export default function HighlightReelStudio({
             moments,
             undefined,
             soundtrack,
+            sponsors,
           ),
         });
       } else {
@@ -705,6 +720,7 @@ export default function HighlightReelStudio({
           moments: moments.map(momentToInput),
           visibility,
           soundtrack,
+          sponsors,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setEditingId(id);
@@ -722,6 +738,7 @@ export default function HighlightReelStudio({
   }, [
     moments,
     soundtrack,
+    sponsors,
     editingId,
     gameId,
     name,
@@ -806,6 +823,42 @@ export default function HighlightReelStudio({
     setDirty(true);
   }, []);
 
+  const handleSponsorFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    if (sponsors.length >= MAX_REEL_SPONSORS) {
+      setSponsorMessage(`Up to ${MAX_REEL_SPONSORS} sponsor logos.`);
+      return;
+    }
+    setSponsorBusy(true);
+    setSponsorMessage(null);
+    try {
+      const logoUrl = await resizeLogoToDataUrl(file);
+      const base = file.name.replace(/\.[^.]+$/, "").trim().slice(0, 80);
+      setSponsors((prev) => [
+        ...prev,
+        {
+          id: newSponsorId(),
+          logoUrl,
+          ...(base ? { name: base } : {}),
+        },
+      ]);
+      setDirty(true);
+      setSponsorMessage("Sponsor added — shows on black cuts between clips.");
+    } catch (e) {
+      setSponsorMessage(
+        e instanceof Error ? e.message : "Could not add sponsor logo.",
+      );
+    } finally {
+      setSponsorBusy(false);
+      if (sponsorFileRef.current) sponsorFileRef.current.value = "";
+    }
+  }, [sponsors.length]);
+
+  const removeSponsor = useCallback((id: string) => {
+    setSponsors((prev) => prev.filter((s) => s.id !== id));
+    setDirty(true);
+  }, []);
+
   const handleSave = useCallback(() => {
     void persistReel();
   }, [persistReel]);
@@ -841,6 +894,7 @@ export default function HighlightReelStudio({
         sources: playableSources,
         scoreboard,
         soundtrack,
+        sponsors,
       });
       const shareId = await ensureHighlightReelSharing(
         gameId,
@@ -879,6 +933,7 @@ export default function HighlightReelStudio({
     playableSources,
     scoreboard,
     soundtrack,
+    sponsors,
     gameId,
     currentUid,
   ]);
@@ -1154,6 +1209,68 @@ export default function HighlightReelStudio({
             ) : null}
           </div>
 
+          <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-zinc-300">
+                Sponsors (thank-you cuts)
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  ref={sponsorFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) =>
+                    void handleSponsorFile(e.target.files?.[0] ?? null)
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={sponsorBusy || sponsors.length >= MAX_REEL_SPONSORS}
+                  onClick={() => sponsorFileRef.current?.click()}
+                  className={ghostBtn}
+                >
+                  {sponsorBusy ? "Adding…" : "Add logo"}
+                </button>
+              </div>
+            </div>
+            <p className="mt-1 text-[10px] text-zinc-500">
+              Logos cycle on the lengthened black between clips (~¾s outbound +
+              2s inbound) so YouTube chrome stays covered.
+            </p>
+            {sponsors.length > 0 ? (
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {sponsors.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-1"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={s.logoUrl}
+                      alt={s.name || "Sponsor"}
+                      className="h-8 w-8 rounded object-contain bg-white/90"
+                    />
+                    <span className="max-w-[5.5rem] truncate text-[10px] text-zinc-400">
+                      {s.name || "Sponsor"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeSponsor(s.id)}
+                      className="text-[10px] text-zinc-500 hover:text-rose-200"
+                      aria-label="Remove sponsor"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {sponsorMessage ? (
+              <p className="mt-1.5 text-[10px] text-zinc-400">{sponsorMessage}</p>
+            ) : null}
+          </div>
+
           {recording ? (
             <p className="mb-2 rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-[11px] text-amber-100">
               Recording — choose <span className="font-semibold">This Tab</span>{" "}
@@ -1168,6 +1285,7 @@ export default function HighlightReelStudio({
             titleCard={titleCard}
             scoreboard={scoreboard}
             soundtrackUrl={soundtrackUrl}
+            sponsors={sponsors}
             videoIdForSource={videoIdForSource}
             labelForSource={labelForSource}
             onEnded={handleReelEnded}
