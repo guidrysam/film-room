@@ -12,6 +12,11 @@ import { firestore } from "@/lib/firebase";
 import type { ReelTitleCard } from "@/lib/highlight-reel-cards";
 import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
 import type { Team } from "@/lib/teams";
+import type { ScoreboardTick } from "@/lib/game-scoreboard";
+import {
+  normalizeHighlightSoundtrack,
+  type HighlightSoundtrack,
+} from "@/lib/highlight-soundtrack";
 import {
   expiresTimestampFromDays,
   isPastExpiry,
@@ -26,6 +31,12 @@ export type HighlightReelShareSource = {
   label?: string;
 };
 
+export type HighlightReelShareScoreboard = {
+  ticks: ScoreboardTick[];
+  homeName: string;
+  awayName: string;
+};
+
 export type HighlightReelSharePayload = {
   schema: typeof HIGHLIGHT_REEL_SHARE_SCHEMA;
   reelName: string;
@@ -33,6 +44,10 @@ export type HighlightReelSharePayload = {
   titleCard: ReelTitleCard;
   steps: ReelStep[];
   sources: HighlightReelShareSource[];
+  /** Optional — older shares omit this. */
+  scoreboard?: HighlightReelShareScoreboard;
+  /** Drive soundtrack metadata (stream via /api/reel/{shareId}/soundtrack). */
+  soundtrack?: HighlightSoundtrack;
 };
 
 export type SharedHighlightReelLookupResult =
@@ -118,6 +133,8 @@ export function buildHighlightReelSharePayload(input: {
   team: Pick<Team, "name" | "logoUrl"> | null;
   previewSteps: ReelStep[];
   sources: GameVideoSource[];
+  scoreboard?: HighlightReelShareScoreboard | null;
+  soundtrack?: HighlightSoundtrack | null;
 }): HighlightReelSharePayload {
   const playable = input.sources.filter((s) => gameSourceToVideoAngle(s) != null);
   const shareSources: HighlightReelShareSource[] = [];
@@ -137,6 +154,8 @@ export function buildHighlightReelSharePayload(input: {
     titleCard: buildReelTitleCard(input.game, input.team, input.reelName),
     steps: input.previewSteps,
     sources: shareSources,
+    ...(input.scoreboard ? { scoreboard: input.scoreboard } : {}),
+    ...(input.soundtrack ? { soundtrack: input.soundtrack } : {}),
   };
 }
 
@@ -167,6 +186,8 @@ export function parseHighlightReelSharePayload(
     });
   }
   if (sources.length === 0) return null;
+  const scoreboard = parseShareScoreboard(v.scoreboard);
+  const soundtrack = normalizeHighlightSoundtrack(v.soundtrack);
   return {
     schema: HIGHLIGHT_REEL_SHARE_SCHEMA,
     reelName: v.reelName.trim() || "Highlight reel",
@@ -182,6 +203,36 @@ export function parseHighlightReelSharePayload(
     },
     steps,
     sources,
+    ...(scoreboard ? { scoreboard } : {}),
+    ...(soundtrack ? { soundtrack } : {}),
+  };
+}
+
+function parseShareScoreboard(raw: unknown): HighlightReelShareScoreboard | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.homeName !== "string" || typeof o.awayName !== "string") {
+    return null;
+  }
+  if (!Array.isArray(o.ticks)) return null;
+  const ticks: ScoreboardTick[] = [];
+  for (const row of o.ticks) {
+    if (!row || typeof row !== "object") continue;
+    const t = row as Record<string, unknown>;
+    if (
+      typeof t.t !== "number" ||
+      typeof t.home !== "number" ||
+      typeof t.away !== "number"
+    ) {
+      continue;
+    }
+    ticks.push({ t: t.t, home: t.home, away: t.away });
+  }
+  if (ticks.length === 0) return null;
+  return {
+    ticks,
+    homeName: o.homeName.trim() || "Home",
+    awayName: o.awayName.trim() || "Away",
   };
 }
 

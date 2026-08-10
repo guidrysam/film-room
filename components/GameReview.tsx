@@ -56,12 +56,18 @@ import {
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
 import { gameCapUrl, teamFilmRoomUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
+import MatchScoreboardOverlay from "@/components/MatchScoreboardOverlay";
 import VideoTransport from "@/components/VideoTransport";
 import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 import ImportTagPlays from "@/components/ImportTagPlays";
 import AcademyFilmEvidencePicker from "@/components/AcademyFilmEvidencePicker";
 import AiTagDraftPanel from "@/components/AiTagDraftPanel";
+import {
+  buildScoreboardTicks,
+  scoreboardAtGameTime,
+  scoreboardNamesForGame,
+} from "@/lib/game-scoreboard";
 
 export type GameReviewProps = {
   gameId: string;
@@ -214,6 +220,16 @@ export default function GameReview({
     () => events.find((e) => e.id === selectedEventId) ?? null,
     [events, selectedEventId],
   );
+
+  const liveScoreboard = useMemo(() => {
+    if (!game) return null;
+    const names = scoreboardNamesForGame(game, team?.name);
+    return scoreboardAtGameTime(
+      buildScoreboardTicks(events),
+      selectedGameTime,
+      names,
+    );
+  }, [game, team?.name, events, selectedGameTime]);
 
   const canManageStats = useMemo(
     () => (game ? canManageGameStats(game, currentUid, team) : false),
@@ -1134,6 +1150,9 @@ export default function GameReview({
                         }
                       }}
                     />
+                    {liveScoreboard ? (
+                      <MatchScoreboardOverlay score={liveScoreboard} />
+                    ) : null}
                   </YoutubeChromelessStage>
                 ) : null}
 

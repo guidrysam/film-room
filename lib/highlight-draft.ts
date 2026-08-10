@@ -8,6 +8,10 @@ import {
   type DirectorTrack,
   type DirectorTrackEvent,
 } from "@/lib/games";
+import {
+  normalizeHighlightSoundtrack,
+  type HighlightSoundtrack,
+} from "@/lib/highlight-soundtrack";
 
 /**
  * Highlight draft moments stored as DirectorTracks (`kind: "highlight"`).
@@ -60,6 +64,8 @@ export type HighlightDraftMeta = {
   moments: HighlightMoment[];
   /** Players assigned to the whole draft (optional). */
   playerIds?: string[];
+  /** Drive audio bed for preview / share / length target. */
+  soundtrack?: HighlightSoundtrack;
 };
 
 export type HighlightDraft = {
@@ -68,6 +74,7 @@ export type HighlightDraft = {
   gameId: string;
   moments: HighlightMoment[];
   playerIds?: string[];
+  soundtrack?: HighlightSoundtrack;
   createdBy?: string;
   createdByName?: string;
 };
@@ -139,11 +146,13 @@ function uniquePlayerIds(...groups: (string[] | undefined)[]): string[] {
 export function serializeHighlightDraftMeta(
   moments: HighlightMoment[],
   playerIds?: string[],
+  soundtrack?: HighlightSoundtrack | null,
 ): string {
   const meta: HighlightDraftMeta = {
     schema: HIGHLIGHT_DRAFT_SCHEMA,
     moments,
     ...(playerIds && playerIds.length > 0 ? { playerIds } : {}),
+    ...(soundtrack ? { soundtrack } : {}),
   };
   return JSON.stringify(meta);
 }
@@ -194,10 +203,12 @@ export function parseHighlightDraftMeta(
       });
     }
     const draftPlayerIds = parsePlayerIds(raw.playerIds);
+    const soundtrack = normalizeHighlightSoundtrack(raw.soundtrack);
     return {
       schema: HIGHLIGHT_DRAFT_SCHEMA,
       moments,
       ...(draftPlayerIds.length > 0 ? { playerIds: draftPlayerIds } : {}),
+      ...(soundtrack ? { soundtrack } : {}),
     };
   } catch {
     return null;
@@ -243,6 +254,7 @@ export function highlightDraftFromTrack(track: DirectorTrack): HighlightDraft | 
     ...(meta.playerIds && meta.playerIds.length > 0
       ? { playerIds: meta.playerIds }
       : {}),
+    ...(meta.soundtrack ? { soundtrack: meta.soundtrack } : {}),
     ...(track.createdBy ? { createdBy: track.createdBy } : {}),
     ...(track.createdByName ? { createdByName: track.createdByName } : {}),
   };
@@ -527,6 +539,7 @@ export async function createHighlightReel(
     createdByName?: string;
     visibility?: CutVisibility;
     playerIds?: string[];
+    soundtrack?: HighlightSoundtrack | null;
   },
 ): Promise<string> {
   if (input.moments.length === 0) {
@@ -547,6 +560,7 @@ export async function createHighlightReel(
     description: serializeHighlightDraftMeta(
       moments,
       draftPlayerIds.length > 0 ? draftPlayerIds : undefined,
+      input.soundtrack ?? null,
     ),
     ...(input.createdByName ? { createdByName: input.createdByName } : {}),
   });
@@ -560,6 +574,13 @@ export type ReelStep = {
   sourceStartTime: number;
   /** Playback position (seconds) in the source video where the clip ends. */
   sourceEndTime: number;
+  /**
+   * Game-timeline seconds at {@link sourceStartTime}
+   * (for live overlays such as the scoreboard).
+   */
+  gameStartTime?: number;
+  /** Game-timeline seconds at {@link sourceEndTime}. */
+  gameEndTime?: number;
   speed: number;
   repeat: number;
   label?: string;
@@ -594,6 +615,8 @@ export function buildReelSteps(
       sourceId: m.activeSourceId,
       sourceStartTime,
       sourceEndTime,
+      gameStartTime: startGame,
+      gameEndTime: endGame,
       speed: normalizeHighlightSpeed(m.speed),
       repeat: normalizeHighlightRepeat(m.repeat),
       ...(m.label ? { label: m.label } : {}),
@@ -612,6 +635,87 @@ export function reelDurationSec(steps: ReelStep[]): number {
     total += (seg / (s.speed || 1)) * (s.repeat || 1);
   }
   return total;
+}
+
+/** EDL row for local clean render (Drive raws / ffmpeg). */
+export type ReelEditListRow = ReelStep & {
+  angleSlot?: string;
+  driveFileId?: string;
+  /** YouTube id used for AI analysis (native or aiProxy). */
+  videoId?: string;
+  aiProxyVideoId?: string;
+  sourceLabel?: string;
+};
+
+export type ReelEditListExport = {
+  schema: "film_room_clean_edl_v1";
+  exportedAt: string;
+  gameId?: string;
+  reelName?: string;
+  handleSec: number;
+  rows: ReelEditListRow[];
+};
+
+export type ExportReelEditListSource = {
+  id: string;
+  label?: string;
+  angleSlot?: string;
+  driveFileId?: string;
+  videoId?: string;
+  aiProxyVideoId?: string;
+  offsetFromGameTime?: number;
+};
+
+/**
+ * Build a downloadable clean-cut EDL from reel moments + vault/YouTube sources.
+ * Local ffmpeg uses driveFileId (or a local raw matched by angleSlot) — not YouTube.
+ */
+export function exportReelEditList(
+  moments: HighlightMoment[],
+  sources: ExportReelEditListSource[],
+  opts?: {
+    gameId?: string;
+    reelName?: string;
+    /** Extra pad around each cut when fetching ranges (default 1s). */
+    handleSec?: number;
+  },
+): ReelEditListExport {
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  const sourceOffsets: Record<string, number> = {};
+  for (const s of sources) {
+    sourceOffsets[s.id] =
+      typeof s.offsetFromGameTime === "number" ? s.offsetFromGameTime : 0;
+  }
+  const steps = buildReelSteps(moments, sourceOffsets);
+  const handleSec =
+    typeof opts?.handleSec === "number" && Number.isFinite(opts.handleSec)
+      ? Math.max(0, opts.handleSec)
+      : 1;
+
+  const rows: ReelEditListRow[] = steps.map((step) => {
+    const src = byId.get(step.sourceId);
+    const proxy =
+      typeof src?.aiProxyVideoId === "string" ? src.aiProxyVideoId.trim() : "";
+    const native =
+      typeof src?.videoId === "string" ? src.videoId.trim() : "";
+    return {
+      ...step,
+      ...(src?.angleSlot ? { angleSlot: src.angleSlot } : {}),
+      ...(src?.driveFileId ? { driveFileId: src.driveFileId } : {}),
+      ...(native || proxy ? { videoId: native || proxy } : {}),
+      ...(proxy ? { aiProxyVideoId: proxy } : {}),
+      ...(src?.label ? { sourceLabel: src.label } : {}),
+    };
+  });
+
+  return {
+    schema: "film_room_clean_edl_v1",
+    exportedAt: new Date().toISOString(),
+    ...(opts?.gameId ? { gameId: opts.gameId } : {}),
+    ...(opts?.reelName?.trim() ? { reelName: opts.reelName.trim() } : {}),
+    handleSec,
+    rows,
+  };
 }
 
 /** Playback point for a single saved moment (clip start). */

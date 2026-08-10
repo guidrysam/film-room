@@ -27,7 +27,8 @@
     "academy:goals:validate": "tsx scripts/academy/generate-u12-goal-reports.ts",
     "academy:sources:all": "npm run academy:sources:register && npm run academy:sources:extract && npm run academy:sources:index && npm run academy:sources:queue && npm run academy:catalog:candidates && npm run academy:validate",
     "ai:grant-credits": "tsx scripts/ai/grant-test-credits.ts",
-    "ai:eval-tag": "tsx scripts/ai/eval-tag-modes.ts"
+    "ai:eval-tag": "tsx scripts/ai/eval-tag-modes.ts",
+    "render:clean-highlight": "node scripts/render-clean-highlight.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.23",

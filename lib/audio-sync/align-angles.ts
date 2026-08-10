@@ -46,8 +46,8 @@ export async function alignAnglesByAudio(input: {
   windowStartSec?: number;
   windowDurationSec?: number;
 }): Promise<AudioAlignResult> {
-  const windowStartSec = input.windowStartSec ?? 45;
-  const windowDurationSec = input.windowDurationSec ?? 90;
+  const windowStartSec = input.windowStartSec ?? 0;
+  const windowDurationSec = input.windowDurationSec ?? 900;
 
   const [primaryPcm, secondaryPcm] = await Promise.all([
     extractYoutubePcmWindow({

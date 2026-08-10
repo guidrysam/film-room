@@ -157,6 +157,12 @@ export default function SharedHighlightReelPage() {
               ref={playerRef}
               steps={payload.steps}
               titleCard={payload.titleCard}
+              scoreboard={payload.scoreboard ?? null}
+              soundtrackUrl={
+                payload.soundtrack
+                  ? `/api/reel/${encodeURIComponent(shareId)}/soundtrack`
+                  : null
+              }
               videoIdForSource={videoIdForSource}
               labelForSource={labelForSource}
             />

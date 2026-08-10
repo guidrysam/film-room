@@ -2,11 +2,14 @@ import "server-only";
 
 import { FieldValue, type Timestamp } from "firebase-admin/firestore";
 import { adminFirestore } from "@/lib/firebase-admin";
+import type { AiCutProposalDraft } from "@/lib/ai/cut-schema";
 import type { AiSyncDraft, AiTagDraft } from "@/lib/ai/tag-schema";
 import type { CreditWalletRef } from "@/lib/billing/credits";
 
-export type AiJobKind = "tag" | "sync";
+export type AiJobKind = "tag" | "sync" | "propose_cut";
 export type AiJobStatus = "running" | "ready" | "failed" | "applied";
+
+export type { AiCutProposalDraft };
 
 export type AiTagJobDoc = {
   kind: AiJobKind;
@@ -22,6 +25,7 @@ export type AiTagJobDoc = {
   actorUid: string;
   drafts?: AiTagDraft[];
   syncDrafts?: AiSyncDraft[];
+  cutProposals?: AiCutProposalDraft[];
   notes?: string;
   suggestedKickoffOffsetSec?: number;
   error?: string;
@@ -71,6 +75,7 @@ export async function markAiJobReady(input: {
   debitLedgerId: string;
   drafts?: AiTagDraft[];
   syncDrafts?: AiSyncDraft[];
+  cutProposals?: AiCutProposalDraft[];
   notes?: string;
   suggestedKickoffOffsetSec?: number;
   lowEvidence?: boolean;
@@ -83,6 +88,7 @@ export async function markAiJobReady(input: {
         debitLedgerId: input.debitLedgerId,
         ...(input.drafts ? { drafts: input.drafts } : {}),
         ...(input.syncDrafts ? { syncDrafts: input.syncDrafts } : {}),
+        ...(input.cutProposals ? { cutProposals: input.cutProposals } : {}),
         ...(input.notes ? { notes: input.notes } : {}),
         ...(typeof input.suggestedKickoffOffsetSec === "number"
           ? { suggestedKickoffOffsetSec: input.suggestedKickoffOffsetSec }

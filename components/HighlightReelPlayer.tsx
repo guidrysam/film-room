@@ -12,8 +12,15 @@ import {
 } from "react";
 import YouTube, { type YouTubePlayer } from "react-youtube";
 import ReelInterstitial from "@/components/ReelInterstitial";
+import MatchScoreboardOverlay from "@/components/MatchScoreboardOverlay";
 import YoutubeChromelessStage from "@/components/YoutubeChromelessStage";
 import type { ReelStep } from "@/lib/highlight-draft";
+import {
+  gameTimeFromReelPlayback,
+  scoreboardAtGameTime,
+  type ScoreboardState,
+  type ScoreboardTick,
+} from "@/lib/game-scoreboard";
 import {
   REEL_TITLE_HOLD_MS,
   statInterstitialFromStep,
@@ -54,6 +61,12 @@ export type HighlightReelPlayerHandle = {
   stop: () => void;
 };
 
+export type HighlightReelScoreboard = {
+  ticks: ScoreboardTick[];
+  homeName: string;
+  awayName: string;
+};
+
 export type HighlightReelPlayerProps = {
   steps: ReelStep[];
   videoIdForSource: (sourceId: string) => string | undefined;
@@ -61,6 +74,13 @@ export type HighlightReelPlayerProps = {
   captureRef?: Ref<HTMLDivElement>;
   /** Shown on black before the first segment. */
   titleCard?: ReelTitleCard | null;
+  /** Live match scoreboard reconstructed from Game Cap / timeline marks. */
+  scoreboard?: HighlightReelScoreboard | null;
+  /**
+   * Playable URL for the reel bed (blob: or /api/reel/.../soundtrack).
+   * When set, YouTube segment audio is muted so the song is the bed.
+   */
+  soundtrackUrl?: string | null;
   onEnded?: () => void;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -74,6 +94,8 @@ const HighlightReelPlayer = forwardRef<
     videoIdForSource,
     captureRef,
     titleCard,
+    scoreboard,
+    soundtrackUrl,
     onEnded,
     onPlayingChange,
   },
@@ -86,17 +108,27 @@ const HighlightReelPlayer = forwardRef<
     null,
   );
   const [kenBurnsScale, setKenBurnsScale] = useState(1);
+  const [liveScore, setLiveScore] = useState<ScoreboardState | null>(null);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const loadedVideoIdRef = useRef<string | null>(null);
   const stepsRef = useRef(steps);
   const titleCardRef = useRef(titleCard);
+  const scoreboardRef = useRef(scoreboard);
+  const soundtrackUrlRef = useRef(soundtrackUrl);
   useEffect(() => {
     stepsRef.current = steps;
   });
   useEffect(() => {
     titleCardRef.current = titleCard;
+  });
+  useEffect(() => {
+    scoreboardRef.current = scoreboard;
+  });
+  useEffect(() => {
+    soundtrackUrlRef.current = soundtrackUrl;
   });
 
   const playingRef = useRef(false);
@@ -119,6 +151,56 @@ const HighlightReelPlayer = forwardRef<
     },
     [onPlayingChange],
   );
+
+  const applyScoreboardAtGameTime = useCallback((gameTime: number) => {
+    const board = scoreboardRef.current;
+    if (!board) {
+      setLiveScore(null);
+      return;
+    }
+    const next = scoreboardAtGameTime(board.ticks, gameTime, {
+      homeName: board.homeName,
+      awayName: board.awayName,
+    });
+    setLiveScore((prev) => {
+      if (
+        prev &&
+        prev.home === next.home &&
+        prev.away === next.away &&
+        prev.homeName === next.homeName &&
+        prev.awayName === next.awayName
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
+  const syncScoreboardFromPlayback = useCallback(
+    (sourcePlaybackSec: number, step: ReelStep | undefined) => {
+      if (!scoreboardRef.current || !step) return;
+      const gameTime = gameTimeFromReelPlayback(step, sourcePlaybackSec);
+      if (gameTime == null) {
+        if (typeof step.gameStartTime === "number") {
+          applyScoreboardAtGameTime(step.gameStartTime);
+        }
+        return;
+      }
+      applyScoreboardAtGameTime(gameTime);
+    },
+    [applyScoreboardAtGameTime],
+  );
+
+  useEffect(() => {
+    if (!scoreboard) {
+      setLiveScore(null);
+      return;
+    }
+    const first = steps[0];
+    const t =
+      typeof first?.gameStartTime === "number" ? first.gameStartTime : 0;
+    applyScoreboardAtGameTime(t);
+  }, [scoreboard, steps, applyScoreboardAtGameTime]);
 
   const firstVideoId = steps[0]
     ? videoIdForSource(steps[0].sourceId)
@@ -185,6 +267,52 @@ const HighlightReelPlayer = forwardRef<
     }
   }, []);
 
+  const applyYouTubeMuteForSoundtrack = useCallback((player?: YouTubePlayer | null) => {
+    const pl = player ?? playerRef.current;
+    if (!pl) return;
+    try {
+      if (soundtrackUrlRef.current) {
+        pl.mute?.();
+        pl.setVolume?.(0);
+      } else {
+        pl.unMute?.();
+        pl.setVolume?.(100);
+      }
+    } catch {
+      /* player not ready */
+    }
+  }, []);
+
+  const stopSoundtrack = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const startSoundtrack = useCallback(async () => {
+    const audio = audioRef.current;
+    const url = soundtrackUrlRef.current;
+    if (!audio || !url) return;
+    try {
+      if (audio.src !== url && !audio.src.endsWith(url)) {
+        audio.src = url;
+      }
+      audio.currentTime = 0;
+      await audio.play();
+    } catch {
+      /* autoplay / decode — fail soft */
+    }
+  }, []);
+
+  useEffect(() => {
+    applyYouTubeMuteForSoundtrack();
+  }, [soundtrackUrl, ready, applyYouTubeMuteForSoundtrack]);
+
   /** Park on the first segment without cue/load thrash (matches Review embed). */
   const cueIdlePreview = useCallback(
     (player: YouTubePlayer) => {
@@ -197,16 +325,18 @@ const HighlightReelPlayer = forwardRef<
       try {
         if (loadedVideoIdRef.current === videoId) {
           player.seekTo?.(start, true);
+          applyYouTubeMuteForSoundtrack(player);
           return;
         }
         const yt = player as YouTubePlayerWithCue;
         yt.cueVideoById?.({ videoId, startSeconds: start });
         loadedVideoIdRef.current = videoId;
+        applyYouTubeMuteForSoundtrack(player);
       } catch {
         /* player not ready */
       }
     },
-    [videoIdForSource],
+    [videoIdForSource, applyYouTubeMuteForSoundtrack],
   );
 
   const waitForSegmentPlaying = useCallback(
@@ -333,6 +463,7 @@ const HighlightReelPlayer = forwardRef<
         window.setTimeout(() => {
           try {
             player.setPlaybackRate?.(step.speed);
+            applyYouTubeMuteForSoundtrack(player);
             if (playingRef.current) kickPlayback(player);
           } catch {
             /* unsupported rate */
@@ -342,7 +473,7 @@ const HighlightReelPlayer = forwardRef<
         /* player not ready */
       }
     },
-    [videoIdForSource, kickPlayback],
+    [videoIdForSource, kickPlayback, applyYouTubeMuteForSoundtrack],
   );
 
   const ensureSegmentPlaying = useCallback(
@@ -460,6 +591,8 @@ const HighlightReelPlayer = forwardRef<
   const beginPlayback = useCallback(async () => {
     const seq = ++playSeqRef.current;
     setPlayingState(true);
+    void startSoundtrack();
+    applyYouTubeMuteForSoundtrack();
 
     if (!REEL_USE_BLACK_TRANSITIONS) {
       setInterstitial(null);
@@ -484,7 +617,14 @@ const HighlightReelPlayer = forwardRef<
       alreadyBlack: !!title,
       segmentStarted,
     });
-  }, [ensureSegmentPlaying, loadStep, presentSegmentUnderBlack, setPlayingState]);
+  }, [
+    ensureSegmentPlaying,
+    loadStep,
+    presentSegmentUnderBlack,
+    setPlayingState,
+    startSoundtrack,
+    applyYouTubeMuteForSoundtrack,
+  ]);
 
   const transitionToNextStep = useCallback(
     (fromIndex: number, nextIndex: number, pass: number) => {
@@ -515,12 +655,13 @@ const HighlightReelPlayer = forwardRef<
     setInterstitial(null);
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
+    stopSoundtrack();
     try {
       playerRef.current?.pauseVideo?.();
     } catch {
       /* ignore */
     }
-  }, [setPlayingState]);
+  }, [setPlayingState, stopSoundtrack]);
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
@@ -626,6 +767,7 @@ const HighlightReelPlayer = forwardRef<
       } catch {
         /* ignore */
       }
+      syncScoreboardFromPlayback(current, step);
       const pass = repeatPassRef.current;
       const nextIndex = stepIndexRef.current + 1;
       const hasNextStep = nextIndex < stepsRef.current.length;
@@ -664,7 +806,15 @@ const HighlightReelPlayer = forwardRef<
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
-  }, [playing, loadStep, transitionToNextStep, stop, onEnded, kickPlayback]);
+  }, [
+    playing,
+    loadStep,
+    transitionToNextStep,
+    stop,
+    onEnded,
+    kickPlayback,
+    syncScoreboardFromPlayback,
+  ]);
 
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
@@ -700,6 +850,7 @@ const HighlightReelPlayer = forwardRef<
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-black">
+      <audio ref={audioRef} preload="auto" className="hidden" />
       <div
         ref={setStageNode}
         data-reel-capture
@@ -761,6 +912,10 @@ const HighlightReelPlayer = forwardRef<
             aria-hidden
           />
         ) : null}
+
+        {liveScore && !fadeOpaque ? (
+          <MatchScoreboardOverlay score={liveScore} />
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2 border-t border-white/[0.06] bg-zinc-950/60 px-3 py-2">
@@ -778,6 +933,7 @@ const HighlightReelPlayer = forwardRef<
         </button>
         <span className="text-[10px] text-zinc-500">
           {steps.length} segment{steps.length === 1 ? "" : "s"}
+          {soundtrackUrl ? " · song bed" : ""}
           {!REEL_USE_BLACK_TRANSITIONS ? " · direct cuts (no black)" : ""}
         </span>
       </div>

@@ -6,8 +6,21 @@ import HighlightReelPlayer, {
   type HighlightReelPlayerHandle,
 } from "@/components/HighlightReelPlayer";
 import ReelClipTrimBar from "@/components/ReelClipTrimBar";
+import { auth } from "@/lib/firebase";
 import { teamFilmRoomRoute } from "@/lib/team-film-room";
 import { formatTimelineSeconds } from "@/lib/game-timeline";
+import {
+  buildScoreboardTicks,
+  scoreboardNamesForGame,
+} from "@/lib/game-scoreboard";
+import { uploadVideoToDrive } from "@/lib/google-drive-upload";
+import {
+  guessAudioMimeType,
+  isHighlightAudioFile,
+  probeAudioDurationSec,
+  soundtrackLengthDelta,
+  type HighlightSoundtrack,
+} from "@/lib/highlight-soundtrack";
 import {
   deleteDirectorTrack,
   updateDirectorTrack,
@@ -19,6 +32,7 @@ import {
 import {
   buildReelSteps,
   createHighlightReel,
+  exportReelEditList,
   HIGHLIGHT_SPEEDS,
   highlightMomentsToTrackEvents,
   listHighlightDrafts,
@@ -37,12 +51,15 @@ import {
 } from "@/lib/highlight-presets";
 import {
   formatHighlightMarkLabel,
+  highlightMomentsFromCutProposals,
   highlightMomentsFromGameMark,
   highlightMomentsFromGameMarks,
   isHighlightMarkEvent,
   listHighlightReelMarks,
   resolveHighlightMarkSourceId,
 } from "@/lib/highlight-from-marks";
+import type { AiCutProposalDraft } from "@/lib/ai/cut-schema";
+import { proposeCutCreditsForMarkCount } from "@/lib/billing/pricing";
 import { enrichReelStepsWithPlayerOverlays } from "@/lib/highlight-player-overlay";
 import { buildReelTitleCard } from "@/lib/highlight-reel-cards";
 import {
@@ -189,6 +206,16 @@ export default function HighlightReelStudio({
   const [name, setName] = useState("Highlight reel");
   const [visibility, setVisibility] = useState<CutVisibility>("private");
   const [moments, setMoments] = useState<HighlightMoment[]>([]);
+  const [soundtrack, setSoundtrack] = useState<HighlightSoundtrack | null>(
+    null,
+  );
+  const [soundtrackUrl, setSoundtrackUrl] = useState<string | null>(null);
+  const [soundtrackBusy, setSoundtrackBusy] = useState(false);
+  const [soundtrackMessage, setSoundtrackMessage] = useState<string | null>(
+    null,
+  );
+  const soundtrackFileRef = useRef<HTMLInputElement | null>(null);
+  const soundtrackBlobUrlRef = useRef<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -200,6 +227,11 @@ export default function HighlightReelStudio({
   const [basePrimary, setBasePrimary] = useState<string>("");
   const [presetId, setPresetId] = useState<HighlightPresetId>("replay");
   const [bulkPresetId, setBulkPresetId] = useState<HighlightPresetId>("replay");
+  const [cutProposals, setCutProposals] = useState<AiCutProposalDraft[] | null>(
+    null,
+  );
+  const [proposeBusy, setProposeBusy] = useState(false);
+  const [proposeNotes, setProposeNotes] = useState<string | null>(null);
 
   // Recording (optional download — not required for sharing).
   const [recording, setRecording] = useState(false);
@@ -237,7 +269,79 @@ export default function HighlightReelStudio({
     () => buildReelTitleCard(game, team, name),
     [game, team, name],
   );
+  const scoreboard = useMemo(() => {
+    const names = scoreboardNamesForGame(game, team?.name);
+    return {
+      ticks: buildScoreboardTicks(events),
+      homeName: names.homeName,
+      awayName: names.awayName,
+    };
+  }, [events, game, team?.name]);
   const totalDuration = useMemo(() => reelDurationSec(steps), [steps]);
+  const songTarget = useMemo(() => {
+    if (!soundtrack) return null;
+    return soundtrackLengthDelta(totalDuration, soundtrack.durationSec);
+  }, [soundtrack, totalDuration]);
+
+  useEffect(() => {
+    return () => {
+      if (soundtrackBlobUrlRef.current) {
+        URL.revokeObjectURL(soundtrackBlobUrlRef.current);
+        soundtrackBlobUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSoundtrackBlob(meta: HighlightSoundtrack | null) {
+      if (soundtrackBlobUrlRef.current) {
+        URL.revokeObjectURL(soundtrackBlobUrlRef.current);
+        soundtrackBlobUrlRef.current = null;
+      }
+      if (!meta) {
+        setSoundtrackUrl(null);
+        return;
+      }
+      const user = auth.currentUser;
+      if (!user) {
+        setSoundtrackUrl(null);
+        return;
+      }
+      try {
+        const token = await user.getIdToken();
+        const qs = new URLSearchParams({
+          fileId: meta.driveFileId,
+          ...(meta.mimeType ? { mimeType: meta.mimeType } : {}),
+        });
+        const res = await fetch(`/api/drive/soundtrack-media?${qs}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const err = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(err?.error || "Could not load soundtrack.");
+        }
+        const blob = await res.blob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        soundtrackBlobUrlRef.current = url;
+        setSoundtrackUrl(url);
+      } catch (e) {
+        if (!cancelled) {
+          setSoundtrackUrl(null);
+          setSoundtrackMessage(
+            e instanceof Error ? e.message : "Could not load soundtrack.",
+          );
+        }
+      }
+    }
+    void loadSoundtrackBlob(soundtrack);
+    return () => {
+      cancelled = true;
+    };
+  }, [soundtrack?.driveFileId]);
 
   useEffect(() => {
     const teamId = game.teamId?.trim();
@@ -291,6 +395,8 @@ export default function HighlightReelStudio({
     setName("Highlight reel");
     setVisibility("private");
     setMoments([]);
+    setSoundtrack(null);
+    setSoundtrackMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -299,6 +405,8 @@ export default function HighlightReelStudio({
     setEditingId(reel.id);
     setName(reel.name);
     setMoments(reel.moments.map((m) => ({ ...m })));
+    setSoundtrack(reel.soundtrack ?? null);
+    setSoundtrackMessage(null);
     setDirty(false);
     setMessage(null);
   }, []);
@@ -405,6 +513,114 @@ export default function HighlightReelStudio({
     [basePrimary, playableSources, moments, mutateMoments],
   );
 
+  const runProposeCut = useCallback(async () => {
+    if (!basePrimary || reelMarks.length === 0) return;
+    setProposeBusy(true);
+    setProposeNotes(null);
+    setMessage(null);
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("Sign in required.");
+      const token = await user.getIdToken();
+      const res = await fetch("/api/ai/propose-cut", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          gameId,
+          eventIds: reelMarks.map((m) => m.id),
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        message?: string;
+        proposals?: AiCutProposalDraft[];
+        notes?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Propose cut failed.");
+      }
+      setCutProposals(data.proposals ?? []);
+      setProposeNotes(data.notes ?? null);
+      setMessage(
+        `AI proposed angles for ${data.proposals?.length ?? 0} mark${(data.proposals?.length ?? 0) === 1 ? "" : "s"}. Review below, then approve.`,
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Propose cut failed.");
+    } finally {
+      setProposeBusy(false);
+    }
+  }, [basePrimary, reelMarks, gameId]);
+
+  const applyCutProposals = useCallback(
+    (mode: "replace" | "append") => {
+      if (!basePrimary || !cutProposals?.length) return;
+      const generated = highlightMomentsFromCutProposals(
+        events,
+        cutProposals,
+        {
+          primarySourceId: basePrimary,
+          playableSourceIds: playableSources.map((s) => s.id),
+          presetId: "single",
+        },
+      );
+      if (generated.length === 0) {
+        setMessage("No proposals could be turned into clips.");
+        return;
+      }
+      const nextMoments = generated.map(inputToMoment);
+      if (mode === "replace") {
+        setEditingId(null);
+        setName(`${game.title.trim() || "Game"} AI cut`);
+        setVisibility("private");
+        setMoments(nextMoments);
+        setDirty(true);
+      } else {
+        mutateMoments([...moments, ...nextMoments]);
+      }
+      setCutProposals(null);
+      setProposeNotes(null);
+      setMessage(
+        mode === "replace"
+          ? `Approved AI cut with ${countReelEventGroups(nextMoments)} event${countReelEventGroups(nextMoments) === 1 ? "" : "s"}.`
+          : `Added ${countReelEventGroups(nextMoments)} AI event${countReelEventGroups(nextMoments) === 1 ? "" : "s"}.`,
+      );
+    },
+    [
+      basePrimary,
+      cutProposals,
+      events,
+      playableSources,
+      game.title,
+      moments,
+      mutateMoments,
+    ],
+  );
+
+  const exportCleanCutEdl = useCallback(() => {
+    if (moments.length === 0) {
+      setMessage("Add segments before exporting an EDL.");
+      return;
+    }
+    const edl = exportReelEditList(moments, sources, {
+      gameId,
+      reelName: name,
+      handleSec: 1,
+    });
+    const blob = new Blob([JSON.stringify(edl, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(name || "highlight-reel").replace(/[^\w.-]+/g, "_")}-edl.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setMessage("Downloaded clean cut EDL (Drive file ids + source in/out).");
+  }, [moments, sources, gameId, name]);
+
   const updateMoment = useCallback(
     (id: string, patch: Partial<HighlightMoment>) => {
       setMoments((prev) =>
@@ -477,13 +693,18 @@ export default function HighlightReelStudio({
           name: name.trim() || "Highlight reel",
           visibility,
           track: highlightMomentsToTrackEvents(moments),
-          description: serializeHighlightDraftMeta(moments),
+          description: serializeHighlightDraftMeta(
+            moments,
+            undefined,
+            soundtrack,
+          ),
         });
       } else {
         id = await createHighlightReel(gameId, currentUid, {
           name,
           moments: moments.map(momentToInput),
           visibility,
+          soundtrack,
           ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
         });
         setEditingId(id);
@@ -500,6 +721,7 @@ export default function HighlightReelStudio({
     }
   }, [
     moments,
+    soundtrack,
     editingId,
     gameId,
     name,
@@ -508,6 +730,81 @@ export default function HighlightReelStudio({
     currentDisplayName,
     refreshReels,
   ]);
+
+  const handleSoundtrackFile = useCallback(async (file: File | null) => {
+    if (!file) return;
+    if (!isHighlightAudioFile(file)) {
+      setSoundtrackMessage("Choose an audio file (mp3, m4a, wav, …).");
+      return;
+    }
+    const user = auth.currentUser;
+    if (!user) {
+      setSoundtrackMessage("Sign in to upload a song.");
+      return;
+    }
+    setSoundtrackBusy(true);
+    setSoundtrackMessage(null);
+    try {
+      const durationSec = await probeAudioDurationSec(file);
+      const mimeType = guessAudioMimeType(file);
+      const token = await user.getIdToken();
+      const sessionRes = await fetch("/api/drive/soundtrack-session", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType,
+          sizeBytes: file.size,
+        }),
+      });
+      if (!sessionRes.ok) {
+        const err = (await sessionRes.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(
+          err?.error ||
+            "Could not start Drive upload. Reconnect My Film Drive?",
+        );
+      }
+      const session = (await sessionRes.json()) as {
+        accessToken: string;
+        parentFolderId: string;
+        uploadName: string;
+      };
+      const uploaded = await uploadVideoToDrive({
+        accessToken: session.accessToken,
+        parentFolderId: session.parentFolderId,
+        name: session.uploadName,
+        file,
+      });
+      setSoundtrack({
+        driveFileId: uploaded.fileId,
+        name: uploaded.name || file.name,
+        mimeType,
+        durationSec: Math.round(durationSec * 10) / 10,
+      });
+      setDirty(true);
+      setSoundtrackMessage(
+        `Song uploaded — shoot for ~${formatTimelineSeconds(durationSec)}.`,
+      );
+    } catch (e) {
+      setSoundtrackMessage(
+        e instanceof Error ? e.message : "Could not upload the song.",
+      );
+    } finally {
+      setSoundtrackBusy(false);
+      if (soundtrackFileRef.current) soundtrackFileRef.current.value = "";
+    }
+  }, []);
+
+  const clearSoundtrack = useCallback(() => {
+    setSoundtrack(null);
+    setSoundtrackMessage(null);
+    setDirty(true);
+  }, []);
 
   const handleSave = useCallback(() => {
     void persistReel();
@@ -542,6 +839,8 @@ export default function HighlightReelStudio({
         team,
         previewSteps,
         sources: playableSources,
+        scoreboard,
+        soundtrack,
       });
       const shareId = await ensureHighlightReelSharing(
         gameId,
@@ -578,6 +877,8 @@ export default function HighlightReelStudio({
     team,
     previewSteps,
     playableSources,
+    scoreboard,
+    soundtrack,
     gameId,
     currentUid,
   ]);
@@ -762,7 +1063,95 @@ export default function HighlightReelStudio({
             </p>
             <span className="text-[10px] text-zinc-500">
               ~{formatTimelineSeconds(totalDuration)} total
+              {soundtrack
+                ? ` · song ${formatTimelineSeconds(soundtrack.durationSec)}`
+                : ""}
             </span>
+          </div>
+
+          <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-zinc-300">
+                Soundtrack
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  ref={soundtrackFileRef}
+                  type="file"
+                  accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac"
+                  className="hidden"
+                  onChange={(e) =>
+                    void handleSoundtrackFile(e.target.files?.[0] ?? null)
+                  }
+                />
+                <button
+                  type="button"
+                  disabled={soundtrackBusy}
+                  onClick={() => soundtrackFileRef.current?.click()}
+                  className={ghostBtn}
+                >
+                  {soundtrackBusy
+                    ? "Uploading…"
+                    : soundtrack
+                      ? "Replace song"
+                      : "Upload song"}
+                </button>
+                {soundtrack ? (
+                  <button
+                    type="button"
+                    disabled={soundtrackBusy}
+                    onClick={clearSoundtrack}
+                    className={ghostBtn}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {soundtrack ? (
+              <div className="mt-2 space-y-1.5">
+                <p className="truncate text-[11px] text-zinc-200">
+                  {soundtrack.name}
+                </p>
+                {songTarget ? (
+                  <>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          songTarget.status === "fit"
+                            ? "bg-emerald-500/80"
+                            : songTarget.status === "short"
+                              ? "bg-sky-500/70"
+                              : "bg-amber-500/80"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.max(4, songTarget.ratio * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-zinc-500">
+                      Reel {formatTimelineSeconds(totalDuration)} · target{" "}
+                      {formatTimelineSeconds(soundtrack.durationSec)}
+                      {songTarget.status === "fit"
+                        ? " · on length"
+                        : songTarget.status === "short"
+                          ? ` · ${formatTimelineSeconds(Math.abs(songTarget.deltaSec))} short`
+                          : ` · ${formatTimelineSeconds(songTarget.deltaSec)} over`}
+                    </p>
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-1 text-[10px] text-zinc-500">
+                Upload to My Drive Music — plays under the reel and sets the
+                length to shoot for.
+              </p>
+            )}
+            {soundtrackMessage ? (
+              <p className="mt-1.5 text-[10px] text-zinc-400">
+                {soundtrackMessage}
+              </p>
+            ) : null}
           </div>
 
           {recording ? (
@@ -777,6 +1166,8 @@ export default function HighlightReelStudio({
             captureRef={captureRef}
             steps={previewSteps}
             titleCard={titleCard}
+            scoreboard={scoreboard}
+            soundtrackUrl={soundtrackUrl}
             videoIdForSource={videoIdForSource}
             labelForSource={labelForSource}
             onEnded={handleReelEnded}
@@ -1087,7 +1478,85 @@ export default function HighlightReelStudio({
                   >
                     Add all events to reel
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void runProposeCut()}
+                    disabled={!basePrimary || proposeBusy || reelMarks.length === 0}
+                    className={primaryBtn}
+                    title={`~${proposeCutCreditsForMarkCount(reelMarks.length)} credits`}
+                  >
+                    {proposeBusy
+                      ? "Proposing…"
+                      : "Propose angles for marks"}
+                  </button>
                 </div>
+                {cutProposals && cutProposals.length > 0 ? (
+                  <div className="mt-3 rounded-md border border-amber-500/25 bg-amber-950/20 p-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-200/90">
+                      AI cut proposals ({cutProposals.length})
+                    </p>
+                    {proposeNotes ? (
+                      <p className="mt-1 text-[10px] text-zinc-400">{proposeNotes}</p>
+                    ) : null}
+                    <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                      {cutProposals.map((p) => {
+                        const mark = reelMarks.find(
+                          (m) => m.id === p.timelineEventId,
+                        );
+                        const angle =
+                          playableSources.find((s) => s.id === p.activeSourceId)
+                            ?.label ?? p.activeSourceId;
+                        return (
+                          <li
+                            key={p.timelineEventId}
+                            className="text-[10px] text-zinc-300"
+                          >
+                            <span className="font-mono text-zinc-500">
+                              {mark
+                                ? formatTimelineSeconds(mark.t)
+                                : "—"}
+                            </span>{" "}
+                            {mark ? formatHighlightMarkLabel(mark) : "Mark"} →{" "}
+                            <span className="text-zinc-100">{angle}</span>{" "}
+                            ({p.startOffsetSec.toFixed(0)}…+
+                            {p.endOffsetSec.toFixed(0)}s ·{" "}
+                            {Math.round(p.confidence * 100)}%)
+                            {p.note ? (
+                              <span className="text-zinc-500"> — {p.note}</span>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => applyCutProposals("replace")}
+                        className={primaryBtn}
+                      >
+                        Approve into new reel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyCutProposals("append")}
+                        disabled={moments.length === 0}
+                        className={ghostBtn}
+                      >
+                        Append to reel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCutProposals(null);
+                          setProposeNotes(null);
+                        }}
+                        className={ghostBtn}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 </div>
               </div>
             ) : null}
@@ -1135,6 +1604,15 @@ export default function HighlightReelStudio({
               className={primaryBtn}
             >
               {saving ? "Saving…" : editingId ? "Save changes" : "Save reel"}
+            </button>
+            <button
+              type="button"
+              onClick={exportCleanCutEdl}
+              disabled={moments.length === 0}
+              className={ghostBtn}
+              title="JSON EDL with driveFileId + source in/out for local ffmpeg"
+            >
+              Export clean cut EDL
             </button>
           </div>
         </div>

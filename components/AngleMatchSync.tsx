@@ -272,6 +272,8 @@ export default function AngleMatchSync({
           gameId: game.id,
           referenceSourceId: reference.id,
           targetSourceId: target.id,
+          windowStartSec: 0,
+          windowDurationSec: 900,
         }),
       });
       const data = (await res.json()) as {
