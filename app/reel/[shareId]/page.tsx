@@ -6,14 +6,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HighlightReelPlayer, {
   type HighlightReelPlayerHandle,
 } from "@/components/HighlightReelPlayer";
-import { getHighlightReelByShareId } from "@/lib/highlight-reel-share";
-import type { HighlightReelSharePayload } from "@/lib/highlight-reel-share";
+import type {
+  HighlightReelSharePayload,
+  SharedHighlightReelLookupResult,
+} from "@/lib/highlight-reel-share-payload";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
 
 const primaryBtn =
   "rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-blue-950/35 transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 disabled:cursor-not-allowed disabled:opacity-50";
+
+const LOAD_TIMEOUT_MS = 20_000;
 
 export default function SharedHighlightReelPage() {
   const params = useParams();
@@ -35,35 +39,66 @@ export default function SharedHighlightReelPage() {
       return;
     }
     let cancelled = false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS);
+
     void (async () => {
       setLoading(true);
       setNotFound(false);
       setQueryError(null);
       setPayload(null);
       try {
-        const result = await getHighlightReelByShareId(shareId);
+        const res = await fetch(
+          `/api/reel/${encodeURIComponent(shareId)}`,
+          { signal: controller.signal, cache: "no-store" },
+        );
+        const result = (await res.json().catch(() => null)) as
+          | SharedHighlightReelLookupResult
+          | null;
         if (cancelled) return;
+        if (!result || typeof result !== "object") {
+          setQueryError("Could not load this highlight reel.");
+          return;
+        }
         if (result.ok) {
           setPayload(result.payload);
           setCreatedByName(result.createdByName ?? null);
-        } else if (result.kind === "expired") {
+          return;
+        }
+        if (result.kind === "expired") {
           setNotFound(true);
           setQueryError(
             "This highlight link has expired. Ask the coach for a new watch link.",
           );
-        } else if (result.kind === "not_found") {
-          setNotFound(true);
-        } else {
-          setQueryError(result.message);
+          return;
         }
-      } catch {
-        if (!cancelled) setQueryError("Could not load this highlight reel.");
+        if (result.kind === "not_found") {
+          setNotFound(true);
+          return;
+        }
+        setQueryError(
+          result.message ||
+            "Could not load this highlight reel (check network).",
+        );
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setQueryError(
+            "This highlight reel took too long to load. Refresh and try again.",
+          );
+          return;
+        }
+        setQueryError("Could not load this highlight reel.");
       } finally {
+        window.clearTimeout(timeoutId);
         if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
       cancelled = true;
+      controller.abort();
+      window.clearTimeout(timeoutId);
     };
   }, [shareId]);
 
@@ -86,16 +121,17 @@ export default function SharedHighlightReelPage() {
 
   const handleWatch = useCallback(() => {
     setStarted(true);
-    // Player is already mounted at full size under the overlay — kick play
-    // immediately (user gesture) and once more after layout settles.
     playerRef.current?.play();
     window.setTimeout(() => playerRef.current?.play(), 80);
   }, []);
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#030306] text-zinc-300">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#030306] px-4 text-zinc-300">
         <p className="text-sm">Loading highlights…</p>
+        <p className="text-[11px] text-zinc-600">
+          Usually takes a couple of seconds.
+        </p>
       </div>
     );
   }
@@ -106,8 +142,8 @@ export default function SharedHighlightReelPage() {
         <div className={`${panelClass} max-w-md text-center`}>
           <p className="text-lg font-semibold">Highlight reel not found</p>
           <p className="mt-2 text-sm text-zinc-400">
-            This link may have expired or the reel was removed. Ask the coach to
-            open the reel studio and tap <strong>Copy watch link</strong> again.
+            {queryError ||
+              "This link may have expired or the reel was removed. Ask the coach to open the reel studio and tap Copy watch link again."}
           </p>
           <Link href="/" className="mt-4 inline-block text-sm text-blue-300 hover:text-blue-200">
             Go to Film Room
@@ -123,6 +159,13 @@ export default function SharedHighlightReelPage() {
         <div className={`${panelClass} max-w-md text-center`}>
           <p className="text-lg font-semibold">Could not load reel</p>
           <p className="mt-2 text-sm text-zinc-400">{queryError ?? "Unknown error."}</p>
+          <button
+            type="button"
+            className={`${primaryBtn} mt-4`}
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
