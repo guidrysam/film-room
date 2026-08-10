@@ -14,26 +14,9 @@ const databaseURL =
     process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim()) ||
   "https://film-room-b7780-default-rtdb.firebaseio.com";
 
-/**
- * Must match a domain registered on the Firebase Google OAuth client’s
- * Authorized redirect URIs (…/__/auth/handler). Custom app hosts (e.g.
- * film-room-gray.vercel.app) only work after that URI is added in Google Cloud.
- * Override with NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN once registered.
- */
-function resolveAuthDomain(): string {
-  const explicit =
-    typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim()
-      : "";
-  if (explicit) return explicit;
-
-  // Default to the Firebase-hosted auth helper origin (already on the OAuth client).
-  return "film-room-b7780.firebaseapp.com";
-}
-
 const firebaseConfig = {
   apiKey: "AIzaSyDoqx15Pb6GSHjPBACABkJaqAj6dAOlH_w",
-  authDomain: resolveAuthDomain(),
+  authDomain: "film-room-b7780.firebaseapp.com",
   databaseURL,
   projectId: "film-room-b7780",
   storageBucket: "film-room-b7780.firebasestorage.app",

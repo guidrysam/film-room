@@ -1,6 +1,5 @@
 import {
   GoogleAuthProvider,
-  getRedirectResult,
   signInWithPopup,
   signOut,
   type User,
@@ -22,37 +21,17 @@ export function formatGoogleSignInError(err: unknown): string {
     return "This site isn’t approved for Google sign-in. Use https://film-room-gray.vercel.app (not a preview link).";
   }
   if (code === "auth/popup-blocked") {
-    return "Safari blocked the Google sign-in window. Allow popups for film-room-gray.vercel.app, then try again.";
+    return "Safari blocked the Google sign-in window. Allow popups for this site, then try again.";
   }
   if (code === "auth/popup-closed-by-user") {
     return "Sign-in was cancelled. Try again when you’re ready.";
-  }
-  if (code === "auth/redirect-uri-mismatch" || /redirect_uri_mismatch/i.test(
-    err instanceof Error ? err.message : String(err ?? ""),
-  )) {
-    return "Google sign-in isn’t configured for this site yet. Ask the site admin to register the OAuth redirect URI.";
   }
   if (err instanceof Error && err.message.trim()) return err.message;
   return "Sign-in failed. Try again.";
 }
 
-/**
- * Google sign-in via popup. Redirect is intentionally not used: Safari blocks
- * third-party cookies on the default Firebase authDomain, and a custom
- * authDomain requires a matching Google OAuth redirect URI first.
- */
 export async function signInWithGoogle(): Promise<UserCredential> {
   return signInWithPopup(auth, provider);
-}
-
-/** Resolve a pending redirect sign-in (no-op when none). Kept for older sessions. */
-export async function completeGoogleRedirectSignIn(): Promise<UserCredential | null> {
-  try {
-    return await getRedirectResult(auth);
-  } catch (err) {
-    console.error("[auth:redirect]", err);
-    return null;
-  }
 }
 
 export async function signOutUser() {
