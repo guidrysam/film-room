@@ -2,7 +2,6 @@ import {
   GoogleAuthProvider,
   getRedirectResult,
   signInWithPopup,
-  signInWithRedirect,
   signOut,
   type User,
   type UserCredential,
@@ -16,10 +15,6 @@ function authErrorCode(err: unknown): string {
   return "code" in err ? String((err as { code?: unknown }).code) : "";
 }
 
-function isPopupBlockedError(err: unknown): boolean {
-  return authErrorCode(err) === "auth/popup-blocked";
-}
-
 /** Friendlier copy for common Google sign-in failures. */
 export function formatGoogleSignInError(err: unknown): string {
   const code = authErrorCode(err);
@@ -27,28 +22,30 @@ export function formatGoogleSignInError(err: unknown): string {
     return "This site isn’t approved for Google sign-in. Use https://film-room-gray.vercel.app (not a preview link).";
   }
   if (code === "auth/popup-blocked") {
-    return "The sign-in popup was blocked. Trying again in this tab…";
+    return "Safari blocked the Google sign-in window. Allow popups for film-room-gray.vercel.app, then try again.";
+  }
+  if (code === "auth/popup-closed-by-user") {
+    return "Sign-in was cancelled. Try again when you’re ready.";
+  }
+  if (code === "auth/redirect-uri-mismatch" || /redirect_uri_mismatch/i.test(
+    err instanceof Error ? err.message : String(err ?? ""),
+  )) {
+    return "Google sign-in isn’t configured for this site yet. Ask the site admin to register the OAuth redirect URI.";
   }
   if (err instanceof Error && err.message.trim()) return err.message;
   return "Sign-in failed. Try again.";
 }
 
 /**
- * Google sign-in. Prefers popup; falls back to full-page redirect when Safari
- * (or another browser) blocks the popup.
+ * Google sign-in via popup. Redirect is intentionally not used: Safari blocks
+ * third-party cookies on the default Firebase authDomain, and a custom
+ * authDomain requires a matching Google OAuth redirect URI first.
  */
-export async function signInWithGoogle(): Promise<UserCredential | null> {
-  try {
-    return await signInWithPopup(auth, provider);
-  } catch (err) {
-    if (!isPopupBlockedError(err)) throw err;
-    await signInWithRedirect(auth, provider);
-    // Page navigates away; callers should treat null as "redirect in progress".
-    return null;
-  }
+export async function signInWithGoogle(): Promise<UserCredential> {
+  return signInWithPopup(auth, provider);
 }
 
-/** Resolve a pending redirect sign-in (no-op when none). */
+/** Resolve a pending redirect sign-in (no-op when none). Kept for older sessions. */
 export async function completeGoogleRedirectSignIn(): Promise<UserCredential | null> {
   try {
     return await getRedirectResult(auth);
@@ -80,22 +77,15 @@ export async function getYouTubeOAuthAccessToken(): Promise<{
     include_granted_scopes: "true",
   });
 
-  try {
-    const result = await signInWithPopup(auth, ytProvider);
-    const cred = GoogleAuthProvider.credentialFromResult(result);
-    const accessToken = (cred as { accessToken?: unknown } | null)?.accessToken;
-    if (typeof accessToken !== "string" || accessToken.trim() === "") {
-      throw new Error(
-        "Missing Google OAuth access token. Ensure the YouTube scope was granted.",
-      );
-    }
-    return { user: result.user, accessToken: accessToken.trim() };
-  } catch (err) {
-    if (!isPopupBlockedError(err)) throw err;
+  const result = await signInWithPopup(auth, ytProvider);
+  const cred = GoogleAuthProvider.credentialFromResult(result);
+  const accessToken = (cred as { accessToken?: unknown } | null)?.accessToken;
+  if (typeof accessToken !== "string" || accessToken.trim() === "") {
     throw new Error(
-      "Google sign-in popup was blocked. Allow popups for this site, then try again.",
+      "Missing Google OAuth access token. Ensure the YouTube scope was granted.",
     );
   }
+  return { user: result.user, accessToken: accessToken.trim() };
 }
 
 /**
@@ -113,20 +103,13 @@ export async function getYouTubeUploadAccessToken(): Promise<{
     include_granted_scopes: "true",
   });
 
-  try {
-    const result = await signInWithPopup(auth, ytProvider);
-    const cred = GoogleAuthProvider.credentialFromResult(result);
-    const accessToken = (cred as { accessToken?: unknown } | null)?.accessToken;
-    if (typeof accessToken !== "string" || accessToken.trim() === "") {
-      throw new Error(
-        "Missing Google OAuth access token. Ensure the YouTube upload scope was granted.",
-      );
-    }
-    return { user: result.user, accessToken: accessToken.trim() };
-  } catch (err) {
-    if (!isPopupBlockedError(err)) throw err;
+  const result = await signInWithPopup(auth, ytProvider);
+  const cred = GoogleAuthProvider.credentialFromResult(result);
+  const accessToken = (cred as { accessToken?: unknown } | null)?.accessToken;
+  if (typeof accessToken !== "string" || accessToken.trim() === "") {
     throw new Error(
-      "Google sign-in popup was blocked. Allow popups for this site, then try again.",
+      "Missing Google OAuth access token. Ensure the YouTube upload scope was granted.",
     );
   }
+  return { user: result.user, accessToken: accessToken.trim() };
 }

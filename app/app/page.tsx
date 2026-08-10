@@ -169,10 +169,6 @@ export default function DashboardPage() {
               setSignInError(null);
               setSigningIn(true);
               void signInWithGoogle()
-                .then((cred) => {
-                  // null = redirect started (Safari popup blocked)
-                  if (cred == null) return;
-                })
                 .catch((err) => {
                   setSignInError(formatGoogleSignInError(err));
                 })
@@ -186,7 +182,7 @@ export default function DashboardPage() {
             <p className="mb-4 text-xs text-rose-300">{signInError}</p>
           ) : (
             <p className="mb-4 text-[11px] text-zinc-500">
-              If the popup is blocked, we’ll continue in this tab instead.
+              If nothing opens, allow popups for this site, then try again.
             </p>
           )}
           <p className="mb-6 text-sm text-zinc-400">
