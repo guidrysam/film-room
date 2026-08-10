@@ -112,13 +112,9 @@ export function isPlayerAccount(
 
 export async function loadUserProfile(uid: string): Promise<UserProfile | null> {
   if (!uid.trim()) return null;
-  try {
-    const snap = await getDoc(userDoc(uid));
-    if (!snap.exists()) return null;
-    return parseUserProfile(uid, snap.data() as Record<string, unknown>);
-  } catch {
-    return null;
-  }
+  const snap = await getDoc(userDoc(uid));
+  if (!snap.exists()) return null;
+  return parseUserProfile(uid, snap.data() as Record<string, unknown>);
 }
 
 export type CompleteOnboardingInput = {

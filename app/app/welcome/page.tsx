@@ -28,11 +28,15 @@ function WelcomePageInner() {
 
   useEffect(() => {
     if (loading || !user) return;
-    void loadUserProfile(user.uid).then((profile) => {
-      if (!userNeedsOnboarding(profile)) {
-        router.replace("/app");
-      }
-    });
+    void loadUserProfile(user.uid)
+      .then((profile) => {
+        if (!userNeedsOnboarding(profile)) {
+          router.replace("/app");
+        }
+      })
+      .catch((err) => {
+        console.error("[welcome:profile]", err);
+      });
   }, [loading, user, router]);
 
   if (loading) {

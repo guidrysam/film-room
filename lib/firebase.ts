@@ -1,5 +1,9 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import {
+  browserLocalPersistence,
+  getAuth,
+  setPersistence,
+} from "firebase/auth";
 import { getDatabase } from "firebase/database";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
@@ -31,6 +35,13 @@ export const db = getDatabase(app);
 
 /** Firebase Auth (Google sign-in). */
 export const auth = getAuth(app);
+
+/** Keep Google sessions across reloads (Safari / ITP-safe default). */
+if (typeof window !== "undefined") {
+  void setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn("[auth:persistence]", err);
+  });
+}
 
 /** Firestore — saved session templates (not live rooms). */
 export const firestore = getFirestore(app);
