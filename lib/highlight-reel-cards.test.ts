@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildReelEndCard,
   buildReelStatCard,
   buildReelTitleCard,
 } from "./highlight-reel-cards";
@@ -91,5 +92,27 @@ describe("buildReelStatCard", () => {
     });
     assert.equal(card?.headline, "Goal + Assist");
     assert.deepEqual(card?.lines, ["Goal — Alex Smith", "Assist — Jordan Lee"]);
+  });
+});
+
+describe("buildReelEndCard", () => {
+  it("builds an end card with all sponsors", () => {
+    const card = buildReelEndCard(
+      [
+        { logoUrl: "data:image/png;base64,a" },
+        { logoUrl: "data:image/png;base64,b" },
+      ],
+      { message: "Thank you to our sponsors" },
+    );
+    assert.equal(card.kind, "thanks");
+    assert.equal(card.headline, "Thank you to our sponsors");
+    assert.equal(card.logos.length, 2);
+  });
+
+  it("falls back to thanks-for-watching without logos", () => {
+    const card = buildReelEndCard([]);
+    assert.equal(card.kind, "thanks");
+    assert.equal(card.headline, "Thanks for watching");
+    assert.equal(card.logos.length, 0);
   });
 });

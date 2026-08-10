@@ -6,6 +6,10 @@ import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 export const REEL_TITLE_HOLD_MS = 4800;
 export const REEL_STAT_HOLD_MS = 1600;
 export const REEL_THANKS_HOLD_MS = 3200;
+/** Black end-card hold after the last clip. */
+export const REEL_END_HOLD_MS = 3600;
+/** Soundtrack volume ramp to silence on the finish screen. */
+export const REEL_AUDIO_FADE_MS = 2000;
 
 export type ReelTitleLogoSource =
   | "auto"
@@ -186,6 +190,22 @@ export type ReelInterstitial =
   | ({ kind: "title" } & ReelTitleCard)
   | ({ kind: "stat" } & ReelStatCard)
   | ({ kind: "thanks" } & ReelThankYouCard);
+
+/** Closing black card after the last clip (sponsors when available). */
+export function buildReelEndCard(
+  sponsors: Array<{ logoUrl: string; name?: string }> | null | undefined,
+  opts?: { message?: string | null },
+): ReelInterstitial {
+  const thanks = buildReelThankYouCard(sponsors, {
+    message: opts?.message,
+  });
+  if (thanks) return { kind: "thanks", ...thanks };
+  return {
+    kind: "thanks",
+    headline: opts?.message?.trim() || "Thanks for watching",
+    logos: [],
+  };
+}
 
 export function statInterstitialFromStep(
   step: ReelStep | undefined,

@@ -56,37 +56,45 @@ export default function ReelInterstitial({ card }: ReelInterstitialProps) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center px-4 text-center sm:px-6">
         {card.headline.trim() ? (
-          <p className="mb-5 max-w-[92%] text-balance text-lg font-semibold tracking-tight text-white sm:mb-6 sm:text-2xl">
+          <p
+            className={`max-w-[92%] text-balance font-semibold tracking-tight text-white ${
+              card.logos.length > 0
+                ? "mb-5 text-lg sm:mb-6 sm:text-2xl"
+                : "text-2xl sm:text-3xl"
+            }`}
+          >
             {card.headline}
           </p>
         ) : null}
-        <ul
-          className={`grid w-full max-w-2xl place-items-center gap-6 ${
-            single
-              ? "grid-cols-1"
-              : card.logos.length === 2
-                ? "grid-cols-2"
-                : "grid-cols-2 sm:grid-cols-3"
-          }`}
-        >
-          {card.logos.map((logo, i) => (
-            <li
-              key={`${logo.logoUrl.slice(0, 24)}_${i}`}
-              className="flex flex-col items-center"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={logo.logoUrl}
-                alt=""
-                className={
-                  single
-                    ? "h-[min(48vh,16rem)] w-[min(48vh,16rem)] rounded-3xl bg-white object-contain p-4 shadow-2xl shadow-black/55 sm:h-[min(52vh,18rem)] sm:w-[min(52vh,18rem)]"
-                    : "h-28 w-28 rounded-2xl bg-white object-contain p-2.5 shadow-xl shadow-black/45 sm:h-32 sm:w-32"
-                }
-              />
-            </li>
-          ))}
-        </ul>
+        {card.logos.length > 0 ? (
+          <ul
+            className={`grid w-full max-w-2xl place-items-center gap-6 ${
+              single
+                ? "grid-cols-1"
+                : card.logos.length === 2
+                  ? "grid-cols-2"
+                  : "grid-cols-2 sm:grid-cols-3"
+            }`}
+          >
+            {card.logos.map((logo, i) => (
+              <li
+                key={`${logo.logoUrl.slice(0, 24)}_${i}`}
+                className="flex flex-col items-center"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={logo.logoUrl}
+                  alt=""
+                  className={
+                    single
+                      ? "h-[min(48vh,16rem)] w-[min(48vh,16rem)] rounded-3xl bg-white object-contain p-4 shadow-2xl shadow-black/55 sm:h-[min(52vh,18rem)] sm:w-[min(52vh,18rem)]"
+                      : "h-28 w-28 rounded-2xl bg-white object-contain p-2.5 shadow-xl shadow-black/45 sm:h-32 sm:w-32"
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {card.subtitle?.trim() ? (
           <p className="mt-4 max-w-[85%] text-sm text-zinc-300">
             {card.subtitle}

@@ -22,7 +22,10 @@ import {
   type ScoreboardTick,
 } from "@/lib/game-scoreboard";
 import {
+  REEL_AUDIO_FADE_MS,
+  REEL_END_HOLD_MS,
   REEL_TITLE_HOLD_MS,
+  buildReelEndCard,
   sponsorInterstitialForCut,
   statInterstitialFromStep,
   type ReelInterstitial as ReelInterstitialCard,
@@ -163,6 +166,7 @@ const HighlightReelPlayer = forwardRef<
   const pendingPlayRef = useRef(false);
   const transitioningRef = useRef(false);
   const preTransitionArmRef = useRef(false);
+  const finishingRef = useRef(false);
   const playSeqRef = useRef(0);
   const seekSettledAtRef = useRef(0);
   const lastPlayKickAtRef = useRef(0);
@@ -315,6 +319,34 @@ const HighlightReelPlayer = forwardRef<
     try {
       audio.pause();
       audio.currentTime = 0;
+      audio.volume = 1;
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const fadeSoundtrackOut = useCallback(async (ms: number, seq: number) => {
+    const audio = audioRef.current;
+    if (!audio || audio.paused) return;
+    const startVol =
+      typeof audio.volume === "number" && Number.isFinite(audio.volume)
+        ? audio.volume
+        : 1;
+    const steps = 24;
+    const dt = Math.max(16, ms / steps);
+    for (let i = 1; i <= steps; i += 1) {
+      if (seq !== playSeqRef.current) return;
+      try {
+        audio.volume = Math.max(0, startVol * (1 - i / steps));
+      } catch {
+        break;
+      }
+      await delayMs(dt);
+    }
+    if (seq !== playSeqRef.current) return;
+    try {
+      audio.pause();
+      audio.volume = 1;
     } catch {
       /* ignore */
     }
@@ -328,6 +360,7 @@ const HighlightReelPlayer = forwardRef<
       if (audio.src !== url && !audio.src.endsWith(url)) {
         audio.src = url;
       }
+      audio.volume = 1;
       audio.currentTime = 0;
       await audio.play();
     } catch {
@@ -643,6 +676,7 @@ const HighlightReelPlayer = forwardRef<
   const beginPlayback = useCallback(async () => {
     const seq = ++playSeqRef.current;
     cutIndexRef.current = 0;
+    finishingRef.current = false;
     setPlayingState(true);
     void startSoundtrack();
     applyYouTubeMuteForSoundtrack();
@@ -712,6 +746,7 @@ const HighlightReelPlayer = forwardRef<
 
   const stop = useCallback(() => {
     playSeqRef.current += 1;
+    finishingRef.current = false;
     setPlayingState(false);
     pendingPlayRef.current = false;
     transitioningRef.current = false;
@@ -727,6 +762,45 @@ const HighlightReelPlayer = forwardRef<
       /* ignore */
     }
   }, [setPlayingState, stopSoundtrack]);
+
+  const finishReel = useCallback(async () => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
+    const seq = playSeqRef.current;
+    transitioningRef.current = true;
+    preTransitionArmRef.current = true;
+
+    const endCard = buildReelEndCard(sponsorsRef.current, {
+      message: thankYouMessageRef.current,
+    });
+    setInterstitial(endCard);
+    setFadeOpaque(true);
+    try {
+      playerRef.current?.pauseVideo?.();
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      await Promise.all([
+        fadeSoundtrackOut(REEL_AUDIO_FADE_MS, seq),
+        delayMs(REEL_END_HOLD_MS),
+      ]);
+    } finally {
+      if (seq !== playSeqRef.current) {
+        finishingRef.current = false;
+        return;
+      }
+      finishingRef.current = false;
+      transitioningRef.current = false;
+      preTransitionArmRef.current = false;
+      setPlayingState(false);
+      stepIndexRef.current = -1;
+      repeatPassRef.current = 0;
+      // Leave the end card up; a later Stop / Play clears it.
+      onEnded?.();
+    }
+  }, [fadeSoundtrackOut, onEnded, setPlayingState]);
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
@@ -805,7 +879,7 @@ const HighlightReelPlayer = forwardRef<
     if (!playing) return;
     const id = window.setInterval(() => {
       const player = playerRef.current;
-      if (!player || !playingRef.current || transitioningRef.current) return;
+      if (!player || !playingRef.current || transitioningRef.current || finishingRef.current) return;
       const step = stepsRef.current[stepIndexRef.current];
       if (!step) return;
       if (Date.now() < seekSettledAtRef.current) return;
@@ -867,8 +941,7 @@ const HighlightReelPlayer = forwardRef<
           return;
         }
         if (!hasNextStep) {
-          stop();
-          onEnded?.();
+          void finishReel();
           return;
         }
         if (REEL_USE_BLACK_TRANSITIONS) {
@@ -885,15 +958,14 @@ const HighlightReelPlayer = forwardRef<
     playing,
     loadStep,
     transitionToNextStep,
-    stop,
-    onEnded,
+    finishReel,
     kickPlayback,
     syncScoreboardFromPlayback,
   ]);
 
   const handleYoutubeStateChange = useCallback(
     (event: { data: number; target: YouTubePlayer }) => {
-      if (!playingRef.current) return;
+      if (!playingRef.current || finishingRef.current) return;
       const state = event.data;
       if (
         state === YT_PAUSED ||
@@ -913,14 +985,13 @@ const HighlightReelPlayer = forwardRef<
         }
         const nextIndex = stepIndexRef.current + 1;
         if (nextIndex >= stepsRef.current.length) {
-          stop();
-          onEnded?.();
+          void finishReel();
           return;
         }
         transitionToNextStep(stepIndexRef.current, nextIndex, 0);
       }
     },
-    [kickPlayback, loadStep, onEnded, stop, transitionToNextStep],
+    [kickPlayback, loadStep, finishReel, transitionToNextStep],
   );
 
   return (
