@@ -1,6 +1,8 @@
 import {
   GoogleAuthProvider,
+  getRedirectResult,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User,
   type UserCredential,
@@ -14,37 +16,61 @@ function authErrorCode(err: unknown): string {
   return "code" in err ? String((err as { code?: unknown }).code) : "";
 }
 
+function shouldFallbackToRedirect(err: unknown): boolean {
+  const code = authErrorCode(err);
+  // Safari often reports a closed popup when third-party auth helpers are blocked.
+  return code === "auth/popup-blocked" || code === "auth/popup-closed-by-user";
+}
+
 /** Friendlier copy for common Google sign-in failures. */
 export function formatGoogleSignInError(err: unknown): string {
   const code = authErrorCode(err);
   if (code === "auth/unauthorized-domain") {
     return "This site isn’t approved for Google sign-in. Use https://film-room-gray.vercel.app (not a preview link).";
   }
-  if (code === "auth/popup-blocked") {
-    return "Safari blocked the Google sign-in window. Allow popups for this site, then try again.";
+  if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user") {
+    return "Safari blocked or closed the Google window. Continuing in this tab…";
   }
-  if (code === "auth/popup-closed-by-user") {
-    return "Sign-in was cancelled. Try again when you’re ready.";
+  if (
+    code === "auth/redirect-uri-mismatch" ||
+    /redirect_uri_mismatch/i.test(
+      err instanceof Error ? err.message : String(err ?? ""),
+    )
+  ) {
+    return "Google Cloud is missing redirect URI https://film-room-gray.vercel.app/__/auth/handler on the Firebase Web client.";
   }
   if (err instanceof Error && err.message.trim()) return err.message;
   return "Sign-in failed. Try again.";
 }
 
-export async function signInWithGoogle(): Promise<UserCredential> {
-  return signInWithPopup(auth, provider);
+/**
+ * Google sign-in. Prefers popup; on Safari popup failures continues via
+ * same-tab redirect (requires authDomain + /__/auth proxy + OAuth URI).
+ */
+export async function signInWithGoogle(): Promise<UserCredential | null> {
+  try {
+    return await signInWithPopup(auth, provider);
+  } catch (err) {
+    if (!shouldFallbackToRedirect(err)) throw err;
+    await signInWithRedirect(auth, provider);
+    return null;
+  }
+}
+
+/** Resolve a pending redirect sign-in (no-op when none). */
+export async function completeGoogleRedirectSignIn(): Promise<UserCredential | null> {
+  try {
+    return await getRedirectResult(auth);
+  } catch (err) {
+    console.error("[auth:redirect]", err);
+    return null;
+  }
 }
 
 export async function signOutUser() {
   return signOut(auth);
 }
 
-/**
- * Minimal “bridge” for server routes that need a Google OAuth access token.
- * Uses Firebase Auth popup sign-in to obtain a Google access token with the YouTube scope.
- *
- * Note: this does not redesign auth or add server-side verification; it simply returns
- * an access token for the current browser session.
- */
 export async function getYouTubeOAuthAccessToken(): Promise<{
   user: User;
   accessToken: string;
@@ -67,10 +93,6 @@ export async function getYouTubeOAuthAccessToken(): Promise<{
   return { user: result.user, accessToken: accessToken.trim() };
 }
 
-/**
- * OAuth access token scoped for uploading videos to the signed-in user's YouTube
- * channel (`youtube.upload`). Separate from the live-stream helper above.
- */
 export async function getYouTubeUploadAccessToken(): Promise<{
   user: User;
   accessToken: string;

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { completeGoogleRedirectSignIn } from "@/lib/auth-google";
 
 type AuthState = {
   user: User | null;
@@ -18,7 +19,24 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
-const AUTH_READY_TIMEOUT_MS = 10_000;
+const AUTH_READY_TIMEOUT_MS = 8_000;
+const REDIRECT_RESULT_TIMEOUT_MS = 4_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(null), ms);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        window.clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -26,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let settled = false;
+    let cancelled = false;
 
     const finish = (next: User | null) => {
       if (settled) {
@@ -46,6 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     );
 
+    void withTimeout(
+      completeGoogleRedirectSignIn(),
+      REDIRECT_RESULT_TIMEOUT_MS,
+    ).then((cred) => {
+      if (cancelled) return;
+      if (cred?.user) finish(cred.user);
+    });
+
     const timeoutId = window.setTimeout(() => {
       if (!settled) {
         console.warn("[auth] timed out waiting for auth state");
@@ -54,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, AUTH_READY_TIMEOUT_MS);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timeoutId);
       unsub();
     };

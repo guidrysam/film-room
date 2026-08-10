@@ -18,9 +18,27 @@ const databaseURL =
     process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL?.trim()) ||
   "https://film-room-b7780-default-rtdb.firebaseio.com";
 
+/**
+ * Production uses the app host so Safari redirect/popup helpers stay first-party
+ * (paired with /__/auth rewrite). Requires Google Cloud OAuth redirect URI:
+ *   https://film-room-gray.vercel.app/__/auth/handler
+ * Override with NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN when needed.
+ */
+function resolveAuthDomain(): string {
+  const explicit =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.trim()
+      : "";
+  if (explicit) return explicit;
+  if (typeof process !== "undefined" && process.env.NODE_ENV !== "production") {
+    return "localhost";
+  }
+  return "film-room-gray.vercel.app";
+}
+
 const firebaseConfig = {
   apiKey: "AIzaSyDoqx15Pb6GSHjPBACABkJaqAj6dAOlH_w",
-  authDomain: "film-room-b7780.firebaseapp.com",
+  authDomain: resolveAuthDomain(),
   databaseURL,
   projectId: "film-room-b7780",
   storageBucket: "film-room-b7780.firebasestorage.app",
@@ -36,7 +54,6 @@ export const db = getDatabase(app);
 /** Firebase Auth (Google sign-in). */
 export const auth = getAuth(app);
 
-/** Keep Google sessions across reloads (Safari / ITP-safe default). */
 if (typeof window !== "undefined") {
   void setPersistence(auth, browserLocalPersistence).catch((err) => {
     console.warn("[auth:persistence]", err);
