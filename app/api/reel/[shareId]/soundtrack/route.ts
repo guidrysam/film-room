@@ -2,7 +2,6 @@ import { adminFirestore } from "@/lib/firebase-admin";
 import { getUserVaultAccessToken } from "@/lib/drive/user-vault";
 import { streamDriveFile } from "@/lib/drive/soundtrack";
 import { normalizeHighlightSoundtrack } from "@/lib/highlight-soundtrack";
-import { isPastExpiry } from "@/lib/user-privacy-settings";
 
 export const runtime = "nodejs";
 
@@ -28,13 +27,12 @@ export async function GET(
       return Response.json({ error: "Not found." }, { status: 404 });
     }
     const raw = snap.data() ?? {};
-    const expiresAt = raw.expiresAt;
-    if (
-      expiresAt &&
-      typeof expiresAt === "object" &&
-      typeof (expiresAt as { toMillis?: unknown }).toMillis === "function" &&
-      isPastExpiry(expiresAt as { toMillis: () => number })
-    ) {
+    const expiresAt = raw.expiresAt as { toMillis?: () => number } | null | undefined;
+    const expiresMs =
+      expiresAt && typeof expiresAt.toMillis === "function"
+        ? expiresAt.toMillis()
+        : null;
+    if (typeof expiresMs === "number" && expiresMs <= Date.now()) {
       return Response.json({ error: "This link has expired." }, { status: 410 });
     }
 
