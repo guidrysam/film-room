@@ -14,6 +14,10 @@ import {
   shiftDraftsToVideoTime,
 } from "@/lib/ai/tag-windows";
 import {
+  filterAiDraftsAgainstKnownGoals,
+  type GoalLikeAnchor,
+} from "@/lib/goal-lookback";
+import {
   anchorsInWindow,
   formatAnchorsForPrompt,
   type TagAnchorHint,
@@ -55,6 +59,7 @@ EXTENDED — include generously when you can see them (confidence ≥ ~0.45 is f
 Use coach_mark only for other high-value teaching moments that do not fit above.
 IMPORTANT: tSec must be seconds from the START OF THIS CLIP (0 = clip start), not wall-clock and not full-file time.
 Within a ~30–45 minute window expect STRUCTURE (if present) + ALL goals + a dense set of EXTENDED events (often 12–40 drafts for that half). Prefer missing fewer clear shots/corners/saves over being sparse.
+If the prompt lists Known coach/Game Cap marks that already include goals, do NOT emit duplicate goals near those times — coaches already tagged them.
 Do NOT emit routine passes, throw-ins, or every stoppage — only coach-useful moments.
 For goals/shots/corners, set opponent=true when the event belongs to the away/opponent side if distinguishable.
 If a moment is a bit uncertain, still include it with a lower confidence and/or lowEvidence=true rather than omitting it.
@@ -228,6 +233,15 @@ export async function runTagGameAnalysis(
       );
     }
 
+    const goalAnchors: GoalLikeAnchor[] = knownMarks.map((m) => ({
+      tSec: m.tSec,
+      kind: m.kind,
+    }));
+    const drafts = filterAiDraftsAgainstKnownGoals(
+      merged.drafts,
+      goalAnchors,
+    );
+    const removedGoals = merged.drafts.length - drafts.length;
 
     const passNote =
       windows.length > 1
@@ -237,9 +251,14 @@ export async function runTagGameAnalysis(
       knownMarks.length > 0
         ? `Used ${knownMarks.length} Game Cap/coach marks as priors.`
         : undefined;
+    const dedupeNote =
+      removedGoals > 0
+        ? `Skipped ${removedGoals} AI goal${removedGoals === 1 ? "" : "s"} already covered by Game Cap.`
+        : undefined;
     return {
       ...merged,
-      notes: [passNote, priorsNote, merged.notes]
+      drafts,
+      notes: [passNote, priorsNote, dedupeNote, merged.notes]
         .filter(Boolean)
         .join(" ")
         .slice(0, 500),

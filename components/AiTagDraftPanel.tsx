@@ -30,6 +30,10 @@ import {
 import { youtubeVideoIdForAnalysis } from "@/lib/ai/youtube-source";
 import { buildTagAnchorHints } from "@/lib/ai/tag-anchors";
 import {
+  applyGoalLookback,
+  isAiGoalKind,
+} from "@/lib/goal-lookback";
+import {
   parseGameCapSidecar,
   sidecarEventsToTimelineInputs,
 } from "@/lib/gamecap-sidecar";
@@ -593,10 +597,7 @@ export default function AiTagDraftPanel({
   const approveDraft = useCallback(
     async (row: DraftRow) => {
       if (!canEdit) return;
-      const scoring =
-        row.kind === "goal" ||
-        row.kind === "field_goal" ||
-        row.kind === "three_pointer";
+      const scoring = isAiGoalKind(row.kind);
       const scoreWord = basketball
         ? row.kind === "three_pointer"
           ? "3PT"
@@ -608,11 +609,12 @@ export default function AiTagDraftPanel({
           : `${scoreWord}: ${row.label}`
         : row.label || kindLabel(row.kind, basketball);
       const statType = statTypeForAiTagKind(row.kind);
+      const lookback = scoring ? applyGoalLookback(row.tSec) : null;
       await addGameEvent(
         game.id,
         {
           type: "coach_mark",
-          t: Math.max(0, Math.round(row.tSec)),
+          t: lookback ? lookback.t : Math.max(0, Math.round(row.tSec)),
           label,
           sourceId: primary?.id,
           payload: {
@@ -621,6 +623,12 @@ export default function AiTagDraftPanel({
             ...(row.opponent ? { opponent: true } : {}),
             ...(statType ? { statType } : {}),
             ...(row.lowEvidence ? { lowEvidence: true } : {}),
+            ...(lookback
+              ? {
+                  markedAtSec: lookback.markedAtSec,
+                  lookbackSec: lookback.lookbackSec,
+                }
+              : {}),
           },
           createdBy: currentUid,
           createdByName: currentDisplayName ?? undefined,

@@ -6,6 +6,7 @@ import {
   type HighlightPresetId,
 } from "@/lib/highlight-presets";
 import { getEventPlayerIds, withEventPlayerIds } from "@/lib/timeline-players";
+import { isGoalTimelineEvent } from "@/lib/goal-lookback";
 
 export const HIGHLIGHT_MARK_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
   "coach_mark",
@@ -15,6 +16,8 @@ export const HIGHLIGHT_MARK_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
 
 const DEFAULT_START_OFFSET = -5;
 const DEFAULT_END_OFFSET = 10;
+/** Goals stored with lookback: clip from event.t through the press + pad. */
+const GOAL_LOOKBACK_END_PAD_SEC = 5;
 /** Goal and assist on the same play are usually marked within one second. */
 const GOAL_ASSIST_MERGE_WINDOW_SEC = 1;
 export const HIGHLIGHT_GOAL_PLAYER_IDS_KEY = "highlightGoalPlayerIds";
@@ -170,6 +173,8 @@ export type HighlightFromMarksOptions = {
   startOffsetSec?: number;
   endOffsetSec?: number;
   presetId?: HighlightPresetId;
+  /** Force a specific angle for this mark (AI propose-cut). */
+  activeSourceIdOverride?: string;
 };
 
 /**
@@ -179,16 +184,46 @@ export function highlightMomentsFromGameMark(
   event: GameTimelineEvent,
   opts: HighlightFromMarksOptions,
 ): AddHighlightMomentInput[] {
-  const startOffsetSec = opts.startOffsetSec ?? DEFAULT_START_OFFSET;
-  const endOffsetSec = opts.endOffsetSec ?? DEFAULT_END_OFFSET;
+  let startOffsetSec = opts.startOffsetSec ?? DEFAULT_START_OFFSET;
+  let endOffsetSec = opts.endOffsetSec ?? DEFAULT_END_OFFSET;
+
+  // Goals with lookback: event.t is already clip start; end through press + pad.
+  if (
+    opts.startOffsetSec == null &&
+    opts.endOffsetSec == null &&
+    isGoalTimelineEvent(event)
+  ) {
+    const payload =
+      event.payload && typeof event.payload === "object" ? event.payload : {};
+    const markedAt =
+      typeof payload.markedAtSec === "number" && Number.isFinite(payload.markedAtSec)
+        ? payload.markedAtSec
+        : null;
+    if (markedAt != null) {
+      startOffsetSec = 0;
+      endOffsetSec = Math.max(
+        DEFAULT_END_OFFSET,
+        markedAt - event.t + GOAL_LOOKBACK_END_PAD_SEC,
+      );
+    } else {
+      // Legacy goal marks still at press time → start 10s earlier.
+      startOffsetSec = -10;
+      endOffsetSec = Math.max(endOffsetSec, 5);
+    }
+  }
+
   const presetId = opts.presetId ?? "single";
   const playable = new Set(opts.playableSourceIds);
 
-  const primarySourceId = resolveHighlightMarkSourceId(
-    event,
-    opts.playableSourceIds,
-    opts.primarySourceId,
-  );
+  const override = opts.activeSourceIdOverride?.trim();
+  const primarySourceId =
+    override && playable.has(override)
+      ? override
+      : resolveHighlightMarkSourceId(
+          event,
+          opts.playableSourceIds,
+          opts.primarySourceId,
+        );
   if (!primarySourceId || !playable.has(primarySourceId)) return [];
 
   const label = formatHighlightMarkLabel(event);
@@ -237,6 +272,47 @@ export function highlightMomentsFromGameMarks(
 
   for (const event of marks) {
     out.push(...highlightMomentsFromGameMark(event, opts));
+  }
+
+  return out;
+}
+
+export type CutProposalOverride = {
+  timelineEventId: string;
+  activeSourceId: string;
+  startOffsetSec: number;
+  endOffsetSec: number;
+};
+
+/**
+ * Build highlight moments from AI propose-cut overrides (approve gate).
+ * Only marks with a matching proposal are included.
+ */
+export function highlightMomentsFromCutProposals(
+  events: GameTimelineEvent[],
+  proposals: CutProposalOverride[],
+  opts: Pick<
+    HighlightFromMarksOptions,
+    "primarySourceId" | "playableSourceIds" | "presetId"
+  >,
+): AddHighlightMomentInput[] {
+  const byId = new Map(
+    proposals.map((p) => [p.timelineEventId, p] as const),
+  );
+  const marks = mergeGoalAssistMarks(events);
+  const out: AddHighlightMomentInput[] = [];
+
+  for (const event of marks) {
+    const proposal = byId.get(event.id);
+    if (!proposal) continue;
+    out.push(
+      ...highlightMomentsFromGameMark(event, {
+        ...opts,
+        activeSourceIdOverride: proposal.activeSourceId,
+        startOffsetSec: proposal.startOffsetSec,
+        endOffsetSec: proposal.endOffsetSec,
+      }),
+    );
   }
 
   return out;

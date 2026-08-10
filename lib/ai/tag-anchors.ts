@@ -143,6 +143,26 @@ export function buildTagAnchorHints(
       label,
       source: fromGameCap ? "gamecap" : "timeline",
     });
+    // Prefer original press time for goal dedupe when lookback shifted `t`.
+    const markedAt =
+      typeof payload.markedAtSec === "number" &&
+      Number.isFinite(payload.markedAtSec)
+        ? Math.max(0, payload.markedAtSec)
+        : null;
+    if (
+      markedAt != null &&
+      Math.abs(markedAt - tSec) > 0.5 &&
+      (kind === "goal" ||
+        kind === "field_goal" ||
+        kind === "three_pointer")
+    ) {
+      out.push({
+        tSec: markedAt,
+        kind,
+        label: `${label} (mark)`,
+        source: fromGameCap ? "gamecap" : "timeline",
+      });
+    }
   }
 
   out.sort((a, b) => a.tSec - b.tSec);

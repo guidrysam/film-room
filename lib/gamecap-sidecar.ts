@@ -1,4 +1,8 @@
 import type { GameTimelineEventInput } from "@/lib/games";
+import {
+  applyGoalLookback,
+  isGameCapGoalType,
+} from "@/lib/goal-lookback";
 
 /** Game Cap sidecar event (RecordingMetadata.SidecarEvent). */
 export type GameCapSidecarEvent = {
@@ -126,10 +130,13 @@ export function sidecarEventsToTimelineInputs(
     ) {
       continue;
     }
-    const t = Math.max(0, e.recordingElapsedSeconds - offset);
+    const markedAt = Math.max(0, e.recordingElapsedSeconds - offset);
+    const isGoal = isGameCapGoalType(e.type);
+    const lookback = isGoal ? applyGoalLookback(markedAt) : null;
+    const t = lookback ? lookback.t : Math.round(markedAt * 10) / 10;
     out.push({
       type: "coach_mark",
-      t: Math.round(t * 10) / 10,
+      t,
       label: labelForGameCapEventType(e.type),
       ...(opts.sourceId ? { sourceId: opts.sourceId } : {}),
       ...(opts.createdBy ? { createdBy: opts.createdBy } : {}),
@@ -137,6 +144,13 @@ export function sidecarEventsToTimelineInputs(
       payload: {
         gameCapType: e.type,
         recordingElapsedSeconds: e.recordingElapsedSeconds,
+        ...(isGoal ? { statType: "goal" } : {}),
+        ...(lookback
+          ? {
+              markedAtSec: lookback.markedAtSec,
+              lookbackSec: lookback.lookbackSec,
+            }
+          : {}),
         ...(e.id ? { gameCapEventId: e.id } : {}),
         ...(sidecar.recordingId ? { recordingId: sidecar.recordingId } : {}),
         importedFrom: "gamecap_sidecar",

@@ -41,6 +41,7 @@ import {
   reviewTagsForSport,
   type ReviewQuickTag,
 } from "@/lib/sport-pack";
+import { applyGoalLookback } from "@/lib/goal-lookback";
 import { resolveSportId, isSoccerCurriculumSport } from "@/lib/sports";
 import {
   appendHighlightMoment,
@@ -489,7 +490,12 @@ export default function GameReview({
   // still carry an attributed player. No player is always allowed.
   const commitPendingTag = useCallback(async () => {
     if (!pendingTag) return;
-    const t = pendingTag.t;
+    const markedAt = pendingTag.t;
+    const isGoal =
+      pendingTag.statType === "goal" ||
+      pendingTag.label.toLowerCase().includes("goal");
+    const lookback = isGoal ? applyGoalLookback(markedAt) : null;
+    const t = lookback ? lookback.t : markedAt;
     setTagSaving(true);
     setTagMessage(null);
     try {
@@ -525,7 +531,9 @@ export default function GameReview({
             ? ` (assist: ${playerName(pendingAssistId)})`
             : "";
         setTagMessage(
-          `${pendingTag.label} · ${playerName(pendingPlayerId)}${assist} at ${formatTimelineSeconds(t)}.`,
+          `${pendingTag.label} · ${playerName(pendingPlayerId)}${assist} at ${formatTimelineSeconds(t)}${
+            lookback ? ` (clip from −${lookback.lookbackSec}s)` : ""
+          }.`,
         );
       } else {
         const players = pendingPlayerId ? [pendingPlayerId] : [];
@@ -543,6 +551,12 @@ export default function GameReview({
               {
                 ...(pendingTag.opponent ? { opponent: true } : {}),
                 ...(pendingTag.statType ? { statType: pendingTag.statType } : {}),
+                ...(lookback
+                  ? {
+                      markedAtSec: lookback.markedAtSec,
+                      lookbackSec: lookback.lookbackSec,
+                    }
+                  : {}),
               },
               players,
               persons as string[],
@@ -553,7 +567,9 @@ export default function GameReview({
           { actorUid: currentUid },
         );
         setTagMessage(
-          `${pendingTag.label}${pendingPlayerId ? ` · ${playerName(pendingPlayerId)}` : ""} at ${formatTimelineSeconds(t)}.`,
+          `${pendingTag.label}${pendingPlayerId ? ` · ${playerName(pendingPlayerId)}` : ""} at ${formatTimelineSeconds(t)}${
+            lookback ? ` (clip from −${lookback.lookbackSec}s)` : ""
+          }.`,
         );
       }
       setTagLabel("");
