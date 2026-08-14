@@ -542,6 +542,41 @@ export default function GameReview({
             ...(currentDisplayName ? { createdByName: currentDisplayName } : {}),
           });
         }
+        // Scoreboard reads timeline events, not stats — always mirror scoring marks.
+        if (isScoringStatType(pendingTag.statType) || isGoal) {
+          const players = [pendingPlayerId];
+          const persons = [personIdFor(pendingPlayerId)].filter(Boolean);
+          await addGameEvent(
+            gameId,
+            {
+              type: "coach_mark",
+              t,
+              label: pendingTag.label,
+              ...(selectedSource?.id ? { sourceId: selectedSource.id } : {}),
+              payload: withEventPlayerIds(
+                {
+                  ...(pendingTag.opponent ? { opponent: true } : {}),
+                  ...(pendingTag.statType
+                    ? { statType: pendingTag.statType }
+                    : {}),
+                  ...(lookback
+                    ? {
+                        markedAtSec: lookback.markedAtSec,
+                        lookbackSec: lookback.lookbackSec,
+                      }
+                    : {}),
+                },
+                players,
+                persons as string[],
+              ),
+              createdBy: currentUid,
+              ...(currentDisplayName
+                ? { createdByName: currentDisplayName }
+                : {}),
+            },
+            { actorUid: currentUid },
+          );
+        }
         const assist =
           isScoringStatType(pendingTag.statType) && pendingAssistId
             ? ` (assist: ${playerName(pendingAssistId)})`

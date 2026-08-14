@@ -64,22 +64,33 @@ export function scoreDeltaForTimelineEvent(
       ? payload.statType.trim().toLowerCase()
       : "";
 
-  if (aiKind === "goal" || statType === "goal" || isGoalTimelineEvent(ev)) {
-    if (opponent) return { home: 0, away: 1 };
-    if (aiKind === "three_pointer" || statType === "three_pointer") {
-      return { home: 3, away: 0 };
-    }
-    if (aiKind === "field_goal" || statType === "field_goal") {
-      return { home: 2, away: 0 };
-    }
-    return { home: 1, away: 0 };
-  }
-
+  // Check basketball scoring kinds before the generic goal matcher —
+  // isGoalTimelineEvent() also matches buckets/3PT labels.
   if (aiKind === "three_pointer" || statType === "three_pointer") {
     return opponent ? { home: 0, away: 3 } : { home: 3, away: 0 };
   }
   if (aiKind === "field_goal" || statType === "field_goal") {
     return opponent ? { home: 0, away: 2 } : { home: 2, away: 0 };
+  }
+  if (
+    /other team (bucket|3pt|three)/i.test(ev.label ?? "") ||
+    /\bbucket\b/i.test(ev.label ?? "") ||
+    /\b3pt\b/i.test(ev.label ?? "")
+  ) {
+    if (/3pt|three/i.test(ev.label ?? "")) {
+      return opponent || /other team/i.test(ev.label ?? "")
+        ? { home: 0, away: 3 }
+        : { home: 3, away: 0 };
+    }
+    if (/bucket/i.test(ev.label ?? "")) {
+      return opponent || /other team/i.test(ev.label ?? "")
+        ? { home: 0, away: 2 }
+        : { home: 2, away: 0 };
+    }
+  }
+
+  if (aiKind === "goal" || statType === "goal" || isGoalTimelineEvent(ev)) {
+    return opponent ? { home: 0, away: 1 } : { home: 1, away: 0 };
   }
 
   return null;
