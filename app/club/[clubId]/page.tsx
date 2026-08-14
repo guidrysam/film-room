@@ -13,6 +13,7 @@ import {
   canManageClub,
   getClub,
   getClubMembers,
+  isClubCoach,
   isClubMember,
   listClubTeams,
   listUnattachedTeamsForUser,
@@ -21,6 +22,7 @@ import {
   type ClubMemberEntry,
 } from "@/lib/clubs";
 import ClubCreditsCard from "@/components/ClubCreditsCard";
+import ClubCoachInbox from "@/components/ClubCoachInbox";
 import {
   clubInviteJoinPath,
   createClubInvite,
@@ -107,6 +109,14 @@ export default function ClubHubPage() {
 
   const isAdmin = useMemo(
     () => (club && user ? canManageClub(club, user.uid) : false),
+    [club, user],
+  );
+
+  const canSeeCoachInbox = useMemo(
+    () =>
+      club && user
+        ? canManageClub(club, user.uid) || isClubCoach(club, user.uid)
+        : false,
     [club, user],
   );
 
@@ -394,6 +404,14 @@ export default function ClubHubPage() {
         ) : null}
 
         <ClubCreditsCard clubId={clubId} canManage={isAdmin} />
+
+        {canSeeCoachInbox && user ? (
+          <ClubCoachInbox
+            clubId={clubId}
+            uid={user.uid}
+            canManage={canSeeCoachInbox}
+          />
+        ) : null}
 
         <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

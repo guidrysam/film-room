@@ -26,7 +26,7 @@ import {
 } from "@/lib/games";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
-import ShareFilmToTeamGame from "@/components/ShareFilmToTeamGame";
+import ShareFilmWithCoach from "@/components/ShareFilmWithCoach";
 import { clubsFindUrl } from "@/lib/club-routes";
 
 const panelClass =
@@ -331,14 +331,14 @@ export default function MyFilmPage() {
               : "Review"}
         </button>
         {user ? (
-          <ShareFilmToTeamGame
+          <ShareFilmWithCoach
             uid={user.uid}
             source={source}
             busy={busyId === source.id}
             onBusy={(b) => setBusyId(b ? source.id : null)}
             onError={setError}
             onShared={async () => {
-              setSyncNote("Shared to team game.");
+              setSyncNote("Shared with club coaches.");
               await loadList();
             }}
           />
@@ -354,10 +354,13 @@ export default function MyFilmPage() {
           </button>
         ) : null}
       </div>
-      {source.gameId ? (
+      {source.clubId && !source.gameId ? (
+        <p className="mt-2 text-[11px] text-emerald-400/90">
+          Shared with club coaches
+        </p>
+      ) : source.gameId ? (
         <p className="mt-2 text-[11px] text-emerald-400/90">
           Linked to a team game
-          {source.teamId ? ` · team ${source.teamId.slice(0, 6)}…` : ""}
         </p>
       ) : null}
       {queued ? (
@@ -379,8 +382,8 @@ export default function MyFilmPage() {
             My Film
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Upload and gather film here. Review privately, or share to a team
-            game under a club you belong to.{" "}
+            Upload and gather film here. Share with coach sends it to your club’s
+            coach inbox — they can organize by team later.{" "}
             <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
               Find a club
             </Link>

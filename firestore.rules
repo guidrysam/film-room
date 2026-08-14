@@ -181,6 +181,29 @@ service cloud.firestore {
                         clubRoleOf(clubId, request.auth.uid) == 'club_coach');
         allow write: if false;
       }
+
+      // Parent → coach film drops. Coaches/admins organize later (optional).
+      match /coachInbox/{itemId} {
+        allow read: if request.auth != null && (
+          isClubAdmin(clubId, request.auth.uid) ||
+          clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
+          resource.data.sharedByUid == request.auth.uid
+        );
+        allow create: if request.auth != null
+          && isClubMember(clubId, request.auth.uid)
+          && request.resource.data.sharedByUid == request.auth.uid
+          && request.resource.data.status == 'open'
+          && request.resource.data.label is string
+          && (request.resource.data.kind == 'youtube' ||
+              request.resource.data.kind == 'upload');
+        allow update: if request.auth != null && (
+          isClubAdmin(clubId, request.auth.uid) ||
+          clubRoleOf(clubId, request.auth.uid) == 'club_coach'
+        );
+        allow delete: if request.auth != null &&
+          (isClubAdmin(clubId, request.auth.uid) ||
+           clubRoleOf(clubId, request.auth.uid) == 'club_coach');
+      }
     }
 
     match /clubInvites/{code} {
