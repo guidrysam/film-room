@@ -275,9 +275,14 @@ export async function runTagGameAnalysis(
     if (/public YouTube|unlisted|private|could not see the YouTube/i.test(msg)) {
       throw err instanceof Error ? err : new Error(msg);
     }
+    if (/high demand|overloaded|unavailable|429|503|resource.?exhausted/i.test(msg)) {
+      throw new Error(
+        `AI Tag is busy right now (${msg}). Wait a minute and try AI Tag again.`,
+      );
+    }
     console.warn("[ai/tag-game] YouTube watch failed:", err);
     throw new Error(
-      `AI could not watch this YouTube video (${msg}). ${GEMINI_YOUTUBE_PUBLIC_REQUIRED}`,
+      `AI Tag failed (${msg}). If the angle is Unlisted/Private, set it to Public in YouTube Studio, refresh the source, then retry.`,
     );
   }
 }

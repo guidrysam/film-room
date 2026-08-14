@@ -16,9 +16,19 @@ function apiKey(): string {
   return key;
 }
 
-function modelResourceName(): string {
-  // Hard-pin: do not read AI_TAG_MODEL (was still causing retired 1.5 errors).
-  return `models/${DEFAULT_AI_TAG_MODEL}`;
+/** Prefer current Flash; retry on high-demand / not-found. Never use Gemini 1.x. */
+const MODEL_FALLBACKS = [
+  DEFAULT_AI_TAG_MODEL,
+  "gemini-3.5-flash",
+  "gemini-3.7-flash",
+  "gemini-flash-latest",
+  "gemini-2.5-flash",
+] as const;
+
+function shouldRetryWithNextModel(message: string): boolean {
+  return /high demand|resource.?exhausted|unavailable|not found|NOT_FOUND|404|429|503|overloaded|quota|currently experiencing/i.test(
+    message,
+  );
 }
 
 type GeminiPart =
@@ -39,26 +49,17 @@ type GeminiGenerateResponse = {
   error?: { message?: string; status?: string; code?: number };
 };
 
-/**
- * Call Gemini generateContent with an explicit model resource name.
- * Avoids AI SDK / env surprises that were still hitting retired gemini-1.5-flash.
- */
-export async function geminiGenerateObject<T>(input: {
-  /** Ignored — model is hard-pinned to DEFAULT_AI_TAG_MODEL. */
-  modelId?: string | null;
+async function geminiGenerateOnce<T>(input: {
+  modelId: string;
   system: string;
   userText: string;
   youtubeVideoId?: string;
-  /** Extra YouTube angles (e.g. sync secondaries). Capped to keep context bounded. */
   extraYoutubeVideoIds?: string[];
-  /** Clip the primary YouTube video to this range (absolute video time). */
   videoClip?: { startSec: number; endSec: number };
   schema: z.ZodType<T>;
-  /** JSON Schema object for Gemini responseSchema structured output. */
   responseJsonSchema: Record<string, unknown>;
 }): Promise<{ object: T; modelId: string }> {
-  const modelPath = modelResourceName();
-  const modelId = modelPath.replace(/^models\//, "");
+  const modelPath = `models/${input.modelId.replace(/^models\//, "")}`;
   const parts: GeminiPart[] = [{ text: input.userText }];
   const youtubeIds = [
     ...(input.youtubeVideoId ? [input.youtubeVideoId] : []),
@@ -78,7 +79,6 @@ export async function geminiGenerateObject<T>(input: {
         fileUri: `https://www.youtube.com/watch?v=${id}`,
       },
     };
-    // Only clip the primary (first) video.
     if (index === 0 && clip && clip.endSec > clip.startSec) {
       part.videoMetadata = {
         startOffset: `${Math.max(0, Math.floor(clip.startSec))}s`,
@@ -97,8 +97,6 @@ export async function geminiGenerateObject<T>(input: {
       responseMimeType: "application/json",
       responseSchema: input.responseJsonSchema,
       maxOutputTokens: 8192,
-      // LOW = 70 tok/frame — required for long film under the 1M context cap.
-      // Half-window clips keep enough frames for denser tagging.
       ...(youtubeIds.length > 0
         ? { mediaResolution: "MEDIA_RESOLUTION_LOW" }
         : {}),
@@ -129,7 +127,43 @@ export async function geminiGenerateObject<T>(input: {
     throw new Error(`Gemini returned non-JSON from ${modelPath}`);
   }
   const object = input.schema.parse(parsed);
-  return { object, modelId };
+  return { object, modelId: input.modelId.replace(/^models\//, "") };
+}
+
+/**
+ * Call Gemini generateContent with current Flash models + automatic fallback.
+ * Never calls retired gemini-1.x.
+ */
+export async function geminiGenerateObject<T>(input: {
+  /** Ignored — models come from MODEL_FALLBACKS / DEFAULT_AI_TAG_MODEL. */
+  modelId?: string | null;
+  system: string;
+  userText: string;
+  youtubeVideoId?: string;
+  extraYoutubeVideoIds?: string[];
+  videoClip?: { startSec: number; endSec: number };
+  schema: z.ZodType<T>;
+  responseJsonSchema: Record<string, unknown>;
+}): Promise<{ object: T; modelId: string }> {
+  const tried: string[] = [];
+  let lastError: Error | null = null;
+
+  for (const modelId of MODEL_FALLBACKS) {
+    if (tried.includes(modelId)) continue;
+    tried.push(modelId);
+    try {
+      return await geminiGenerateOnce({ ...input, modelId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      lastError = err instanceof Error ? err : new Error(message);
+      if (!shouldRetryWithNextModel(message)) throw lastError;
+      console.warn(
+        `[ai/gemini] ${modelId} failed (${message.slice(0, 160)}); trying next model`,
+      );
+    }
+  }
+
+  throw lastError ?? new Error("Gemini request failed on all models.");
 }
 
 /** Minimal JSON Schema for our tag result (Gemini responseJsonSchema). */
@@ -138,7 +172,6 @@ export const TAG_RESULT_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     drafts: {
       type: "array",
-      // Do not set maxItems — Gemini returns INVALID_ARGUMENT for it.
       items: {
         type: "object",
         properties: {
