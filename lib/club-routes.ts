@@ -11,3 +11,8 @@ export function clubNewUrl(): string {
 export function clubJoinUrl(code: string): string {
   return `/join/club/${code}`;
 }
+
+/** Parent: search discoverable clubs and request to join. */
+export function clubsFindUrl(): string {
+  return "/clubs/find";
+}

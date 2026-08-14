@@ -9,7 +9,7 @@ import BatchEventInvite from "@/components/BatchEventInvite";
 import { listAccessibleGames } from "@/lib/accessible-games";
 import type { Game } from "@/lib/games";
 import { listMyClubs, listTeamsVisibleViaClubs, type Club } from "@/lib/clubs";
-import { clubHubUrl, clubNewUrl } from "@/lib/club-routes";
+import { clubHubUrl, clubNewUrl, clubsFindUrl } from "@/lib/club-routes";
 import { teamRoleFor, type Team } from "@/lib/teams";
 import { listMyImportBatches, setImportBatchArchived, type ImportBatch } from "@/lib/import-batches";
 import { groupTeamsByImportBatch } from "@/lib/team-batches";
@@ -247,23 +247,32 @@ export default function DashboardPage() {
 
         {/* Your teams */}
         <section className={`${panelClass} mb-6`}>
-          <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
               Your clubs
             </p>
-            <Link href={clubNewUrl()} className={ghostBtn}>
-              Create club
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link href={clubsFindUrl()} className={ghostBtn}>
+                Find a club
+              </Link>
+              <Link href={clubNewUrl()} className={ghostBtn}>
+                Create club
+              </Link>
+            </div>
           </div>
           {teamsLoading ? (
             <p className="text-sm text-zinc-400">Loading…</p>
           ) : clubs.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              Clubs hold your teams.{" "}
-              <Link href={clubNewUrl()} className="text-blue-300 hover:underline">
-                Create a club
+              Coaches create clubs and teams. Parents{" "}
+              <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
+                find a club
               </Link>{" "}
-              to import rosters and invite coaches.
+              or use an invite link, then share film from{" "}
+              <Link href="/app/film" className="text-blue-300 hover:underline">
+                My Film
+              </Link>
+              .
             </p>
           ) : (
             <ul className="space-y-2">

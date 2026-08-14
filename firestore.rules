@@ -117,7 +117,8 @@ service cloud.firestore {
     function canReadClubResource() {
       return request.auth != null && (
         resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.memberUids
+        request.auth.uid in resource.data.memberUids ||
+        resource.data.discoverable == true
       );
     }
     function clubJoinInviteData() {
@@ -194,6 +195,28 @@ service cloud.firestore {
         && isClubAdminOf(request.resource.data.clubId);
       allow update, delete: if request.auth != null
         && resource.data.createdBy == request.auth.uid;
+    }
+
+    // Parent join requests for discoverable clubs.
+    match /clubJoinRequests/{requestId} {
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.role == 'club_parent'
+        && request.resource.data.clubId is string
+        && request.resource.data.clubName is string;
+      allow read: if request.auth != null && (
+        resource.data.uid == request.auth.uid ||
+        isClubAdmin(resource.data.clubId, request.auth.uid)
+      );
+      allow update: if request.auth != null
+        && isClubAdmin(resource.data.clubId, request.auth.uid)
+        && request.resource.data.clubId == resource.data.clubId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.role == resource.data.role
+        && (request.resource.data.status == 'approved' ||
+            request.resource.data.status == 'declined');
+      allow delete: if false;
     }
 
     // ---- Teams --------------------------------------------------------

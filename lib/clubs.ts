@@ -41,9 +41,16 @@ export type ClubMemberRole = "club_admin" | "club_coach" | "club_parent";
 export type Club = {
   id: string;
   name: string;
+  /** Lowercased name for discoverability search. */
+  nameLower?: string;
   sport?: string;
   /** Club crest used on highlight reel titles (data URL or https). */
   logoUrl?: string;
+  /**
+   * When true, signed-in parents can find this club and request to join
+   * as club_parent (coach still approves).
+   */
+  discoverable?: boolean;
   ownerId: string;
   members: Record<string, ClubMemberRole>;
   memberUids: string[];
@@ -96,14 +103,19 @@ function parseClub(id: string, raw: Record<string, unknown>): Club {
   const sport = canonicalizeSportForStorage(
     typeof raw.sport === "string" ? raw.sport : undefined,
   );
+  const name = typeof raw.name === "string" ? raw.name : "Club";
   return {
     id,
-    name: typeof raw.name === "string" ? raw.name : "Club",
+    name,
     ownerId: typeof raw.ownerId === "string" ? raw.ownerId : "",
     members,
     memberUids,
     ...(sport ? { sport } : {}),
     ...(trimOrUndef(raw.logoUrl) ? { logoUrl: (raw.logoUrl as string).trim() } : {}),
+    ...(trimOrUndef(raw.nameLower)
+      ? { nameLower: String(raw.nameLower) }
+      : { nameLower: name.toLowerCase() }),
+    ...(raw.discoverable === true ? { discoverable: true } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
     updatedAt: raw.updatedAt instanceof Timestamp ? raw.updatedAt : null,
   };
@@ -161,7 +173,7 @@ export function canEditClubBranding(club: Club, uid: string): boolean {
 
 export async function updateClub(
   clubId: string,
-  patch: Partial<Pick<Club, "name" | "sport" | "logoUrl">> & {
+  patch: Partial<Pick<Club, "name" | "sport" | "logoUrl" | "discoverable">> & {
     logoUrl?: string | null;
   },
 ): Promise<void> {
@@ -172,11 +184,16 @@ export async function updateClub(
     updatedAt: serverTimestamp(),
   };
   if (typeof patch.name === "string" && patch.name.trim()) {
-    data.name = patch.name.trim();
+    const name = patch.name.trim();
+    data.name = name;
+    data.nameLower = name.toLowerCase();
   }
   if (patch.sport !== undefined) {
     const sport = canonicalizeSportForStorage(patch.sport);
     if (sport) data.sport = sport;
+  }
+  if (patch.discoverable !== undefined) {
+    data.discoverable = patch.discoverable === true;
   }
   if (patch.logoUrl === null) {
     data.logoUrl = deleteField();
@@ -205,6 +222,8 @@ export async function createClub(
   const sport = canonicalizeSportForStorage(data.sport);
   const payload = {
     name,
+    nameLower: name.toLowerCase(),
+    discoverable: false,
     ownerId: effectiveUid,
     members: { [effectiveUid]: "club_admin" as ClubMemberRole },
     memberUids: [effectiveUid],
@@ -384,6 +403,28 @@ export async function attachTeamToClub(opts: {
     throw new Error("That team already belongs to another club.");
   }
   await updateTeam(opts.teamId, { clubId: opts.clubId });
+}
+
+/**
+ * Search clubs coaches opted into discovery. Client filters by name substring
+ * (fine while club counts are small).
+ */
+export async function searchDiscoverableClubs(
+  queryText: string,
+  max = 40,
+): Promise<Club[]> {
+  const needle = queryText.trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const q = query(clubsCol(), where("discoverable", "==", true));
+  const snap = await getDocs(q);
+  const out: Club[] = [];
+  snap.forEach((d) => {
+    const club = parseClub(d.id, d.data() as Record<string, unknown>);
+    const hay = (club.nameLower || club.name).toLowerCase();
+    if (hay.includes(needle)) out.push(club);
+  });
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out.slice(0, max);
 }
 
 /** Teams you admin that are not yet under any club. */

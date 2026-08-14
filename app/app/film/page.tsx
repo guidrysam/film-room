@@ -26,6 +26,8 @@ import {
 } from "@/lib/games";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
+import ShareFilmToTeamGame from "@/components/ShareFilmToTeamGame";
+import { clubsFindUrl } from "@/lib/club-routes";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
@@ -328,6 +330,19 @@ export default function MyFilmPage() {
               ? "Continue review"
               : "Review"}
         </button>
+        {user ? (
+          <ShareFilmToTeamGame
+            uid={user.uid}
+            source={source}
+            busy={busyId === source.id}
+            onBusy={(b) => setBusyId(b ? source.id : null)}
+            onError={setError}
+            onShared={async () => {
+              setSyncNote("Shared to team game.");
+              await loadList();
+            }}
+          />
+        ) : null}
         {queued ? (
           <button
             type="button"
@@ -339,6 +354,12 @@ export default function MyFilmPage() {
           </button>
         ) : null}
       </div>
+      {source.gameId ? (
+        <p className="mt-2 text-[11px] text-emerald-400/90">
+          Linked to a team game
+          {source.teamId ? ` · team ${source.teamId.slice(0, 6)}…` : ""}
+        </p>
+      ) : null}
       {queued ? (
         <p className="mt-2 text-[11px] text-zinc-600">
           Work item — Review it or Clear (stays on YouTube, won’t reappear).
@@ -358,7 +379,11 @@ export default function MyFilmPage() {
             My Film
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            MOGO uploads stack here from your YouTube channel. Review or clear.
+            Upload and gather film here. Review privately, or share to a team
+            game under a club you belong to.{" "}
+            <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
+              Find a club
+            </Link>
           </p>
         </div>
         <Link href="/app" className={linkBack}>

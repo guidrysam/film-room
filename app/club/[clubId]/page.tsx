@@ -16,6 +16,7 @@ import {
   isClubMember,
   listClubTeams,
   listUnattachedTeamsForUser,
+  updateClub,
   type Club,
   type ClubMemberEntry,
 } from "@/lib/clubs";
@@ -25,6 +26,12 @@ import {
   createClubInvite,
   type ClubInviteRole,
 } from "@/lib/club-invites";
+import {
+  approveClubJoinRequest,
+  declineClubJoinRequest,
+  listPendingClubJoinRequests,
+  type ClubJoinRequest,
+} from "@/lib/club-join-requests";
 import { teamSetupUrl } from "@/lib/team-routes";
 import type { Team } from "@/lib/teams";
 
@@ -53,6 +60,9 @@ export default function ClubHubPage() {
   const [assignBusy, setAssignBusy] = useState<string | null>(null);
   const [attachBusy, setAttachBusy] = useState<string | null>(null);
   const [assignTeamId, setAssignTeamId] = useState("");
+  const [joinRequests, setJoinRequests] = useState<ClubJoinRequest[]>([]);
+  const [requestBusy, setRequestBusy] = useState<string | null>(null);
+  const [discoverBusy, setDiscoverBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!clubId || !user) return;
@@ -68,14 +78,18 @@ export default function ClubHubPage() {
         return;
       }
       setClub(next);
-      const [clubTeams, clubMembers, orphans] = await Promise.all([
+      const [clubTeams, clubMembers, orphans, pending] = await Promise.all([
         listClubTeams(clubId),
         getClubMembers(clubId),
         listUnattachedTeamsForUser(user.uid),
+        canManageClub(next, user.uid)
+          ? listPendingClubJoinRequests(clubId)
+          : Promise.resolve([] as ClubJoinRequest[]),
       ]);
       setTeams(clubTeams);
       setMembers(clubMembers);
       setUnattached(orphans);
+      setJoinRequests(pending);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load club.");
     } finally {
@@ -254,7 +268,9 @@ export default function ClubHubPage() {
             <p className="mt-1 text-sm text-zinc-400">{club.sport}</p>
           ) : null}
           <p className="mt-2 text-sm text-zinc-400">
-            Manage teams, invite coaches, and import rosters under this club.
+            {isAdmin
+              ? "Manage teams, invite coaches, and approve parent join requests."
+              : "Club film home — share uploads from My Film to team games."}
           </p>
           <Link href="/app" className="mt-3 inline-block text-sm text-zinc-500 hover:text-zinc-200">
             ← Dashboard
@@ -265,6 +281,116 @@ export default function ClubHubPage() {
           <p className="rounded-lg border border-rose-400/30 bg-rose-950/30 px-3 py-2 text-sm text-rose-100">
             {error}
           </p>
+        ) : null}
+
+        {isAdmin ? (
+          <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
+            <h2 className="text-sm font-semibold text-white">Parent discovery</h2>
+            <p className="mt-1 text-xs text-zinc-400">
+              When discoverable, parents can find this club by name and request
+              to join. You still approve each request. Invite links always work.
+            </p>
+            <label className="mt-3 flex items-center gap-2 text-sm text-zinc-200">
+              <input
+                type="checkbox"
+                checked={club.discoverable === true}
+                disabled={discoverBusy}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setDiscoverBusy(true);
+                  setError(null);
+                  void updateClub(clubId, {
+                    discoverable: next,
+                    name: club.name,
+                  })
+                    .then(() => refresh())
+                    .catch((err) => {
+                      setError(
+                        err instanceof Error
+                          ? err.message
+                          : "Could not update discovery.",
+                      );
+                    })
+                    .finally(() => setDiscoverBusy(false));
+                }}
+              />
+              Make club discoverable in search
+            </label>
+          </section>
+        ) : null}
+
+        {isAdmin && joinRequests.length > 0 ? (
+          <section className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-5">
+            <h2 className="text-sm font-semibold text-white">
+              Parent join requests ({joinRequests.length})
+            </h2>
+            <ul className="mt-3 space-y-2">
+              {joinRequests.map((req) => (
+                <li
+                  key={req.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-zinc-100">
+                      {req.displayName || req.email || `${req.uid.slice(0, 8)}…`}
+                    </p>
+                    {req.email && req.displayName ? (
+                      <p className="text-[11px] text-zinc-500">{req.email}</p>
+                    ) : null}
+                    {req.message ? (
+                      <p className="text-[11px] text-zinc-500">{req.message}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className={primaryBtn}
+                      disabled={requestBusy !== null || !user}
+                      onClick={() => {
+                        if (!user) return;
+                        setRequestBusy(req.id);
+                        setError(null);
+                        void approveClubJoinRequest(req.id, user.uid)
+                          .then(() => refresh())
+                          .catch((err) => {
+                            setError(
+                              err instanceof Error
+                                ? err.message
+                                : "Could not approve.",
+                            );
+                          })
+                          .finally(() => setRequestBusy(null));
+                      }}
+                    >
+                      {requestBusy === req.id ? "…" : "Approve"}
+                    </button>
+                    <button
+                      type="button"
+                      className={ghostBtn}
+                      disabled={requestBusy !== null || !user}
+                      onClick={() => {
+                        if (!user) return;
+                        setRequestBusy(req.id);
+                        setError(null);
+                        void declineClubJoinRequest(req.id, user.uid)
+                          .then(() => refresh())
+                          .catch((err) => {
+                            setError(
+                              err instanceof Error
+                                ? err.message
+                                : "Could not decline.",
+                            );
+                          })
+                          .finally(() => setRequestBusy(null));
+                      }}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
 
         <ClubCreditsCard clubId={clubId} canManage={isAdmin} />
