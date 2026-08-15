@@ -353,41 +353,77 @@ function parseChapters(raw: unknown): ChapterEntry[] {
 /** Session chapter order: clip index in queue, then time (supports multi-clip lists). */
 const CHAPTER_NAV_EPS = 0.05;
 
+/** Game-clock moment when present so multi-angle Review marks sort with the session. */
+function chapterSortMoment(ch: ChapterEntry): number {
+  return typeof ch.gameTime === "number" && Number.isFinite(ch.gameTime)
+    ? ch.gameTime
+    : ch.time;
+}
+
 /** Queue index for sort/navigation; unknown `videoId` sorts after all clips in the queue. */
-function clipSortIndexForOrder(clips: ClipEntry[], videoId: string): number {
+function clipSortIndexForOrder(
+  clips: ClipEntry[],
+  videoId: string,
+  angles?: Pick<VideoAngle, "videoId">[],
+): number {
   const i = clips.findIndex((c) => c.videoId === videoId);
-  return i >= 0 ? i : clips.length;
+  if (i >= 0) return i;
+  // Review marks are stored on a camera angle, not a queued clip.
+  if (angles?.some((a) => a.videoId === videoId)) return 0;
+  return clips.length;
 }
 
 function compareChapterOrder(
   clips: ClipEntry[],
   a: ChapterEntry,
   b: ChapterEntry,
+  angles?: Pick<VideoAngle, "videoId">[],
 ): number {
-  const ia = clipSortIndexForOrder(clips, a.videoId);
-  const ib = clipSortIndexForOrder(clips, b.videoId);
+  const ia = clipSortIndexForOrder(clips, a.videoId, angles);
+  const ib = clipSortIndexForOrder(clips, b.videoId, angles);
   if (ia !== ib) return ia - ib;
-  return a.time - b.time;
+  return chapterSortMoment(a) - chapterSortMoment(b);
 }
 
 function sortChaptersForNavigation(
   clips: ClipEntry[],
   chapters: ChapterEntry[],
+  angles?: Pick<VideoAngle, "videoId">[],
 ): ChapterEntry[] {
-  return [...chapters].sort((a, b) => compareChapterOrder(clips, a, b));
+  return [...chapters].sort((a, b) => compareChapterOrder(clips, a, b, angles));
 }
 
 /** Display order: clip queue order, then time ascending; carries RTDB index for edits. */
 function buildChaptersDisplayList(
   clips: ClipEntry[],
   chapters: ChapterEntry[],
+  angles?: Pick<VideoAngle, "videoId">[],
 ): Array<{ chapter: ChapterEntry; sourceIndex: number }> {
   const rows = chapters.map((chapter, sourceIndex) => ({
     chapter,
     sourceIndex,
   }));
-  rows.sort((a, b) => compareChapterOrder(clips, a.chapter, b.chapter));
+  rows.sort((a, b) => compareChapterOrder(clips, a.chapter, b.chapter, angles));
   return rows;
+}
+
+function chapterSeekTimeOnAngle(
+  chapter: ChapterEntry,
+  angles: VideoAngle[],
+  targetAngle: VideoAngle,
+): number {
+  if (typeof chapter.gameTime === "number" && Number.isFinite(chapter.gameTime)) {
+    return Math.max(0, chapter.gameTime + (targetAngle.offsetFromGameTime ?? 0));
+  }
+  if (chapter.videoId === targetAngle.videoId) {
+    return Math.max(0, chapter.time);
+  }
+  const tagged = angles.find((a) => a.videoId === chapter.videoId);
+  if (tagged) {
+    const gameTime = chapter.time - (tagged.offsetFromGameTime ?? 0);
+    return Math.max(0, gameTime + (targetAngle.offsetFromGameTime ?? 0));
+  }
+  return Math.max(0, chapter.time);
 }
 
 function formatClipLabel(clip: ClipEntry, index: number): string {
@@ -405,9 +441,10 @@ function chapterStrictlyBeforeCursor(
   ch: ChapterEntry,
   cursorClipIdx: number,
   cursorMoment: number,
+  angles?: Pick<VideoAngle, "videoId">[],
 ): boolean {
-  const ci = clipSortIndexForOrder(clips, ch.videoId);
-  const chMoment = ch.time;
+  const ci = clipSortIndexForOrder(clips, ch.videoId, angles);
+  const chMoment = chapterSortMoment(ch);
   return (
     ci < cursorClipIdx ||
     (ci === cursorClipIdx && chMoment < cursorMoment - CHAPTER_NAV_EPS)
@@ -419,9 +456,10 @@ function chapterStrictlyAfterCursor(
   ch: ChapterEntry,
   cursorClipIdx: number,
   cursorMoment: number,
+  angles?: Pick<VideoAngle, "videoId">[],
 ): boolean {
-  const ci = clipSortIndexForOrder(clips, ch.videoId);
-  const chMoment = ch.time;
+  const ci = clipSortIndexForOrder(clips, ch.videoId, angles);
+  const chMoment = chapterSortMoment(ch);
   return (
     ci > cursorClipIdx ||
     (ci === cursorClipIdx && chMoment > cursorMoment + CHAPTER_NAV_EPS)
@@ -433,12 +471,21 @@ function findPrevChapterInSession(
   chapters: ChapterEntry[],
   cursorClipIdx: number,
   cursorMoment: number,
+  angles?: Pick<VideoAngle, "videoId">[],
 ): ChapterEntry | null {
   if (!chapters.length) return null;
-  const sorted = sortChaptersForNavigation(clips, chapters);
+  const sorted = sortChaptersForNavigation(clips, chapters, angles);
   let best: ChapterEntry | null = null;
   for (const ch of sorted) {
-    if (chapterStrictlyBeforeCursor(clips, ch, cursorClipIdx, cursorMoment)) {
+    if (
+      chapterStrictlyBeforeCursor(
+        clips,
+        ch,
+        cursorClipIdx,
+        cursorMoment,
+        angles,
+      )
+    ) {
       best = ch;
     }
   }
@@ -450,11 +497,20 @@ function findNextChapterInSession(
   chapters: ChapterEntry[],
   cursorClipIdx: number,
   cursorMoment: number,
+  angles?: Pick<VideoAngle, "videoId">[],
 ): ChapterEntry | null {
   if (!chapters.length) return null;
-  const sorted = sortChaptersForNavigation(clips, chapters);
+  const sorted = sortChaptersForNavigation(clips, chapters, angles);
   for (const ch of sorted) {
-    if (chapterStrictlyAfterCursor(clips, ch, cursorClipIdx, cursorMoment)) {
+    if (
+      chapterStrictlyAfterCursor(
+        clips,
+        ch,
+        cursorClipIdx,
+        cursorMoment,
+        angles,
+      )
+    ) {
       return ch;
     }
   }
@@ -470,16 +526,21 @@ function findActiveChapterIndexForUi(
   tActive: number,
   activeAngle: VideoAngle,
   refAngle: VideoAngle,
+  angles: VideoAngle[] = [],
 ): number | null {
   let bestIdx: number | null = null;
   let bestTime = -Infinity;
+  const cursorGame = tActive - (activeAngle.offsetFromGameTime ?? 0);
   const cursorRef = playbackTimeForAngleFromActiveAnchor(tActive, refAngle);
   for (let i = 0; i < chapters.length; i++) {
     const ch = chapters[i];
-    if (ch.videoId !== activeClipCanonicalVideoId) continue;
-    const chRef = ch.time;
-    if (chRef <= cursorRef + CHAPTER_ACTIVE_UI_EPS && chRef >= bestTime) {
-      bestTime = chRef;
+    const onQueuedClip = ch.videoId === activeClipCanonicalVideoId;
+    const onRoomAngle = angles.some((a) => a.videoId === ch.videoId);
+    if (!onQueuedClip && !onRoomAngle) continue;
+    const chMoment = onRoomAngle ? chapterSortMoment(ch) : ch.time;
+    const cursor = onRoomAngle ? cursorGame : cursorRef;
+    if (chMoment <= cursor + CHAPTER_ACTIVE_UI_EPS && chMoment >= bestTime) {
+      bestTime = chMoment;
       bestIdx = i;
     }
   }
@@ -4806,14 +4867,23 @@ function RoomContent() {
       if (!rr || !roomId) return;
       const cur = roomStateRef.current;
       if (!cur) return;
-      const clipIdx = cur.clips.findIndex((c) => c.videoId === chapter.videoId);
+      const taggedAngle =
+        cur.angles.find((a) => a.videoId === chapter.videoId) ?? null;
+      let clipIdx = cur.clips.findIndex((c) => c.videoId === chapter.videoId);
+      if (clipIdx < 0 && taggedAngle) {
+        clipIdx = cur.currentClipIndex;
+      }
       if (clipIdx < 0) return;
 
-      const curAngle = pickAngle(cur.angles, cur.currentAngleId);
-      const seekTime = chapter.time;
+      const transportAngle = pickAngle(cur.angles, cur.currentAngleId);
+      const seekTime = chapterSeekTimeOnAngle(
+        chapter,
+        cur.angles,
+        transportAngle,
+      );
       if (seekTime < 0) {
         showHostNotice(
-          `This angle had not started yet for this marker (${curAngle.name}).`,
+          `This angle had not started yet for this marker (${transportAngle.name}).`,
         );
         return;
       }
@@ -4826,6 +4896,32 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: pr,
         });
+        if (taggedAngle) {
+          const taggedPlayer = syncPlayerRefs.current[taggedAngle.id];
+          const taggedTime = chapterSeekTimeOnAngle(
+            chapter,
+            cur.angles,
+            taggedAngle,
+          );
+          if (taggedPlayer && taggedTime >= 0) {
+            try {
+              taggedPlayer.seekTo(taggedTime, true);
+            } catch {
+              /* YouTube API */
+            }
+          }
+          if (
+            taggedAngle.id !== (cur.playerViewAngleId ?? cur.currentAngleId)
+          ) {
+            void update(rr, {
+              playerViewAngleId: taggedAngle.id,
+              selectedDisplayAngleId: taggedAngle.id,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {
+              /* RTDB */
+            });
+          }
+        }
         applyHostMultiViewSecondaryDirect({
           primaryAnchorTime: seekTime,
           isPlaying: cur.isPlaying,
@@ -4838,7 +4934,7 @@ function RoomContent() {
 
       const targetClip = cur.clips[clipIdx]!;
       const crossSeek = chapter.time;
-      const primaryAngleId = cur.angles[0]?.id ?? cur.currentAngleId;
+      const primaryAngleId = taggedAngle?.id ?? cur.angles[0]?.id ?? cur.currentAngleId;
 
       lastAppliedKey.current = "";
       hostActionSeqRef.current += 1;
@@ -4858,6 +4954,12 @@ function RoomContent() {
         currentClipIndex: clipIdx,
         currentTime: crossSeek,
         currentAngleId: primaryAngleId,
+        ...(taggedAngle
+          ? {
+              playerViewAngleId: taggedAngle.id,
+              selectedDisplayAngleId: taggedAngle.id,
+            }
+          : {}),
         isPlaying: cur.isPlaying,
         playbackRate: pr,
         playbackCommand,
@@ -6787,13 +6889,13 @@ function RoomContent() {
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
       const active = pickAngle(cur.angles, cur.currentAngleId);
-      const ref = cur.angles[0] ?? active;
-      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref);
+      const cursorMoment = t - (active.offsetFromGameTime ?? 0);
       const target = findPrevChapterInSession(
         cur.clips,
         cur.chapters,
         cur.currentClipIndex,
         cursorMoment,
+        cur.angles,
       );
       if (target) jumpToChapter(target);
     })();
@@ -6808,13 +6910,13 @@ function RoomContent() {
       const player = getPlayer();
       const t = await readYoutubeCurrentTime(player, cur.currentTime ?? 0);
       const active = pickAngle(cur.angles, cur.currentAngleId);
-      const ref = cur.angles[0] ?? active;
-      const cursorMoment = playbackTimeForAngleFromActiveAnchor(t, ref);
+      const cursorMoment = t - (active.offsetFromGameTime ?? 0);
       const target = findNextChapterInSession(
         cur.clips,
         cur.chapters,
         cur.currentClipIndex,
         cursorMoment,
+        cur.angles,
       );
       if (target) jumpToChapter(target);
     })();
@@ -7521,13 +7623,21 @@ function RoomContent() {
   const chaptersDisplay = useMemo(
     () =>
       roomState?.chapters?.length
-        ? buildChaptersDisplayList(roomState.clips, roomState.chapters)
+        ? buildChaptersDisplayList(
+            roomState.clips,
+            roomState.chapters,
+            roomState.angles,
+          )
         : [],
     [roomState],
   );
 
   const tForChapterHighlight = uiPlaybackTime ?? roomState?.currentTime ?? 0;
-  const chapterNavMoment = tForChapterHighlight;
+  const chapterNavCursor = roomState
+    ? tForChapterHighlight -
+      (pickAngle(roomState.angles, roomState.currentAngleId)
+        .offsetFromGameTime ?? 0)
+    : tForChapterHighlight;
   const activeClipCanonicalId =
     roomState?.clips[roomState.currentClipIndex]?.videoId ?? "";
   const activeChapterIndex =
@@ -7539,6 +7649,7 @@ function RoomContent() {
           pickAngle(roomState.angles, roomState.currentAngleId),
           roomState.angles[0] ??
             pickAngle(roomState.angles, roomState.currentAngleId),
+          roomState.angles,
         )
       : null;
   const sessionPrevChapter =
@@ -7547,7 +7658,8 @@ function RoomContent() {
           roomState.clips,
           roomState.chapters,
           roomState.currentClipIndex,
-          chapterNavMoment,
+          chapterNavCursor,
+          roomState.angles,
         )
       : null;
   const sessionNextChapter =
@@ -7556,7 +7668,8 @@ function RoomContent() {
           roomState.clips,
           roomState.chapters,
           roomState.currentClipIndex,
-          chapterNavMoment,
+          chapterNavCursor,
+          roomState.angles,
         )
       : null;
 
@@ -8784,8 +8897,11 @@ function RoomContent() {
             ) : (
               <ul className="flex flex-col gap-1">
                 {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
-                  const onActiveClip =
+                  const onQueuedClip =
                     ch.videoId === s.clips[s.currentClipIndex]?.videoId;
+                  const taggedAngle =
+                    s.angles.find((a) => a.videoId === ch.videoId) ?? null;
+                  const onActiveSurface = onQueuedClip || taggedAngle != null;
                   const isCurrentChapter =
                     activeChapterIndex !== null && activeChapterIndex === i;
                   return (
@@ -8795,13 +8911,17 @@ function RoomContent() {
                           type="button"
                           disabled={!isHost}
                           title={
-                            isHost ? undefined : "Only the host can jump to marks"
+                            isHost
+                              ? taggedAngle && !onQueuedClip
+                                ? `Jump to ${taggedAngle.name}`
+                                : undefined
+                              : "Only the host can jump to marks"
                           }
                           onClick={() => void jumpToChapter(ch)}
                           className={`min-w-0 flex-1 truncate rounded-md border px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-45 ${
-                            isCurrentChapter && onActiveClip
+                            isCurrentChapter && onActiveSurface
                               ? "border-blue-500/80 bg-blue-600/40 text-white ring-1 ring-blue-400/40"
-                              : onActiveClip
+                              : onActiveSurface
                                 ? "border-white/10 bg-black/30 text-zinc-100 hover:border-white/18 hover:bg-black/45"
                                 : "border-white/6 bg-black/20 text-zinc-400 hover:border-white/12"
                           }`}
@@ -8810,9 +8930,13 @@ function RoomContent() {
                             {ch.label}
                           </span>
                           <span className="ml-1.5 font-mono text-[10px] text-zinc-400">
-                            {formatChapterTime(ch.time)}
+                            {formatChapterTime(ch.gameTime ?? ch.time)}
                           </span>
-                          {!onActiveClip ? (
+                          {taggedAngle && !onQueuedClip ? (
+                            <span className="ml-1 text-[9px] text-zinc-500">
+                              · {taggedAngle.name}
+                            </span>
+                          ) : !onActiveSurface ? (
                             <span className="ml-1 text-[9px] text-amber-400/80">
                               (other clip)
                             </span>
@@ -9554,9 +9678,13 @@ function RoomContent() {
             ) : (
               <ul className="flex flex-col gap-2">
                 {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
-                  const onActiveClip =
+                  const onQueuedClip =
                     ch.videoId ===
                     roomState.clips[roomState.currentClipIndex]?.videoId;
+                  const taggedAngle =
+                    roomState.angles.find((a) => a.videoId === ch.videoId) ??
+                    null;
+                  const onActiveSurface = onQueuedClip || taggedAngle != null;
                   const isCurrentChapter =
                     activeChapterIndex !== null && activeChapterIndex === i;
                   return (
@@ -9566,9 +9694,9 @@ function RoomContent() {
                           type="button"
                           onClick={() => void jumpToChapter(ch)}
                           className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-left text-xs transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 active:scale-[0.99] active:brightness-95 ${
-                            isCurrentChapter && onActiveClip
+                            isCurrentChapter && onActiveSurface
                               ? "border-blue-500/80 bg-blue-600/40 text-white ring-2 ring-blue-400/45 shadow-lg shadow-blue-950/30"
-                              : onActiveClip
+                              : onActiveSurface
                                 ? "border-blue-500/25 bg-blue-950/30 text-zinc-100 ring-1 ring-blue-500/15 hover:border-blue-400/35 hover:bg-blue-950/45"
                                 : "border-white/8 bg-black/35 text-zinc-200 hover:border-white/15 hover:bg-black/55"
                           }`}
@@ -9578,14 +9706,18 @@ function RoomContent() {
                           </span>
                           <span
                             className={`ml-2 font-mono ${
-                              isCurrentChapter && onActiveClip
+                              isCurrentChapter && onActiveSurface
                                 ? "text-blue-100/90"
                                 : "text-zinc-400"
                             }`}
                           >
-                            {formatChapterTime(ch.time)}
+                            {formatChapterTime(ch.gameTime ?? ch.time)}
                           </span>
-                          {!onActiveClip ? (
+                          {taggedAngle && !onQueuedClip ? (
+                            <span className="ml-2 text-[10px] text-zinc-500">
+                              · {taggedAngle.name}
+                            </span>
+                          ) : !onActiveSurface ? (
                             <span className="ml-2 text-[10px] text-amber-400/85">
                               (other clip)
                             </span>
