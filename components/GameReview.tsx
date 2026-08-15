@@ -203,6 +203,9 @@ export default function GameReview({
   const secondPlayerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const pendingSecondSeekRef = useRef<number | null>(null);
+  const secondSourceRef = useRef<GameVideoSource | null>(null);
+  const selectedGameTimeRef = useRef(0);
+  const secondPlayerReadyRef = useRef(false);
   /** Avoid full-page loading flash on soft refreshes (keeps AI draft panel mounted). */
   const hasLoadedRef = useRef(false);
 
@@ -232,6 +235,10 @@ export default function GameReview({
     secondSourceId,
     selectedSourceId,
   ]);
+
+  secondSourceRef.current = secondSource;
+  selectedGameTimeRef.current = selectedGameTime;
+  secondPlayerReadyRef.current = secondPlayerReady;
 
   const selectedSourceTime = useMemo(() => {
     if (!selectedSource) return 0;
@@ -384,6 +391,22 @@ export default function GameReview({
     void refresh();
   }, [refresh]);
 
+  const applySeekForSecondAngle = useCallback(
+    async (gameTime: number, source: GameVideoSource | null) => {
+      if (!source) return;
+      const sourceTime = gameTimeToSourceTime(gameTime, source);
+      if (sourceTime < 0) {
+        pendingSecondSeekRef.current = null;
+        return;
+      }
+      pendingSecondSeekRef.current = sourceTime;
+      if (secondPlayerReadyRef.current) {
+        await seekPlayer(secondPlayerRef.current, sourceTime);
+      }
+    },
+    [],
+  );
+
   const applySeekForGameTime = useCallback(
     async (gameTime: number, source: GameVideoSource | null) => {
       if (!source) return;
@@ -400,57 +423,58 @@ export default function GameReview({
       if (playerReady) {
         await seekPlayer(playerRef.current, sourceTime);
       }
+      await applySeekForSecondAngle(gameTime, secondSourceRef.current);
     },
-    [playerReady],
+    [playerReady, applySeekForSecondAngle],
   );
 
-  const applySeekForSecondAngle = useCallback(
-    async (gameTime: number, source: GameVideoSource | null) => {
-      if (!source) return;
-      const sourceTime = gameTimeToSourceTime(gameTime, source);
-      if (sourceTime < 0) {
-        pendingSecondSeekRef.current = null;
-        return;
-      }
-      pendingSecondSeekRef.current = sourceTime;
-      if (secondPlayerReady) {
-        await seekPlayer(secondPlayerRef.current, sourceTime);
-      }
-    },
-    [secondPlayerReady],
-  );
-
-  useEffect(() => {
-    if (!showSecondAngle || !secondSource) return;
-    void applySeekForSecondAngle(selectedGameTime, secondSource);
-  }, [
-    selectedGameTime,
-    showSecondAngle,
-    secondSource,
-    applySeekForSecondAngle,
-  ]);
-
-  // Keep second angle play/pause roughly in step with primary (muted).
+  // Follow primary play/pause and correct drift. Do not seek every clock tick —
+  // YouTube treats seek as pause/buffer, which made the PiP flash start/stop.
   useEffect(() => {
     if (!showSecondAngle || !playerReady || !secondPlayerReady) return;
+    let inFlight = false;
     const id = window.setInterval(() => {
+      if (inFlight) return;
       const primary = playerRef.current;
       const secondary = secondPlayerRef.current;
-      if (!primary || !secondary) return;
+      const source = secondSourceRef.current;
+      if (!primary || !secondary || !source) return;
+      inFlight = true;
       void (async () => {
         try {
           const state = await primary.getPlayerState?.();
           const secState = await secondary.getPlayerState?.();
-          if (state === 1 && secState !== 1) {
-            await secondary.playVideo?.();
+          if (typeof state !== "number" || typeof secState !== "number") return;
+          // BUFFERING (3): leave YouTube alone or we fight the spinner/pause overlay.
+          if (secState === 3) return;
+
+          if (state === 1) {
+            if (secState === 2 || secState === 5 || secState === -1) {
+              await secondary.playVideo?.();
+            }
+            const actual = await secondary.getCurrentTime?.();
+            const expected = gameTimeToSourceTime(
+              selectedGameTimeRef.current,
+              source,
+            );
+            if (
+              typeof actual === "number" &&
+              Number.isFinite(actual) &&
+              expected >= 0 &&
+              Math.abs(actual - expected) > 1.75
+            ) {
+              await seekPlayer(secondary, expected);
+            }
           } else if (state === 2 && secState === 1) {
             await secondary.pauseVideo?.();
           }
         } catch {
           /* ignore YT API races */
+        } finally {
+          inFlight = false;
         }
       })();
-    }, 500);
+    }, 750);
     return () => window.clearInterval(id);
   }, [showSecondAngle, playerReady, secondPlayerReady]);
 
@@ -504,11 +528,12 @@ export default function GameReview({
         setPlayerReady(false);
         playerRef.current = null;
         setSelectedSourceId(source.id);
+        void applySeekForSecondAngle(gameTime, secondSourceRef.current);
         return;
       }
       void applySeekForGameTime(gameTime, source);
     },
-    [playableSources, selectedSourceId, applySeekForGameTime],
+    [playableSources, selectedSourceId, applySeekForGameTime, applySeekForSecondAngle],
   );
 
   const handleTransportTime = useCallback(
