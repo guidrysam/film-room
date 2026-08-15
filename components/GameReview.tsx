@@ -1084,6 +1084,33 @@ export default function GameReview({
     [playableSources, selectedGameTime],
   );
 
+  const handleSwapAngles = useCallback(() => {
+    if (!secondSource || !selectedSourceId) return;
+    const nextPrimaryId = secondSource.id;
+    const nextSecondId = selectedSourceId;
+    const nextPrimary = playableSources.find((s) => s.id === nextPrimaryId);
+    const nextSecond = playableSources.find((s) => s.id === nextSecondId);
+    if (nextPrimary) {
+      const t = gameTimeToSourceTime(selectedGameTime, nextPrimary);
+      pendingSeekRef.current = t >= 0 ? t : null;
+    }
+    if (nextSecond) {
+      const t = gameTimeToSourceTime(selectedGameTime, nextSecond);
+      pendingSecondSeekRef.current = t >= 0 ? t : null;
+    }
+    setPlayerReady(false);
+    setSecondPlayerReady(false);
+    playerRef.current = null;
+    secondPlayerRef.current = null;
+    setSecondSourceId(nextSecondId);
+    setSelectedSourceId(nextPrimaryId);
+  }, [secondSource, selectedSourceId, playableSources, selectedGameTime]);
+
+  const otherAngles = useMemo(
+    () => playableSources.filter((s) => s.id !== selectedSourceId),
+    [playableSources, selectedSourceId],
+  );
+
   useEffect(() => {
     setPlayerReady(false);
     playerRef.current = null;
@@ -1272,6 +1299,20 @@ export default function GameReview({
                     </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    {playableSources.length > 1 ? (
+                      <select
+                        aria-label="Main angle"
+                        value={selectedSourceId ?? ""}
+                        onChange={(e) => handleSelectSource(e.target.value)}
+                        className="max-w-[10rem] truncate rounded border border-white/15 bg-zinc-950 px-2 py-1 text-[10px] font-medium text-zinc-100"
+                      >
+                        {playableSources.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
                     {playableSources.length >= 2 ? (
                       <button
                         type="button"
@@ -1283,6 +1324,16 @@ export default function GameReview({
                         className={`${ghostBtn} text-[10px]`}
                       >
                         {showSecondAngle ? "Hide second angle" : "Show second angle"}
+                      </button>
+                    ) : null}
+                    {showSecondAngle && secondSource ? (
+                      <button
+                        type="button"
+                        onClick={handleSwapAngles}
+                        className={`${ghostBtn} text-[10px]`}
+                        title="Swap main and second angle"
+                      >
+                        Swap angles
                       </button>
                     ) : null}
                     <button
@@ -1345,9 +1396,32 @@ export default function GameReview({
 
                     {showSecondAngle && secondSource?.videoId && isFullscreen ? (
                       <div className="absolute bottom-3 right-3 z-10 w-[min(280px,42vw)] overflow-hidden rounded-md border border-white/20 bg-black shadow-lg shadow-black/50">
-                        <p className="truncate bg-black/70 px-2 py-0.5 text-[9px] font-medium text-zinc-300">
-                          {secondSource.label}
-                        </p>
+                        <div className="flex items-center gap-1 bg-black/80 px-1.5 py-1">
+                          <select
+                            aria-label="Second angle"
+                            value={secondSource.id}
+                            onChange={(e) => {
+                              setSecondPlayerReady(false);
+                              secondPlayerRef.current = null;
+                              setSecondSourceId(e.target.value);
+                            }}
+                            className="min-w-0 flex-1 truncate rounded border border-white/15 bg-zinc-950 px-1.5 py-0.5 text-[9px] font-medium text-zinc-100"
+                          >
+                            {otherAngles.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={handleSwapAngles}
+                            className="shrink-0 rounded border border-white/15 bg-white/[0.08] px-1.5 py-0.5 text-[9px] font-semibold text-zinc-100 hover:bg-white/[0.14]"
+                            title="Make this the main view"
+                          >
+                            Swap
+                          </button>
+                        </div>
                         <div className="aspect-video w-full">
                           <YouTube
                             key={`fs-${secondSource.id}`}
@@ -1398,26 +1472,32 @@ export default function GameReview({
                       <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                         Second angle · {secondSource.label}
                       </p>
-                      {playableSources.filter((s) => s.id !== selectedSourceId)
-                        .length > 1 ? (
-                        <select
-                          value={secondSource.id}
-                          onChange={(e) => {
-                            setSecondPlayerReady(false);
-                            secondPlayerRef.current = null;
-                            setSecondSourceId(e.target.value);
-                          }}
-                          className="rounded border border-white/10 bg-zinc-950 px-2 py-0.5 text-[10px] text-zinc-200"
-                        >
-                          {playableSources
-                            .filter((s) => s.id !== selectedSourceId)
-                            .map((s) => (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {otherAngles.length > 1 ? (
+                          <select
+                            value={secondSource.id}
+                            onChange={(e) => {
+                              setSecondPlayerReady(false);
+                              secondPlayerRef.current = null;
+                              setSecondSourceId(e.target.value);
+                            }}
+                            className="rounded border border-white/10 bg-zinc-950 px-2 py-0.5 text-[10px] text-zinc-200"
+                          >
+                            {otherAngles.map((s) => (
                               <option key={s.id} value={s.id}>
                                 {s.label}
                               </option>
                             ))}
-                        </select>
-                      ) : null}
+                          </select>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={handleSwapAngles}
+                          className={`${ghostBtn} text-[10px]`}
+                        >
+                          Swap with main
+                        </button>
+                      </div>
                     </div>
                     <YoutubeChromelessStage className="aspect-video w-full max-w-xl rounded-lg border border-white/[0.08] bg-black">
                       <YouTube
