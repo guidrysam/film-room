@@ -49,7 +49,7 @@ function toStoredSuggestion(
 /**
  * Coach UI: pick / discard YouTube teaching videos for each Ball Mastery lesson.
  * Suggestions are cached on the team until the coach refreshes them.
- * Mark in Review / Open Film Room create a reusable team game for the drill.
+ * Mark in Review / Share / Watch together create a reusable team game for the drill.
  */
 export default function TeamSkillsLadderCoach({ teamId }: Props) {
   const router = useRouter();
@@ -477,8 +477,8 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
                     }
                   >
                     {openingAction === "room"
-                      ? "Opening Film Room…"
-                      : "Open Team Film Room"}
+                      ? "Opening…"
+                      : "Share / Watch together"}
                   </button>
                   <button
                     type="button"
@@ -540,8 +540,8 @@ export default function TeamSkillsLadderCoach({ teamId }: Props) {
                     }
                   >
                     {openingAction === "room"
-                      ? "Opening Film Room…"
-                      : "Film Room with preview"}
+                      ? "Opening…"
+                      : "Watch together with preview"}
                   </button>
                 </div>
               ) : null}

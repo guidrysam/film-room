@@ -26,6 +26,7 @@ import {
 } from "@/lib/youtube-clock-sync";
 import { gameSourcesToAngles } from "@/lib/open-game-room";
 import { teamFilmRoomRoute } from "@/lib/team-film-room";
+import { gameFilmUrl } from "@/lib/team-routes";
 import { extractYouTubeVideoId } from "@/lib/youtube-id";
 import { setYouTubeVideoEmbeddable } from "@/lib/youtube-embeddable";
 import {
@@ -322,7 +323,14 @@ export default function GameSources({
     autoAlignYouTube,
   ]);
 
-  const handleOpen = useCallback(() => {
+  const handleOpenFilm = useCallback(() => {
+    if (playableCount === 0) return;
+    setOpening(true);
+    setError(null);
+    router.push(gameFilmUrl(game.id));
+  }, [game.id, playableCount, router]);
+
+  const handleWatchTogether = useCallback(() => {
     if (playableCount === 0) return;
     setOpening(true);
     setError(null);
@@ -538,47 +546,59 @@ export default function GameSources({
         <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
           Videos
         </p>
-        <button
-          type="button"
-          onClick={() => void handleOpen()}
-          disabled={opening || playableCount === 0}
-          className="rounded-md border border-blue-500/40 bg-blue-950/50 px-2.5 py-1 text-[11px] font-semibold text-blue-100 transition hover:bg-blue-900/55 disabled:opacity-40"
-          title={
-            playableCount === 0
-              ? "Add a YouTube source first"
-              : playableCount > 1
-                ? "Open all angles in sync"
-                : "Open Team Film Room"
-          }
-        >
-          {opening
-            ? "Opening…"
-            : playableCount > 1
-              ? `Open Team Film Room (${playableCount} angles)`
-              : "Open Team Film Room"}
-        </button>
-      </div>
-      ) : (
-        <div className="mb-2 flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap gap-1.5">
           <button
             type="button"
-            onClick={() => void handleOpen()}
+            onClick={() => void handleOpenFilm()}
             disabled={opening || playableCount === 0}
             className="rounded-md border border-blue-500/40 bg-blue-950/50 px-2.5 py-1 text-[11px] font-semibold text-blue-100 transition hover:bg-blue-900/55 disabled:opacity-40"
             title={
               playableCount === 0
                 ? "Add a YouTube source first"
-                : playableCount > 1
-                  ? "Open all angles in sync"
-                  : "Open Team Film Room"
+                : "Tag, edit, sync, and watch angles"
             }
           >
-            {opening
-              ? "Opening…"
-              : playableCount > 1
-                ? `Open Team Film Room (${playableCount} angles)`
-                : "Open Team Film Room"}
+            {opening ? "Opening…" : "Open film"}
           </button>
+          {playableCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => void handleWatchTogether()}
+              disabled={opening}
+              className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-40"
+              title="Share a synced viewer link"
+            >
+              Share / Watch together
+            </button>
+          ) : null}
+        </div>
+      </div>
+      ) : (
+        <div className="mb-2 flex flex-wrap justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => void handleOpenFilm()}
+            disabled={opening || playableCount === 0}
+            className="rounded-md border border-blue-500/40 bg-blue-950/50 px-2.5 py-1 text-[11px] font-semibold text-blue-100 transition hover:bg-blue-900/55 disabled:opacity-40"
+            title={
+              playableCount === 0
+                ? "Add a YouTube source first"
+                : "Tag, edit, sync, and watch angles"
+            }
+          >
+            {opening ? "Opening…" : "Open film"}
+          </button>
+          {playableCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => void handleWatchTogether()}
+              disabled={opening}
+              className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.08] disabled:opacity-40"
+              title="Share a synced viewer link"
+            >
+              Share / Watch together
+            </button>
+          ) : null}
         </div>
       )}
 

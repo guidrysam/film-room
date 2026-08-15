@@ -1829,7 +1829,7 @@ function RoomContent() {
   const providerFromUrl = searchParams.get("provider");
   /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
   const gameIdFromUrl = searchParams.get("gameId");
-  /** Team Film Room: marks come from Review; room is view-only for marking. */
+  /** Watch together: marks come from Review; room is view-only for marking. */
   const teamRoomMode = searchParams.get("teamRoom") === "1";
   const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
@@ -1881,7 +1881,7 @@ function RoomContent() {
   const urlHostLegacy = searchParams.get("host") === "true";
   const sessionHost = useRoomHostFromSession(roomId);
   const isHost = urlHostLegacy || sessionHost;
-  /** Team Film Room: allow tapping the YouTube iframe (native controls enabled). */
+  /** Watch together: allow tapping the YouTube iframe (native controls enabled). */
   const blockHostYoutubePointer = isHost && !teamRoomMode;
 
   const handleReturnHome = useCallback(() => {
@@ -7880,7 +7880,7 @@ function RoomContent() {
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
           {teamRoomMode ? (
-            <p className="text-xs text-zinc-500">Team Film Room · Sync View</p>
+            <p className="text-xs text-zinc-500">Watch together · Sync View</p>
           ) : (
             <button
               type="button"
@@ -7897,7 +7897,7 @@ function RoomContent() {
                 onClick={() => navigateRoomView("clip")}
                 disabled={teamRoomMode}
                 title={
-                  teamRoomMode ? "Team Film Room uses Sync View" : undefined
+                  teamRoomMode ? "Watch together uses Sync View" : undefined
                 }
                 className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                   roomViewMode === "clip"
@@ -7919,7 +7919,9 @@ function RoomContent() {
                 Sync View
               </button>
             </div>
-            <span className="text-sm font-semibold text-zinc-100">Film Room</span>
+            <span className="text-sm font-semibold text-zinc-100">
+              {teamRoomMode ? "Watch together" : "Film Room"}
+            </span>
             <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
               {isHost ? "Host" : "Viewer"}
             </span>
@@ -8632,7 +8634,7 @@ function RoomContent() {
                           No playable YouTube video on this angle
                         </p>
                         <p className="max-w-sm text-[12px] leading-snug text-zinc-400">
-                          Re-open Team Film Room from the game after adding an
+                          Re-open Watch together from the game after adding an
                           embeddable YouTube source, or open the video on YouTube.
                         </p>
                       </div>
@@ -9256,7 +9258,7 @@ function RoomContent() {
                   onClick={() => navigateRoomView("clip")}
                   disabled={teamRoomMode}
                   title={
-                    teamRoomMode ? "Team Film Room uses Sync View" : undefined
+                    teamRoomMode ? "Watch together uses Sync View" : undefined
                   }
                   className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     roomViewMode === "clip"

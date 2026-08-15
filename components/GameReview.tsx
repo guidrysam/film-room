@@ -54,7 +54,7 @@ import {
   type HighlightMoment,
 } from "@/lib/highlight-draft";
 import { gameSourceToVideoAngle } from "@/lib/video-angle";
-import { gameCapUrl, teamFilmRoomUrl } from "@/lib/team-routes";
+import { gameCapUrl, watchTogetherUrl } from "@/lib/team-routes";
 import AngleMatchSync from "@/components/AngleMatchSync";
 import MatchScoreboardOverlay from "@/components/MatchScoreboardOverlay";
 import VideoTransport from "@/components/VideoTransport";
@@ -195,9 +195,14 @@ export default function GameReview({
   type ReviewTab = "tag" | "stat" | "highlight" | "develop";
   const [reviewTab, setReviewTab] = useState<ReviewTab>("tag");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showSecondAngle, setShowSecondAngle] = useState(false);
+  const [secondSourceId, setSecondSourceId] = useState<string | null>(null);
+  const [secondPlayerReady, setSecondPlayerReady] = useState(false);
 
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const secondPlayerRef = useRef<YouTubePlayer | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
+  const pendingSecondSeekRef = useRef<number | null>(null);
   /** Avoid full-page loading flash on soft refreshes (keeps AI draft panel mounted). */
   const hasLoadedRef = useRef(false);
 
@@ -210,6 +215,23 @@ export default function GameReview({
     () => playableSources.find((s) => s.id === selectedSourceId) ?? null,
     [playableSources, selectedSourceId],
   );
+
+  const secondSource = useMemo(() => {
+    if (!showSecondAngle || playableSources.length < 2) return null;
+    const preferred =
+      secondSourceId &&
+      secondSourceId !== selectedSourceId &&
+      playableSources.find((s) => s.id === secondSourceId);
+    if (preferred) return preferred;
+    return (
+      playableSources.find((s) => s.id !== selectedSourceId) ?? null
+    );
+  }, [
+    showSecondAngle,
+    playableSources,
+    secondSourceId,
+    selectedSourceId,
+  ]);
 
   const selectedSourceTime = useMemo(() => {
     if (!selectedSource) return 0;
@@ -381,6 +403,77 @@ export default function GameReview({
     },
     [playerReady],
   );
+
+  const applySeekForSecondAngle = useCallback(
+    async (gameTime: number, source: GameVideoSource | null) => {
+      if (!source) return;
+      const sourceTime = gameTimeToSourceTime(gameTime, source);
+      if (sourceTime < 0) {
+        pendingSecondSeekRef.current = null;
+        return;
+      }
+      pendingSecondSeekRef.current = sourceTime;
+      if (secondPlayerReady) {
+        await seekPlayer(secondPlayerRef.current, sourceTime);
+      }
+    },
+    [secondPlayerReady],
+  );
+
+  useEffect(() => {
+    if (!showSecondAngle || !secondSource) return;
+    void applySeekForSecondAngle(selectedGameTime, secondSource);
+  }, [
+    selectedGameTime,
+    showSecondAngle,
+    secondSource,
+    applySeekForSecondAngle,
+  ]);
+
+  // Keep second angle play/pause roughly in step with primary (muted).
+  useEffect(() => {
+    if (!showSecondAngle || !playerReady || !secondPlayerReady) return;
+    const id = window.setInterval(() => {
+      const primary = playerRef.current;
+      const secondary = secondPlayerRef.current;
+      if (!primary || !secondary) return;
+      void (async () => {
+        try {
+          const state = await primary.getPlayerState?.();
+          const secState = await secondary.getPlayerState?.();
+          if (state === 1 && secState !== 1) {
+            await secondary.playVideo?.();
+          } else if (state === 2 && secState === 1) {
+            await secondary.pauseVideo?.();
+          }
+        } catch {
+          /* ignore YT API races */
+        }
+      })();
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [showSecondAngle, playerReady, secondPlayerReady]);
+
+  useEffect(() => {
+    if (playableSources.length < 2 && showSecondAngle) {
+      setShowSecondAngle(false);
+    }
+  }, [playableSources.length, showSecondAngle]);
+
+  useEffect(() => {
+    setSecondPlayerReady(false);
+    secondPlayerRef.current = null;
+  }, [isFullscreen, secondSource?.id]);
+
+  useEffect(() => {
+    if (
+      secondSourceId &&
+      (secondSourceId === selectedSourceId ||
+        !playableSources.some((s) => s.id === secondSourceId))
+    ) {
+      setSecondSourceId(null);
+    }
+  }, [secondSourceId, selectedSourceId, playableSources]);
 
   useEffect(() => {
     if (
@@ -1029,19 +1122,19 @@ export default function GameReview({
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.06] pb-4">
           <div>
             <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-              Game Review
+              Film
             </p>
             <h1 className="text-xl font-semibold text-white">{game.title}</h1>
             <p className="mt-1 text-sm text-zinc-400">
               {[game.sport, game.date, game.opponent ?? game.awayTeam]
                 .filter(Boolean)
-                .join(" · ") || "Synced multi-angle review"}
+                .join(" · ") || "Tag, sync, and watch angles"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {playableSources.length > 0 ? (
-              <Link href={teamFilmRoomUrl(gameId)} className={primaryBtn}>
-                Open Team Film Room
+              <Link href={watchTogetherUrl(gameId)} className={primaryBtn}>
+                Share / Watch together
               </Link>
             ) : null}
             <Link href={`/game/${gameId}`} className={ghostBtn}>
@@ -1055,7 +1148,7 @@ export default function GameReview({
           <div className={panelClass}>
             <p className="text-sm text-zinc-400">
               No playable videos yet. Add video from the game page or Add Video,
-              then return here to review lined-up angles.
+              then return here to tag, sync, and watch.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href={`/game/${gameId}`} className={primaryBtn}>
@@ -1111,15 +1204,30 @@ export default function GameReview({
                         </span>
                       </span>
                     </div>
-                    {selectedSource?.videoId ? (
-                      <button
-                        type="button"
-                        onClick={() => setIsFullscreen(true)}
-                        className={`${ghostBtn} text-[10px]`}
-                      >
-                        Fullscreen
-                      </button>
-                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {playableSources.length >= 2 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSecondPlayerReady(false);
+                            secondPlayerRef.current = null;
+                            setShowSecondAngle((v) => !v);
+                          }}
+                          className={`${ghostBtn} text-[10px]`}
+                        >
+                          {showSecondAngle ? "Hide second angle" : "Show second angle"}
+                        </button>
+                      ) : null}
+                      {selectedSource?.videoId ? (
+                        <button
+                          type="button"
+                          onClick={() => setIsFullscreen(true)}
+                          className={`${ghostBtn} text-[10px]`}
+                        >
+                          Fullscreen
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 ) : (
@@ -1138,57 +1246,196 @@ export default function GameReview({
                       </span>
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsFullscreen(false)}
-                    className={`${ghostBtn} text-[10px]`}
-                  >
-                    Exit fullscreen
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {playableSources.length >= 2 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSecondPlayerReady(false);
+                          secondPlayerRef.current = null;
+                          setShowSecondAngle((v) => !v);
+                        }}
+                        className={`${ghostBtn} text-[10px]`}
+                      >
+                        {showSecondAngle ? "Hide second angle" : "Show second angle"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setIsFullscreen(false)}
+                      className={`${ghostBtn} text-[10px]`}
+                    >
+                      Exit fullscreen
+                    </button>
+                  </div>
                 </div>
                 )}
 
                 {selectedSource?.videoId ? (
-                  <YoutubeChromelessStage
+                  <div
                     className={
-                      isFullscreen
-                        ? "min-h-0 flex-1 bg-black"
-                        : "aspect-video w-full min-h-[240px] rounded-lg border border-white/[0.08] bg-black lg:min-h-[420px]"
+                      isFullscreen ? "relative min-h-0 flex-1" : undefined
                     }
                   >
-                    <YouTube
-                      key={selectedSource.id}
-                      videoId={selectedSource.videoId}
-                      className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
-                      opts={{
-                        width: "100%",
-                        height: "100%",
-                        playerVars: {
-                          autoplay: 0,
-                          ...YOUTUBE_CHROMELESS_PLAYER_VARS,
-                        },
-                      }}
-                      onReady={(e) => {
-                        playerRef.current = e.target;
-                        setPlayerReady(true);
-                        const st = pendingSeekRef.current;
-                        if (st != null && st >= 0) {
-                          void seekPlayer(e.target, st);
-                        } else {
-                          const computed = gameTimeToSourceTime(
-                            selectedGameTime,
-                            selectedSource,
-                          );
-                          if (computed >= 0) {
-                            void seekPlayer(e.target, computed);
+                    <YoutubeChromelessStage
+                      className={
+                        isFullscreen
+                          ? "min-h-0 h-full bg-black"
+                          : "aspect-video w-full min-h-[240px] rounded-lg border border-white/[0.08] bg-black lg:min-h-[420px]"
+                      }
+                    >
+                      <YouTube
+                        key={selectedSource.id}
+                        videoId={selectedSource.videoId}
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                        opts={{
+                          width: "100%",
+                          height: "100%",
+                          playerVars: {
+                            autoplay: 0,
+                            ...YOUTUBE_CHROMELESS_PLAYER_VARS,
+                          },
+                        }}
+                        onReady={(e) => {
+                          playerRef.current = e.target;
+                          setPlayerReady(true);
+                          const st = pendingSeekRef.current;
+                          if (st != null && st >= 0) {
+                            void seekPlayer(e.target, st);
+                          } else {
+                            const computed = gameTimeToSourceTime(
+                              selectedGameTime,
+                              selectedSource,
+                            );
+                            if (computed >= 0) {
+                              void seekPlayer(e.target, computed);
+                            }
                           }
-                        }
-                      }}
-                    />
-                    {liveScoreboard ? (
-                      <MatchScoreboardOverlay score={liveScoreboard} />
+                        }}
+                      />
+                      {liveScoreboard ? (
+                        <MatchScoreboardOverlay score={liveScoreboard} />
+                      ) : null}
+                    </YoutubeChromelessStage>
+
+                    {showSecondAngle && secondSource?.videoId && isFullscreen ? (
+                      <div className="absolute bottom-3 right-3 z-10 w-[min(280px,42vw)] overflow-hidden rounded-md border border-white/20 bg-black shadow-lg shadow-black/50">
+                        <p className="truncate bg-black/70 px-2 py-0.5 text-[9px] font-medium text-zinc-300">
+                          {secondSource.label}
+                        </p>
+                        <div className="aspect-video w-full">
+                          <YouTube
+                            key={`fs-${secondSource.id}`}
+                            videoId={secondSource.videoId}
+                            className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                            opts={{
+                              width: "100%",
+                              height: "100%",
+                              playerVars: {
+                                autoplay: 0,
+                                mute: 1,
+                                ...YOUTUBE_CHROMELESS_PLAYER_VARS,
+                              },
+                            }}
+                            onReady={(e) => {
+                              secondPlayerRef.current = e.target;
+                              try {
+                                e.target.mute?.();
+                              } catch {
+                                /* ignore */
+                              }
+                              setSecondPlayerReady(true);
+                              const st = pendingSecondSeekRef.current;
+                              if (st != null && st >= 0) {
+                                void seekPlayer(e.target, st);
+                              } else {
+                                const computed = gameTimeToSourceTime(
+                                  selectedGameTime,
+                                  secondSource,
+                                );
+                                if (computed >= 0) {
+                                  void seekPlayer(e.target, computed);
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
                     ) : null}
-                  </YoutubeChromelessStage>
+                  </div>
+                ) : null}
+
+                {!isFullscreen &&
+                showSecondAngle &&
+                secondSource?.videoId ? (
+                  <div className="mt-3">
+                    <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                        Second angle · {secondSource.label}
+                      </p>
+                      {playableSources.filter((s) => s.id !== selectedSourceId)
+                        .length > 1 ? (
+                        <select
+                          value={secondSource.id}
+                          onChange={(e) => {
+                            setSecondPlayerReady(false);
+                            secondPlayerRef.current = null;
+                            setSecondSourceId(e.target.value);
+                          }}
+                          className="rounded border border-white/10 bg-zinc-950 px-2 py-0.5 text-[10px] text-zinc-200"
+                        >
+                          {playableSources
+                            .filter((s) => s.id !== selectedSourceId)
+                            .map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.label}
+                              </option>
+                            ))}
+                        </select>
+                      ) : null}
+                    </div>
+                    <YoutubeChromelessStage className="aspect-video w-full max-w-xl rounded-lg border border-white/[0.08] bg-black">
+                      <YouTube
+                        key={secondSource.id}
+                        videoId={secondSource.videoId}
+                        className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                        opts={{
+                          width: "100%",
+                          height: "100%",
+                          playerVars: {
+                            autoplay: 0,
+                            mute: 1,
+                            ...YOUTUBE_CHROMELESS_PLAYER_VARS,
+                          },
+                        }}
+                        onReady={(e) => {
+                          secondPlayerRef.current = e.target;
+                          try {
+                            e.target.mute?.();
+                          } catch {
+                            /* ignore */
+                          }
+                          setSecondPlayerReady(true);
+                          const st = pendingSecondSeekRef.current;
+                          if (st != null && st >= 0) {
+                            void seekPlayer(e.target, st);
+                          } else {
+                            const computed = gameTimeToSourceTime(
+                              selectedGameTime,
+                              secondSource,
+                            );
+                            if (computed >= 0) {
+                              void seekPlayer(e.target, computed);
+                            }
+                          }
+                        }}
+                      />
+                    </YoutubeChromelessStage>
+                    <p className="mt-1 text-[10px] text-zinc-500">
+                      Offset {secondSource.offsetFromGameTime ?? 0}s · follows
+                      game clock (muted)
+                    </p>
+                  </div>
                 ) : null}
 
                 {selectedSource?.videoId ? (

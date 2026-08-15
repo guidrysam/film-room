@@ -57,7 +57,7 @@ function TeamFilmRoomPageInner() {
       setError(
         e instanceof Error
           ? e.message
-          : "Could not open the Team Film Room for this game.",
+          : "Could not open Watch together for this game.",
       );
     }
   }, [user, gameId, asViewer, reelId, router]);
@@ -78,9 +78,10 @@ function TeamFilmRoomPageInner() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-4 py-16 text-zinc-50">
         <div className="w-full max-w-sm text-center">
-          <h1 className="mb-3 text-2xl font-semibold text-white">Team Film Room</h1>
+          <h1 className="mb-3 text-2xl font-semibold text-white">Watch together</h1>
           <p className="mb-8 text-sm text-zinc-300">
-            Sign in to watch synced angles and Review marks with your team.
+            Sign in to share a synced viewer link for this game&apos;s angles
+            and marks.
           </p>
           <button
             type="button"
@@ -124,7 +125,7 @@ function TeamFilmRoomPageInner() {
           </div>
         </div>
       ) : (
-        <p className="text-sm text-zinc-400">Opening Team Film Room…</p>
+        <p className="text-sm text-zinc-400">Opening Watch together…</p>
       )}
     </div>
   );

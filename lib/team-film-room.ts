@@ -18,7 +18,7 @@ const FILM_ROOM_EVENT_TYPES = new Set<GameTimelineEvent["type"]>([
   "stat",
 ]);
 
-/** Stable RTDB room id for a game's shared Team Film Room. */
+/** Stable RTDB room id for a game's shared Watch together session. */
 export function teamFilmRoomId(gameId: string): string {
   return `g-${gameId.trim()}`;
 }
@@ -171,7 +171,7 @@ export type SeedTeamFilmRoomResult = {
 };
 
 /**
- * Seed or refresh the stable Team Film Room in RTDB from game sources and
+ * Seed or refresh the stable Watch together room in RTDB from game sources and
  * Review marks, then return the `/room/...` URL to navigate to.
  */
 export async function seedTeamFilmRoom(

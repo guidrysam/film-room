@@ -94,7 +94,7 @@ export default function GameDetails({
           href={`/game/${game.id}/review`}
           className="inline-flex items-center justify-center rounded-lg border border-blue-500/40 bg-blue-950/40 px-3 py-2 text-xs font-semibold text-blue-100 transition hover:bg-blue-900/55"
         >
-          Open Review
+          Open film
         </Link>
       </div>
 

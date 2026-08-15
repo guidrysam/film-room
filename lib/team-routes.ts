@@ -61,6 +61,16 @@ export function teamPlayerProfileUrl(teamId: string, playerId: string): string {
   return `/team/${teamId}/player/${playerId}`;
 }
 
+/** Seeds the shared watch-together room (host/viewer sync). */
 export function teamFilmRoomUrl(gameId: string): string {
   return `/game/${gameId}/room`;
+}
+
+/** Same entry as teamFilmRoomUrl — prefer this name in UI copy. */
+export function watchTogetherUrl(gameId: string): string {
+  return teamFilmRoomUrl(gameId);
+}
+
+export function gameFilmUrl(gameId: string): string {
+  return `/game/${gameId}/review`;
 }

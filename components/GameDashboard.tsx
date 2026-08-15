@@ -391,21 +391,21 @@ export default function GameDashboard({
           </section>
         ) : null}
 
-        {/* Review */}
+        {/* Film */}
         <section className={`${panelClass} mb-5`}>
-          <h2 className="mb-2 text-sm font-semibold text-white">Review</h2>
+          <h2 className="mb-2 text-sm font-semibold text-white">Film</h2>
           <p className="mb-3 text-xs text-zinc-400">
             {metrics.sourceCount === 0
-              ? "Add video above, then review lined-up angles."
-              : `${metrics.syncedSourceCount} of ${metrics.sourceCount} video${metrics.sourceCount === 1 ? "" : "s"} lined up for multi-angle review.`}
+              ? "Add video above, then open film to tag, sync angles, and run AI."
+              : `${metrics.syncedSourceCount} of ${metrics.sourceCount} video${metrics.sourceCount === 1 ? "" : "s"} lined up. Tag, edit, sync, and watch angles in one place.`}
           </p>
           <div className="flex flex-wrap gap-2">
             <Link href={`/game/${game.id}/review`} className={primaryBtn}>
-              Open Review
+              Open film
             </Link>
             {metrics.sourceCount > 0 ? (
               <Link href={teamFilmRoomUrl(game.id)} className={ghostBtn}>
-                Open Team Film Room
+                Share / Watch together
               </Link>
             ) : null}
           </div>
