@@ -8855,92 +8855,8 @@ function RoomContent() {
           )}
         </div>
 
-        <div className="mt-2 w-full rounded-lg border border-white/[0.06] bg-zinc-950/40 px-2.5 py-2 ring-1 ring-white/[0.04]">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-            Chapters / Marks
-          </div>
-          <div className="max-h-[140px] overflow-y-auto overscroll-y-contain pr-1">
-            {chaptersDisplay.length === 0 ? (
-              <p className="text-[11px] leading-snug text-zinc-500">
-                {teamRoomMode
-                  ? "No marks yet. Add them in Review."
-                  : "No chapters yet. Add marks in Clip View."}
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
-                  const onQueuedClip =
-                    ch.videoId === s.clips[s.currentClipIndex]?.videoId;
-                  const taggedAngle =
-                    s.angles.find((a) => a.videoId === ch.videoId) ?? null;
-                  const onActiveSurface = onQueuedClip || taggedAngle != null;
-                  const isCurrentChapter =
-                    activeChapterIndex !== null && activeChapterIndex === i;
-                  return (
-                    <li key={`sync-marks-${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
-                      <div className="flex min-w-0 items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={!isHost}
-                          title={
-                            isHost ? undefined : "Only the host can jump to marks"
-                          }
-                          onClick={() => void jumpToChapter(ch)}
-                          className={`min-w-0 flex-1 truncate rounded-md border px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-45 ${
-                            isCurrentChapter && onActiveSurface
-                              ? "border-blue-500/80 bg-blue-600/40 text-white ring-1 ring-blue-400/40"
-                              : onActiveSurface
-                                ? "border-white/10 bg-black/30 text-zinc-100 hover:border-white/18 hover:bg-black/45"
-                                : "border-white/6 bg-black/20 text-zinc-400 hover:border-white/12"
-                          }`}
-                        >
-                          <span className="font-medium text-zinc-100">
-                            {ch.label}
-                          </span>
-                          <span className="ml-1.5 font-mono text-[10px] text-zinc-400">
-                            {formatChapterTime(ch.gameTime ?? ch.time)}
-                          </span>
-                          {taggedAngle && !onQueuedClip ? (
-                            <span className="ml-1 text-[9px] text-zinc-500">
-                              · {taggedAngle.name}
-                            </span>
-                          ) : !onActiveSurface ? (
-                            <span className="ml-1 text-[9px] text-amber-400/80">
-                              (other clip)
-                            </span>
-                          ) : null}
-                        </button>
-                        {isHost && !teamRoomMode ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleRenameChapter(i)}
-                              className={miniHostBtn}
-                              title="Rename chapter"
-                            >
-                              Ren
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteChapter(i)}
-                              className="shrink-0 rounded-md border border-white/10 px-1.5 py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
-                              aria-label={`Delete chapter ${ch.label}`}
-                            >
-                              ×
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
-
         {isHost ? (
-          <div className="mt-3 w-full">
+          <div className="mt-2 w-full">
             {!teamRoomMode ? (
               <GameMarksToolbar
                 variant="band"
@@ -8950,7 +8866,7 @@ function RoomContent() {
               />
             ) : null}
             <div
-              className={`${hostControlsBar} mt-2 ${
+              className={`${hostControlsBar} ${!teamRoomMode ? "mt-2 " : ""}${
                 isManualSyncMode ? "pointer-events-none opacity-35" : ""
               }`}
             >
@@ -9139,6 +9055,90 @@ function RoomContent() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="mt-3 w-full rounded-lg border border-white/[0.06] bg-zinc-950/40 px-2.5 py-2 ring-1 ring-white/[0.04]">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+            Chapters / Marks
+          </div>
+          <div className="max-h-[140px] overflow-y-auto overscroll-y-contain pr-1">
+            {chaptersDisplay.length === 0 ? (
+              <p className="text-[11px] leading-snug text-zinc-500">
+                {teamRoomMode
+                  ? "No marks yet. Add them in Review."
+                  : "No chapters yet. Add marks in Clip View."}
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {chaptersDisplay.map(({ chapter: ch, sourceIndex: i }) => {
+                  const onQueuedClip =
+                    ch.videoId === s.clips[s.currentClipIndex]?.videoId;
+                  const taggedAngle =
+                    s.angles.find((a) => a.videoId === ch.videoId) ?? null;
+                  const onActiveSurface = onQueuedClip || taggedAngle != null;
+                  const isCurrentChapter =
+                    activeChapterIndex !== null && activeChapterIndex === i;
+                  return (
+                    <li key={`sync-marks-${ch.videoId}-${ch.time}-${ch.label}-${i}`}>
+                      <div className="flex min-w-0 items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={!isHost}
+                          title={
+                            isHost ? undefined : "Only the host can jump to marks"
+                          }
+                          onClick={() => void jumpToChapter(ch)}
+                          className={`min-w-0 flex-1 truncate rounded-md border px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-45 ${
+                            isCurrentChapter && onActiveSurface
+                              ? "border-blue-500/80 bg-blue-600/40 text-white ring-1 ring-blue-400/40"
+                              : onActiveSurface
+                                ? "border-white/10 bg-black/30 text-zinc-100 hover:border-white/18 hover:bg-black/45"
+                                : "border-white/6 bg-black/20 text-zinc-400 hover:border-white/12"
+                          }`}
+                        >
+                          <span className="font-medium text-zinc-100">
+                            {ch.label}
+                          </span>
+                          <span className="ml-1.5 font-mono text-[10px] text-zinc-400">
+                            {formatChapterTime(ch.gameTime ?? ch.time)}
+                          </span>
+                          {taggedAngle && !onQueuedClip ? (
+                            <span className="ml-1 text-[9px] text-zinc-500">
+                              · {taggedAngle.name}
+                            </span>
+                          ) : !onActiveSurface ? (
+                            <span className="ml-1 text-[9px] text-amber-400/80">
+                              (other clip)
+                            </span>
+                          ) : null}
+                        </button>
+                        {isHost && !teamRoomMode ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleRenameChapter(i)}
+                              className={miniHostBtn}
+                              title="Rename chapter"
+                            >
+                              Ren
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteChapter(i)}
+                              className="shrink-0 rounded-md border border-white/10 px-1.5 py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-red-500/35 hover:bg-red-950/25 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+                              aria-label={`Delete chapter ${ch.label}`}
+                            >
+                              ×
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
         {copySharedToast ? (
           <div
             className="pointer-events-none fixed bottom-6 left-1/2 z-[110] -translate-x-1/2 rounded-lg border border-emerald-500/40 bg-emerald-950/90 px-4 py-2 text-sm font-medium text-emerald-100 shadow-lg shadow-black/40 ring-1 ring-emerald-500/25"
