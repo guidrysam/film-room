@@ -4896,32 +4896,6 @@ function RoomContent() {
           isPlaying: cur.isPlaying,
           playbackRate: pr,
         });
-        if (taggedAngle) {
-          const taggedPlayer = syncPlayerRefs.current[taggedAngle.id];
-          const taggedTime = chapterSeekTimeOnAngle(
-            chapter,
-            cur.angles,
-            taggedAngle,
-          );
-          if (taggedPlayer && taggedTime >= 0) {
-            try {
-              taggedPlayer.seekTo(taggedTime, true);
-            } catch {
-              /* YouTube API */
-            }
-          }
-          if (
-            taggedAngle.id !== (cur.playerViewAngleId ?? cur.currentAngleId)
-          ) {
-            void update(rr, {
-              playerViewAngleId: taggedAngle.id,
-              selectedDisplayAngleId: taggedAngle.id,
-              updatedAt: serverTimestamp(),
-            }).catch(() => {
-              /* RTDB */
-            });
-          }
-        }
         applyHostMultiViewSecondaryDirect({
           primaryAnchorTime: seekTime,
           isPlaying: cur.isPlaying,
@@ -4933,8 +4907,12 @@ function RoomContent() {
       }
 
       const targetClip = cur.clips[clipIdx]!;
-      const crossSeek = chapter.time;
-      const primaryAngleId = taggedAngle?.id ?? cur.angles[0]?.id ?? cur.currentAngleId;
+      const crossSeek = chapterSeekTimeOnAngle(
+        chapter,
+        cur.angles,
+        pickAngle(cur.angles, cur.currentAngleId),
+      );
+      const primaryAngleId = cur.angles[0]?.id ?? cur.currentAngleId;
 
       lastAppliedKey.current = "";
       hostActionSeqRef.current += 1;
@@ -4954,12 +4932,6 @@ function RoomContent() {
         currentClipIndex: clipIdx,
         currentTime: crossSeek,
         currentAngleId: primaryAngleId,
-        ...(taggedAngle
-          ? {
-              playerViewAngleId: taggedAngle.id,
-              selectedDisplayAngleId: taggedAngle.id,
-            }
-          : {}),
         isPlaying: cur.isPlaying,
         playbackRate: pr,
         playbackCommand,
@@ -8911,11 +8883,7 @@ function RoomContent() {
                           type="button"
                           disabled={!isHost}
                           title={
-                            isHost
-                              ? taggedAngle && !onQueuedClip
-                                ? `Jump to ${taggedAngle.name}`
-                                : undefined
-                              : "Only the host can jump to marks"
+                            isHost ? undefined : "Only the host can jump to marks"
                           }
                           onClick={() => void jumpToChapter(ch)}
                           className={`min-w-0 flex-1 truncate rounded-md border px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-45 ${
