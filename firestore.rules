@@ -315,9 +315,9 @@ service cloud.firestore {
         || !(resource.data.clubId is string)
         || resource.data.clubId.size() == 0;
     }
-    function canLinkTeamToClub() {
+    function canLinkTeamToClub(tid) {
       return request.auth != null
-        && isTeamAdmin(teamId, request.auth.uid)
+        && isTeamAdmin(tid, request.auth.uid)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['clubId', 'updatedAt'])
         && teamClubIdWasEmpty()
@@ -357,7 +357,7 @@ service cloud.firestore {
              .hasAny(['clubId']);
 
       // Team owner/admin may attach an unlinked team to a club they belong to.
-      allow update: if canLinkTeamToClub();
+      allow update: if canLinkTeamToClub(teamId);
 
       // Parents/coaches may update team branding (logo) without full admin.
       allow update: if request.auth != null
