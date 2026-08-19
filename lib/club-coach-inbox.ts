@@ -23,6 +23,20 @@ import {
 import type { FilmSource } from "@/lib/film-sources";
 import { updateFilmSourceOrganize } from "@/lib/film-sources";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
+import { getTeam, canContributeTeam, type Team } from "@/lib/teams";
+import {
+  addGameEvent,
+  addGameSource,
+  addGameSourceFromDriveUpload,
+  addGameSourceFromYouTubeUpload,
+  createGame,
+  fetchGameEvents,
+  fetchGameSources,
+  getGame,
+  updateGame,
+  updateGameContributor,
+  type GameVideoSource,
+} from "@/lib/games";
 
 /**
  * Club coach inbox — parents drop film here; coaches/admins view and
@@ -47,6 +61,8 @@ export type ClubCoachInboxItem = {
   durationSec?: number;
   recordedStartTime?: string;
   filmSourceId?: string;
+  reviewGameId?: string;
+  tagCount?: number;
   status: ClubCoachInboxStatus;
   teamId?: string;
   gameId?: string;
@@ -105,6 +121,10 @@ function parseItem(
     ...(trimOrUndef(raw.filmSourceId)
       ? { filmSourceId: String(raw.filmSourceId) }
       : {}),
+    ...(trimOrUndef(raw.reviewGameId)
+      ? { reviewGameId: String(raw.reviewGameId) }
+      : {}),
+    ...(typeof raw.tagCount === "number" ? { tagCount: raw.tagCount } : {}),
     ...(trimOrUndef(raw.teamId) ? { teamId: String(raw.teamId) } : {}),
     ...(trimOrUndef(raw.gameId) ? { gameId: String(raw.gameId) } : {}),
     createdAt: raw.createdAt instanceof Timestamp ? raw.createdAt : null,
@@ -131,9 +151,136 @@ export function canManageClubCoachInbox(
   return canManageClub(club, uid) || isClubCoach(club, uid);
 }
 
-/** Parent (or club member) shares a My Film item into the club coach inbox. */
+function sourceCopyInput(source: GameVideoSource, uid: string) {
+  const { id: _id, createdAt: _createdAt, uploadedAt: _uploadedAt, ...rest } =
+    source;
+  return {
+    ...rest,
+    createdBy: uid,
+  };
+}
+
+async function attachFilmClipToGame(
+  gameId: string,
+  uid: string,
+  source: FilmSource,
+): Promise<void> {
+  const ytId = source.youtubeVideoId || source.videoId;
+  const title =
+    formatGameCapMogoDisplayName(source.label) || source.label || "Shared film";
+  if (source.kind === "youtube" || ytId) {
+    if (!ytId) throw new Error("This item has no playable source.");
+    await addGameSourceFromYouTubeUpload(gameId, uid, {
+      videoId: ytId,
+      label: title,
+      youtubePrivacyStatus: "unlisted",
+      ...(source.recordedStartTime
+        ? { recordedStartTime: source.recordedStartTime }
+        : {}),
+      ...(typeof source.durationSec === "number"
+        ? { durationSec: source.durationSec }
+        : {}),
+    });
+    return;
+  }
+  if (source.driveFileId) {
+    await addGameSourceFromDriveUpload(gameId, uid, {
+      driveFileId: source.driveFileId,
+      label: title,
+      angleSlot: "main",
+      ...(source.recordedStartTime
+        ? { recordedStartTime: source.recordedStartTime }
+        : {}),
+      ...(typeof source.durationSec === "number"
+        ? { durationSec: source.durationSec }
+        : {}),
+    });
+    return;
+  }
+  throw new Error("This item has no playable source.");
+}
+
+/**
+ * Copy a tagged My Film review onto a club team so coaches see video + marks.
+ */
+async function copyTaggedFilmOntoTeam(opts: {
+  uid: string;
+  team: Team;
+  clubId: string;
+  source: FilmSource;
+}): Promise<{ gameId: string; eventCount: number }> {
+  const title =
+    formatGameCapMogoDisplayName(opts.source.label) ||
+    opts.source.label ||
+    "Shared film";
+  const gameId = await createGame(opts.uid, {
+    title,
+    clubId: opts.clubId,
+  });
+
+  let eventCount = 0;
+  let copiedSources = 0;
+  const reviewId = opts.source.reviewGameId?.trim();
+  if (reviewId) {
+    const review = await getGame(reviewId, { uid: opts.uid });
+    if (review) {
+      const [srcs, evs] = await Promise.all([
+        fetchGameSources(reviewId, review, opts.uid),
+        fetchGameEvents(reviewId, review, opts.uid),
+      ]);
+      const idMap = new Map<string, string>();
+      for (const src of srcs) {
+        const newId = await addGameSource(
+          gameId,
+          sourceCopyInput(src, opts.uid),
+          { actorUid: opts.uid },
+        );
+        idMap.set(src.id, newId);
+        copiedSources += 1;
+      }
+      for (const ev of evs) {
+        const mapped = ev.sourceId ? idMap.get(ev.sourceId) : undefined;
+        await addGameEvent(
+          gameId,
+          {
+            type: ev.type,
+            t: ev.t,
+            ...(ev.label ? { label: ev.label } : {}),
+            ...(mapped || ev.sourceId
+              ? { sourceId: mapped ?? ev.sourceId }
+              : {}),
+            ...(ev.payload ? { payload: ev.payload } : {}),
+            createdBy: opts.uid,
+          },
+          { actorUid: opts.uid },
+        );
+        eventCount += 1;
+      }
+    }
+  }
+
+  if (copiedSources === 0) {
+    await attachFilmClipToGame(gameId, opts.uid, opts.source);
+  }
+
+  await updateGame(gameId, {
+    teamId: opts.team.id,
+    clubId: opts.clubId,
+  });
+  if (opts.team.ownerId && opts.team.ownerId !== opts.uid) {
+    try {
+      await updateGameContributor(gameId, opts.team.ownerId, "editor");
+    } catch {
+      /* team members can still open via teamId */
+    }
+  }
+  return { gameId, eventCount };
+}
+
+/** Parent (or club member) shares tagged My Film onto a coach’s team. */
 export async function shareFilmWithClubCoaches(opts: {
   clubId: string;
+  teamId: string;
   source: FilmSource;
 }): Promise<string> {
   const user = auth.currentUser;
@@ -146,12 +293,31 @@ export async function shareFilmWithClubCoaches(opts: {
     throw new Error("Join this club before sharing with coaches.");
   }
 
+  const team = await getTeam(opts.teamId);
+  if (!team) throw new Error("Team not found.");
+  if (team.clubId !== opts.clubId) {
+    throw new Error("That team is not in the selected club.");
+  }
+  if (
+    !canContributeTeam(team, user.uid, club) &&
+    !isClubCoach(club, user.uid)
+  ) {
+    throw new Error("You don’t have access to share onto this team.");
+  }
+
   const source = opts.source;
   const ytId = source.youtubeVideoId || source.videoId;
   const isYoutube = source.kind === "youtube" || Boolean(ytId);
-  if (!isYoutube && !source.driveFileId) {
+  if (!isYoutube && !source.driveFileId && !source.reviewGameId) {
     throw new Error("This item has no playable source.");
   }
+
+  const { gameId, eventCount } = await copyTaggedFilmOntoTeam({
+    uid: user.uid,
+    team,
+    clubId: opts.clubId,
+    source,
+  });
 
   const label =
     formatGameCapMogoDisplayName(source.label) || source.label || "Film";
@@ -166,6 +332,8 @@ export async function shareFilmWithClubCoaches(opts: {
     kind: isYoutube ? "youtube" : "upload",
     status: "open",
     filmSourceId: source.id,
+    teamId: opts.teamId,
+    gameId,
     createdAt: now,
     updatedAt: now,
     ...(sharedByLabel ? { sharedByLabel } : {}),
@@ -181,14 +349,18 @@ export async function shareFilmWithClubCoaches(opts: {
     ...(trimOrUndef(source.recordedStartTime)
       ? { recordedStartTime: source.recordedStartTime }
       : {}),
+    ...(source.reviewGameId?.trim()
+      ? { reviewGameId: source.reviewGameId.trim() }
+      : {}),
+    ...(eventCount > 0 ? { tagCount: eventCount } : {}),
   };
 
   try {
     await setDoc(ref, payload);
     await updateFilmSourceOrganize(user.uid, source.id, {
       clubId: opts.clubId,
-      teamId: null,
-      gameId: null,
+      teamId: opts.teamId,
+      gameId,
     });
   } catch (error) {
     throw formatFirestoreWriteError(error, "Could not share with coaches.");

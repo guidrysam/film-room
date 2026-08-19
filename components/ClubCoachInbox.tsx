@@ -227,8 +227,8 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
         </button>
       </div>
       <p className="mb-3 text-xs text-zinc-400">
-        Parents share film here. Watch or open in Film Room anytime — organizing
-        onto a team game is optional.
+        Parents share tagged film here. Items already placed on a team are
+        ready to open; organizing onto a different game is optional.
       </p>
 
       {error ? (
@@ -257,11 +257,14 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
                   </p>
                   <p className="mt-0.5 text-[11px] text-zinc-500">
                     {item.sharedByLabel || `${item.sharedByUid.slice(0, 8)}…`}
-                    {item.status === "organized"
+                    {item.gameId ? " · on a team" : item.status === "organized"
                       ? " · organized"
                       : item.status === "open"
                         ? " · open"
                         : ""}
+                    {typeof item.tagCount === "number"
+                      ? ` · ${item.tagCount} tag${item.tagCount === 1 ? "" : "s"}`
+                      : ""}
                     {item.createdAt
                       ? ` · ${item.createdAt.toDate().toLocaleString()}`
                       : ""}
@@ -277,15 +280,24 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
                 >
                   Watch
                 </button>
-                <button
-                  type="button"
-                  className={primaryBtn}
-                  disabled={busyId === item.id}
-                  onClick={() => void openInFilmRoom(item)}
-                >
-                  {busyId === item.id ? "Opening…" : "Open in Film Room"}
-                </button>
-                {item.status === "open" ? (
+                {item.gameId ? (
+                  <Link
+                    href={`/game/${item.gameId}/review`}
+                    className={primaryBtn}
+                  >
+                    Open team game
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className={primaryBtn}
+                    disabled={busyId === item.id}
+                    onClick={() => void openInFilmRoom(item)}
+                  >
+                    {busyId === item.id ? "Opening…" : "Open in Film Room"}
+                  </button>
+                )}
+                {item.status === "open" && !item.gameId ? (
                   <button
                     type="button"
                     className={ghostBtn}
@@ -299,13 +311,6 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
                   >
                     Organize by team
                   </button>
-                ) : item.gameId ? (
-                  <Link
-                    href={`/game/${item.gameId}/review`}
-                    className={ghostBtn}
-                  >
-                    Open game
-                  </Link>
                 ) : null}
                 {item.status !== "dismissed" ? (
                   <button

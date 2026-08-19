@@ -338,7 +338,7 @@ export default function MyFilmPage() {
             onBusy={(b) => setBusyId(b ? source.id : null)}
             onError={setError}
             onShared={async () => {
-              setSyncNote("Shared with club coaches.");
+              setSyncNote("Shared onto the coach’s team.");
               await loadList();
             }}
           />
@@ -354,7 +354,11 @@ export default function MyFilmPage() {
           </button>
         ) : null}
       </div>
-      {source.clubId && !source.gameId ? (
+      {source.clubId && source.gameId ? (
+        <p className="mt-2 text-[11px] text-emerald-400/90">
+          Shared onto a team game
+        </p>
+      ) : source.clubId && !source.gameId ? (
         <p className="mt-2 text-[11px] text-emerald-400/90">
           Shared with club coaches
         </p>
@@ -382,8 +386,8 @@ export default function MyFilmPage() {
             My Film
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Upload and gather film here. Share with coach sends it to your club’s
-            coach inbox — they can organize by team later.{" "}
+            Upload and gather film here. Share with coach sends a tagged game
+            onto a team in your club so the coach can open it with your marks.{" "}
             <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
               Find a club
             </Link>

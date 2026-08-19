@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { listMyClubs, type Club } from "@/lib/clubs";
+import { listClubTeams, listMyClubs, type Club } from "@/lib/clubs";
 import { shareFilmWithClubCoaches } from "@/lib/club-coach-inbox";
 import type { FilmSource } from "@/lib/film-sources";
+import type { Team } from "@/lib/teams";
 import { clubsFindUrl } from "@/lib/club-routes";
 import Link from "next/link";
 
@@ -26,8 +27,7 @@ type Props = {
 };
 
 /**
- * Parent: one-tap share into the club coach inbox.
- * Coaches/admins see it on the club hub and may organize by team later.
+ * Parent: share tagged My Film onto a coach’s team.
  */
 export default function ShareFilmWithCoach({
   uid,
@@ -39,7 +39,9 @@ export default function ShareFilmWithCoach({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [clubs, setClubs] = useState<Club[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [clubId, setClubId] = useState("");
+  const [teamId, setTeamId] = useState("");
   const [loadingMeta, setLoadingMeta] = useState(false);
 
   const loadClubs = useCallback(async () => {
@@ -64,15 +66,45 @@ export default function ShareFilmWithCoach({
     void loadClubs();
   }, [open, loadClubs]);
 
+  useEffect(() => {
+    if (!open || !clubId) {
+      setTeams([]);
+      setTeamId("");
+      return;
+    }
+    let cancelled = false;
+    void listClubTeams(clubId)
+      .then((rows) => {
+        if (cancelled) return;
+        setTeams(rows);
+        if (rows.length === 1) setTeamId(rows[0]!.id);
+        else if (source.teamId && rows.some((t) => t.id === source.teamId)) {
+          setTeamId(source.teamId);
+        } else {
+          setTeamId("");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTeams([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clubId, source.teamId]);
+
   const share = async () => {
     if (!clubId) {
       onError("Pick a club.");
       return;
     }
+    if (!teamId) {
+      onError("Pick the coach’s team.");
+      return;
+    }
     onBusy(true);
     onError(null);
     try {
-      await shareFilmWithClubCoaches({ clubId, source });
+      await shareFilmWithClubCoaches({ clubId, teamId, source });
       setOpen(false);
       await onShared();
     } catch (e) {
@@ -98,11 +130,12 @@ export default function ShareFilmWithCoach({
   return (
     <div className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 p-3">
       <p className="mb-2 text-[11px] font-medium text-zinc-300">
-        Share with club coaches
+        Share tagged game with coach
       </p>
       <p className="mb-2 text-[11px] text-zinc-500">
-        Coaches and admins will see this in the club inbox. They can organize by
-        team later — or leave it as-is.
+        Sends this film
+        {source.reviewGameId ? " and your tags" : ""} onto the coach’s team so
+        it shows up in their games.
       </p>
       {loadingMeta ? (
         <p className="text-[11px] text-zinc-500">Loading clubs…</p>
@@ -114,6 +147,7 @@ export default function ShareFilmWithCoach({
           </Link>
         </p>
       ) : (
+        <>
         <label className="block text-[11px] text-zinc-500">
           Club
           <select
@@ -129,15 +163,38 @@ export default function ShareFilmWithCoach({
             ))}
           </select>
         </label>
+        {clubId ? (
+          <label className="mt-2 block text-[11px] text-zinc-500">
+            Team
+            <select
+              className={selectClass}
+              value={teamId}
+              onChange={(e) => setTeamId(e.target.value)}
+            >
+              <option value="">Select…</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {clubId && teams.length === 0 && !loadingMeta ? (
+          <p className="mt-2 text-[11px] text-amber-200/90">
+            This club has no teams yet. Ask the coach to create a team first.
+          </p>
+        ) : null}
+        </>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           className={primaryBtn}
-          disabled={busy || !clubId}
+          disabled={busy || !clubId || !teamId}
           onClick={() => void share()}
         >
-          {busy ? "Sharing…" : "Send to coaches"}
+          {busy ? "Sharing…" : "Send to team"}
         </button>
         <button
           type="button"
