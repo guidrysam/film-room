@@ -264,11 +264,11 @@ export default function DashboardPage() {
             <p className="text-sm text-zinc-400">Loading…</p>
           ) : clubs.length === 0 ? (
             <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-sm text-zinc-400">
-              Coaches create clubs and teams. Parents{" "}
+              Coaches and parents{" "}
               <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
                 find a club
               </Link>{" "}
-              or use an invite link, then share film from{" "}
+              or use an invite link. Parents then share film from{" "}
               <Link href="/app/film" className="text-blue-300 hover:underline">
                 My Film
               </Link>

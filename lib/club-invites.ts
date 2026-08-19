@@ -185,3 +185,30 @@ export async function deactivateClubInvite(code: string): Promise<void> {
 export function clubInviteJoinPath(code: string): string {
   return `/join/club/${code}`;
 }
+
+export function normalizeClubInviteCode(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    return decodeURIComponent(trimmed).trim();
+  } catch {
+    return trimmed;
+  }
+}
+
+/** Accept a join URL or the invite code itself. */
+export function extractClubInviteCode(input: string): string | null {
+  const raw = normalizeClubInviteCode(input);
+  if (!raw) return null;
+  try {
+    const asUrl = raw.includes("://")
+      ? new URL(raw)
+      : new URL(raw, "https://filmroom.local");
+    const match = asUrl.pathname.match(/\/join\/club\/([^/]+)\/?$/i);
+    if (match?.[1]) return normalizeClubInviteCode(match[1]);
+  } catch {
+    /* not a URL */
+  }
+  if (/^[A-Za-z0-9_-]{12,}$/.test(raw)) return raw;
+  return null;
+}

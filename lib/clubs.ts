@@ -223,7 +223,7 @@ export async function createClub(
   const payload = {
     name,
     nameLower: name.toLowerCase(),
-    discoverable: false,
+    discoverable: true,
     ownerId: effectiveUid,
     members: { [effectiveUid]: "club_admin" as ClubMemberRole },
     memberUids: [effectiveUid],
@@ -342,7 +342,7 @@ export async function listTeamsVisibleViaClubs(
   const clubs = await listMyClubs(uid);
   const byId = new Map<string, Team>();
   for (const club of clubs) {
-    if (!canManageClub(club, uid) && !isClubParent(club, uid)) continue;
+    if (!isClubMember(club, uid)) continue;
     const teams = await listClubTeams(club.id);
     for (const team of teams) byId.set(team.id, team);
   }
@@ -381,6 +381,21 @@ export async function assignCoachToClubTeam(opts: {
 }
 
 /**
+ * Attach an existing team you admin to a club you belong to
+ * (admin, coach, or parent). Used when a team was created before joining.
+ */
+export function canAttachTeamToClub(
+  club: Club,
+  team: Team,
+  uid: string,
+): boolean {
+  if (!canManageTeam(team, uid)) return false;
+  if (!isClubMember(club, uid)) return false;
+  if (team.clubId?.trim() && team.clubId !== club.id) return false;
+  return true;
+}
+
+/**
  * Attach an existing team (that you admin) to this club.
  */
 export async function attachTeamToClub(opts: {
@@ -390,18 +405,18 @@ export async function attachTeamToClub(opts: {
 }): Promise<void> {
   const club = await getClub(opts.clubId);
   if (!club) throw new Error("Club not found.");
-  if (!canManageClub(club, opts.actorUid)) {
-    throw new Error("Only club admins can attach teams.");
-  }
   const team = await getTeam(opts.teamId);
   if (!team) throw new Error("Team not found.");
-  if (!canManageTeam(team, opts.actorUid)) {
-    throw new Error("You must be a team admin to move this team into the club.");
-  }
-  if (team.clubId === opts.clubId) return;
-  if (team.clubId && team.clubId !== opts.clubId) {
+  if (!canAttachTeamToClub(club, team, opts.actorUid)) {
+    if (!isClubMember(club, opts.actorUid)) {
+      throw new Error("Join this club first, then connect your team.");
+    }
+    if (!canManageTeam(team, opts.actorUid)) {
+      throw new Error("You must be a team admin to move this team into the club.");
+    }
     throw new Error("That team already belongs to another club.");
   }
+  if (team.clubId === opts.clubId) return;
   await updateTeam(opts.teamId, { clubId: opts.clubId });
 }
 

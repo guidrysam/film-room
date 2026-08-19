@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import {
   assertFails,
@@ -941,6 +942,119 @@ describeRules("firestore rules (emulator)", () => {
 
       const outsiderDb = testEnv!.authenticatedContext(otherUid).firestore();
       await assertFails(getDoc(doc(outsiderDb, "teams", "team-club-2")));
+    });
+
+    it("lets signed-in users query discoverable clubs", async () => {
+      const adminUid = "club-admin-disc";
+      const outsiderUid = "coach-searching";
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, "clubs", "club-disc"), {
+          name: "CMFC",
+          discoverable: true,
+          ownerId: adminUid,
+          members: { [adminUid]: "club_admin" },
+          memberUids: [adminUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+        await setDoc(doc(db, "clubs", "club-hidden"), {
+          name: "Hidden FC",
+          discoverable: false,
+          ownerId: adminUid,
+          members: { [adminUid]: "club_admin" },
+          memberUids: [adminUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+      });
+
+      const db = testEnv!.authenticatedContext(outsiderUid).firestore();
+      const snap = await assertSucceeds(
+        getDocs(query(collection(db, "clubs"), where("discoverable", "==", true))),
+      );
+      const ids = snap.docs.map((d) => d.id);
+      assert.ok(ids.includes("club-disc"));
+      assert.ok(!ids.includes("club-hidden"));
+    });
+
+    it("lets a club coach attach their unlinked team", async () => {
+      const coachUid = "coach-attach-1";
+      const adminUid = "admin-attach-1";
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, "clubs", "club-attach"), {
+          name: "CMFC",
+          ownerId: adminUid,
+          members: { [adminUid]: "club_admin", [coachUid]: "club_coach" },
+          memberUids: [adminUid, coachUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+        await setDoc(doc(db, "teams", "team-unlinked"), {
+          name: "U12",
+          ownerId: coachUid,
+          members: { [coachUid]: "admin" },
+          memberUids: [coachUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+      });
+
+      const db = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, "teams", "team-unlinked"), {
+          clubId: "club-attach",
+          updatedAt: Timestamp.now(),
+        }),
+      );
+    });
+
+    it("blocks attaching a team to a club the owner has not joined", async () => {
+      const ownerUid = "team-owner-no-club";
+      await testEnv!.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await setDoc(doc(db, "clubs", "club-other"), {
+          name: "Other FC",
+          ownerId: "admin-other",
+          members: { "admin-other": "club_admin" },
+          memberUids: ["admin-other"],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+        await setDoc(doc(db, "teams", "team-solo"), {
+          name: "U10",
+          ownerId: ownerUid,
+          members: { [ownerUid]: "admin" },
+          memberUids: [ownerUid],
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        });
+      });
+
+      const db = testEnv!.authenticatedContext(ownerUid).firestore();
+      await assertFails(
+        updateDoc(doc(db, "teams", "team-solo"), {
+          clubId: "club-other",
+          updatedAt: Timestamp.now(),
+        }),
+      );
+    });
+
+    it("lets a coach create a club join request", async () => {
+      const coachUid = "coach-join-1";
+      const db = testEnv!.authenticatedContext(coachUid).firestore();
+      await assertSucceeds(
+        setDoc(doc(db, "clubJoinRequests", "req-coach-1"), {
+          clubId: "club-2",
+          clubName: "CMFC",
+          uid: coachUid,
+          role: "club_coach",
+          status: "pending",
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        }),
+      );
     });
   });
 });

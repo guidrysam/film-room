@@ -11,6 +11,10 @@ import {
   redeemGameInvite,
   type GameInvite,
 } from "@/lib/game-invites";
+import { getClubInvite } from "@/lib/club-invites";
+import { clubJoinUrl } from "@/lib/club-routes";
+import { getTeamInvite } from "@/lib/team-invites";
+import { getStaffInvite } from "@/lib/staff-invites";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-6 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm";
@@ -64,6 +68,24 @@ export default function JoinGamePage() {
         const inv = await getGameInvite(code);
         if (cancelled) return;
         if (!inv) {
+          const [clubInv, teamInv, staffInv] = await Promise.all([
+            getClubInvite(code),
+            getTeamInvite(code),
+            getStaffInvite(code),
+          ]);
+          if (cancelled) return;
+          if (clubInv) {
+            router.replace(clubJoinUrl(code));
+            return;
+          }
+          if (teamInv) {
+            router.replace(`/join/team/${code}`);
+            return;
+          }
+          if (staffInv) {
+            router.replace(`/join/staff/${code}`);
+            return;
+          }
           setLoadError("This invite link is not valid.");
         } else if (!inv.active) {
           setLoadError("This invite link has been deactivated by the owner.");
@@ -82,7 +104,7 @@ export default function JoinGamePage() {
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, router]);
 
   const handleJoin = useCallback(async () => {
     if (!user || !invite) return;

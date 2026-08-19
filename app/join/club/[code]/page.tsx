@@ -8,6 +8,7 @@ import { signInWithGoogle } from "@/lib/auth-google";
 import {
   getClubInvite,
   isClubInviteExpired,
+  normalizeClubInviteCode,
   redeemClubInvite,
   type ClubInvite,
 } from "@/lib/club-invites";
@@ -43,7 +44,9 @@ const ROLE_COPY: Record<
 export default function JoinClubPage() {
   const params = useParams();
   const router = useRouter();
-  const code = typeof params.code === "string" ? params.code : "";
+  const code = typeof params.code === "string"
+    ? normalizeClubInviteCode(params.code)
+    : "";
   const { user, loading: authLoading } = useAuth();
 
   const [invite, setInvite] = useState<ClubInvite | null>(null);

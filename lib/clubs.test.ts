@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   canManageClub,
+  canAttachTeamToClub,
   clubRoleFor,
   isClubCoach,
   isClubParent,
   normalizeCreateClubInput,
   type Club,
 } from "./clubs";
+import type { Team } from "./teams";
 
 function stubClub(overrides?: Partial<Club>): Club {
   return {
@@ -56,5 +58,23 @@ describe("club role helpers", () => {
     assert.equal(canManageClub(club, "coach1"), false);
     assert.equal(isClubParent(club, "parent1"), true);
     assert.equal(isClubCoach(club, "parent1"), false);
+  });
+
+  it("lets a team owner who is a club coach attach their team", () => {
+    const club = stubClub({
+      members: { "owner-1": "club_admin", coach1: "club_coach" },
+      memberUids: ["owner-1", "coach1"],
+    });
+    const team = {
+      id: "t1",
+      name: "U12",
+      ownerId: "coach1",
+      members: { coach1: "admin" },
+      memberUids: ["coach1"],
+      createdAt: null,
+      updatedAt: null,
+    } as Team;
+    assert.equal(canAttachTeamToClub(club, team, "coach1"), true);
+    assert.equal(canAttachTeamToClub(club, team, "owner-1"), false);
   });
 });

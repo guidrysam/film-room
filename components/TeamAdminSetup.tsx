@@ -9,6 +9,7 @@ import RosterImportResultSummary from "@/components/RosterImportResultSummary";
 import TeamDeleteZone from "@/components/TeamDeleteZone";
 import TeamInvites from "@/components/TeamInvites";
 import TeamRosterImport from "@/components/TeamRosterImport";
+import TeamAddToClub from "@/components/TeamAddToClub";
 import {
   clearTeamCreateImportSummary,
   readTeamCreateImportSummary,
@@ -110,6 +111,16 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
           description="Your roster and parent contacts are ready. Invite parents below to upload video and build highlights."
         />
       ) : null}
+
+      <TeamAddToClub
+        team={teamState}
+        uid={currentUid}
+        onAttached={async () => {
+          const { getTeam } = await import("@/lib/teams");
+          const next = await getTeam(teamState.id);
+          if (next) setTeamState(next);
+        }}
+      />
 
       <TeamDriveVaultConnect
         team={teamState}

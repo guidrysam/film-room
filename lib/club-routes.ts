@@ -12,7 +12,7 @@ export function clubJoinUrl(code: string): string {
   return `/join/club/${code}`;
 }
 
-/** Parent: search discoverable clubs and request to join. */
+/** Search discoverable clubs and request to join as parent or coach. */
 export function clubsFindUrl(): string {
   return "/clubs/find";
 }

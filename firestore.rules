@@ -116,9 +116,10 @@ service cloud.firestore {
     }
     function canReadClubResource() {
       return request.auth != null && (
+        resource.data.discoverable == true ||
         resource.data.ownerId == request.auth.uid ||
-        request.auth.uid in resource.data.memberUids ||
-        resource.data.discoverable == true
+        (resource.data.keys().hasAny(['memberUids']) &&
+         request.auth.uid in resource.data.memberUids)
       );
     }
     function clubJoinInviteData() {
@@ -220,12 +221,13 @@ service cloud.firestore {
         && resource.data.createdBy == request.auth.uid;
     }
 
-    // Parent join requests for discoverable clubs.
+    // Join requests for discoverable clubs (parent or coach).
     match /clubJoinRequests/{requestId} {
       allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'pending'
-        && request.resource.data.role == 'club_parent'
+        && (request.resource.data.role == 'club_parent' ||
+            request.resource.data.role == 'club_coach')
         && request.resource.data.clubId is string
         && request.resource.data.clubName is string;
       allow read: if request.auth != null && (
@@ -308,6 +310,21 @@ service cloud.firestore {
          isClubMember(resource.data.clubId, request.auth.uid))
       );
     }
+    function teamClubIdWasEmpty() {
+      return !resource.data.keys().hasAny(['clubId'])
+        || !(resource.data.clubId is string)
+        || resource.data.clubId.size() == 0;
+    }
+    function canLinkTeamToClub() {
+      return request.auth != null
+        && isTeamAdmin(teamId, request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['clubId', 'updatedAt'])
+        && teamClubIdWasEmpty()
+        && request.resource.data.clubId is string
+        && request.resource.data.clubId.size() > 0
+        && isClubMember(request.resource.data.clubId, request.auth.uid);
+    }
     function parentInviteEmailMatchesAuth() {
       return request.auth != null &&
              request.auth.token.email is string &&
@@ -334,7 +351,13 @@ service cloud.firestore {
       // Team creation: auth only — must NOT call isTeamAdmin/isTeamMember (doc does not exist yet).
       allow create: if isValidNewTeamCreate();
 
-      allow update: if request.auth != null && isTeamAdmin(teamId, request.auth.uid);
+      allow update: if request.auth != null
+        && isTeamAdmin(teamId, request.auth.uid)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['clubId']);
+
+      // Team owner/admin may attach an unlinked team to a club they belong to.
+      allow update: if canLinkTeamToClub();
 
       // Parents/coaches may update team branding (logo) without full admin.
       allow update: if request.auth != null

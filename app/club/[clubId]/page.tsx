@@ -297,8 +297,9 @@ export default function ClubHubPage() {
           <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
             <h2 className="text-sm font-semibold text-white">Parent discovery</h2>
             <p className="mt-1 text-xs text-zinc-400">
-              When discoverable, parents can find this club by name and request
-              to join. You still approve each request. Invite links always work.
+              When discoverable, coaches and parents can find this club by name
+              and request to join. You still approve each request. Invite links
+              always work.
             </p>
             <label className="mt-3 flex items-center gap-2 text-sm text-zinc-200">
               <input
@@ -332,7 +333,7 @@ export default function ClubHubPage() {
         {isAdmin && joinRequests.length > 0 ? (
           <section className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-5">
             <h2 className="text-sm font-semibold text-white">
-              Parent join requests ({joinRequests.length})
+              Join requests ({joinRequests.length})
             </h2>
             <ul className="mt-3 space-y-2">
               {joinRequests.map((req) => (
@@ -343,6 +344,9 @@ export default function ClubHubPage() {
                   <div className="min-w-0">
                     <p className="font-medium text-zinc-100">
                       {req.displayName || req.email || `${req.uid.slice(0, 8)}…`}
+                    </p>
+                    <p className="text-[11px] text-zinc-500">
+                      {req.role === "club_coach" ? "Coach" : "Parent"}
                     </p>
                     {req.email && req.displayName ? (
                       <p className="text-[11px] text-zinc-500">{req.email}</p>
@@ -469,7 +473,7 @@ export default function ClubHubPage() {
           )}
         </section>
 
-        {isAdmin && unattached.length > 0 ? (
+        {unattached.length > 0 ? (
           <section className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-5">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-white">
@@ -485,8 +489,8 @@ export default function ClubHubPage() {
               </button>
             </div>
             <p className="mb-3 text-xs text-zinc-400">
-              These teams are yours but not under a club yet (from before club
-              setup). Connect them to {club.name}.
+              These teams are yours but not under a club yet. Connect them to{" "}
+              {club.name}.
             </p>
             <ul className="space-y-2">
               {unattached.map((team) => (

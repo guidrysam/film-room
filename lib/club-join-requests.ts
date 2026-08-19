@@ -21,11 +21,13 @@ import {
 } from "@/lib/clubs";
 
 /**
- * Parent join requests for discoverable clubs.
+ * Join requests for discoverable clubs (parent or coach).
  * Layout: clubJoinRequests/{requestId}
  */
 
 export type ClubJoinRequestStatus = "pending" | "approved" | "declined";
+
+export type ClubJoinRequestRole = "club_parent" | "club_coach";
 
 export type ClubJoinRequest = {
   id: string;
@@ -34,7 +36,7 @@ export type ClubJoinRequest = {
   uid: string;
   displayName?: string;
   email?: string;
-  role: "club_parent";
+  role: ClubJoinRequestRole;
   status: ClubJoinRequestStatus;
   message?: string;
   createdAt: Timestamp | null;
@@ -68,7 +70,7 @@ function parseRequest(
     clubId: typeof raw.clubId === "string" ? raw.clubId : "",
     clubName: typeof raw.clubName === "string" ? raw.clubName : "Club",
     uid: typeof raw.uid === "string" ? raw.uid : "",
-    role: "club_parent",
+    role: raw.role === "club_coach" ? "club_coach" : "club_parent",
     status,
     ...(trimOrUndef(raw.displayName)
       ? { displayName: String(raw.displayName) }
@@ -84,9 +86,10 @@ function parseRequest(
   };
 }
 
-/** Parent asks to join a discoverable club as club_parent. */
+/** Ask to join a discoverable club as a parent or coach. */
 export async function requestClubJoin(opts: {
   clubId: string;
+  role?: ClubJoinRequestRole;
   message?: string;
 }): Promise<string> {
   const user = auth.currentUser;
@@ -113,7 +116,7 @@ export async function requestClubJoin(opts: {
     clubId: opts.clubId,
     clubName: club.name,
     uid: user.uid,
-    role: "club_parent" as const,
+    role: opts.role === "club_coach" ? "club_coach" : "club_parent",
     status: "pending" as const,
     createdAt: now,
     updatedAt: now,
@@ -185,7 +188,7 @@ export async function approveClubJoinRequest(
   }
 
   if (!isClubMember(club, req.uid)) {
-    await updateClubMember(req.clubId, req.uid, "club_parent");
+    await updateClubMember(req.clubId, req.uid, req.role);
   }
 
   try {

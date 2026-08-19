@@ -14,8 +14,18 @@ import {
   listMyPendingClubJoinRequests,
   requestClubJoin,
   type ClubJoinRequest,
+  type ClubJoinRequestRole,
 } from "@/lib/club-join-requests";
-import { clubHubUrl, clubsFindUrl } from "@/lib/club-routes";
+import {
+  extractClubInviteCode,
+  getClubInvite,
+  isClubInviteExpired,
+  redeemClubInvite,
+  type ClubInvite,
+} from "@/lib/club-invites";
+import { clubHubUrl } from "@/lib/club-routes";
+import { pathAfterAuthOrWelcome } from "@/lib/onboarding-redirect";
+import { useRouter } from "next/navigation";
 
 const inputClass =
   "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-zinc-50 placeholder:text-zinc-500 focus:border-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-500/30";
@@ -28,12 +38,15 @@ const primaryBtn =
 
 export default function FindClubPage() {
   const { user, loading } = useAuth();
+  const router = useRouter();
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Club[]>([]);
+  const [inviteHit, setInviteHit] = useState<ClubInvite | null>(null);
   const [mine, setMine] = useState<Club[]>([]);
   const [pending, setPending] = useState<ClubJoinRequest[]>([]);
   const [searching, setSearching] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [joiningInvite, setJoiningInvite] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -56,11 +69,23 @@ export default function FindClubPage() {
     setSearching(true);
     setError(null);
     setNote(null);
+    setInviteHit(null);
     try {
+      const code = extractClubInviteCode(q);
+      if (code) {
+        const inv = await getClubInvite(code);
+        if (inv && inv.active && !isClubInviteExpired(inv)) {
+          setInviteHit(inv);
+          setHits([]);
+          return;
+        }
+      }
       const rows = await searchDiscoverableClubs(q);
       setHits(rows);
       if (rows.length === 0 && q.trim().length >= 2) {
-        setNote("No discoverable clubs matched. Ask your coach for an invite link.");
+        setNote(
+          "No discoverable clubs matched. Ask an admin for an invite link, or paste the invite code here.",
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed.");
@@ -70,19 +95,45 @@ export default function FindClubPage() {
     }
   }, [user, q]);
 
-  const onRequest = async (club: Club) => {
+  const onRequest = async (club: Club, role: ClubJoinRequestRole) => {
     if (!user) return;
-    setBusyId(club.id);
+    setBusyId(`${club.id}:${role}`);
     setError(null);
     setNote(null);
     try {
-      await requestClubJoin({ clubId: club.id });
-      setNote(`Request sent to ${club.name}. A coach will approve it.`);
+      await requestClubJoin({ clubId: club.id, role });
+      setNote(
+        `Request sent to ${club.name} as ${role === "club_coach" ? "coach" : "parent"}. A club admin will approve it.`,
+      );
       await refreshMine();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not send request.");
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const onRedeemInvite = async () => {
+    if (!user || !inviteHit) return;
+    setJoiningInvite(true);
+    setError(null);
+    try {
+      const { clubId, role } = await redeemClubInvite(inviteHit.code, user.uid);
+      const preselected =
+        role === "club_parent"
+          ? "parent"
+          : role === "club_admin"
+            ? "club_operator"
+            : ("coach" as const);
+      const next = await pathAfterAuthOrWelcome(
+        user.uid,
+        clubHubUrl(clubId),
+        preselected,
+      );
+      router.replace(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not join club.");
+      setJoiningInvite(false);
     }
   };
 
@@ -99,7 +150,8 @@ export default function FindClubPage() {
       <div className="flex min-h-screen flex-col items-center justify-center px-4 text-zinc-50">
         <h1 className="mb-3 text-xl font-semibold">Find a club</h1>
         <p className="mb-6 max-w-sm text-center text-sm text-zinc-400">
-          Sign in to search clubs and request to join as a parent.
+          Sign in to search clubs, paste an invite, and request to join as a
+          coach or parent.
         </p>
         <button
           type="button"
@@ -119,13 +171,13 @@ export default function FindClubPage() {
       <div className="mx-auto max-w-lg space-y-6">
         <div className="border-b border-white/[0.06] pb-5">
           <p className="mb-1 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">
-            Parent
+            Clubs
           </p>
           <h1 className="text-xl font-semibold text-white">Find a club</h1>
           <p className="mt-2 text-sm text-zinc-400">
-            Search clubs that coaches made discoverable, or use an invite link
-            they send you. Teams stay coach-managed — you join the club, then
-            share film to their games from My Film.
+            Search by club name, or paste a coach/admin invite link or code.
+            Name-search requests still need a club admin to approve. Invite
+            links join immediately.
           </p>
           <Link
             href="/app"
@@ -148,13 +200,13 @@ export default function FindClubPage() {
 
         <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
           <label className="block text-xs text-zinc-500">
-            Club name
+            Club name or invite
             <div className="mt-1 flex gap-2">
               <input
                 className={inputClass}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="e.g. CMFC"
+                placeholder="Club name or invite link"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void runSearch();
                 }}
@@ -169,6 +221,35 @@ export default function FindClubPage() {
               </button>
             </div>
           </label>
+
+          {inviteHit ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 text-sm">
+              <div className="min-w-0">
+                <p className="font-medium text-zinc-100">{inviteHit.clubName}</p>
+                <p className="text-[11px] text-zinc-500">
+                  {inviteHit.role === "club_coach"
+                    ? "Coach invite"
+                    : inviteHit.role === "club_admin"
+                      ? "Admin invite"
+                      : "Parent invite"}
+                </p>
+              </div>
+              {mine.some((c) => c.id === inviteHit.clubId) ? (
+                <Link href={clubHubUrl(inviteHit.clubId)} className={ghostBtn}>
+                  Open club
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className={primaryBtn}
+                  disabled={joiningInvite}
+                  onClick={() => void onRedeemInvite()}
+                >
+                  {joiningInvite ? "Joining…" : "Join club"}
+                </button>
+              )}
+            </div>
+          ) : null}
 
           {hits.length > 0 ? (
             <ul className="mt-4 space-y-2">
@@ -194,14 +275,28 @@ export default function FindClubPage() {
                     ) : waiting ? (
                       <span className="text-xs text-amber-200/90">Pending</span>
                     ) : (
-                      <button
-                        type="button"
-                        className={primaryBtn}
-                        disabled={busyId === club.id}
-                        onClick={() => void onRequest(club)}
-                      >
-                        {busyId === club.id ? "Sending…" : "Request to join"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className={primaryBtn}
+                          disabled={busyId !== null}
+                          onClick={() => void onRequest(club, "club_coach")}
+                        >
+                          {busyId === `${club.id}:club_coach`
+                            ? "Sending…"
+                            : "Join as coach"}
+                        </button>
+                        <button
+                          type="button"
+                          className={ghostBtn}
+                          disabled={busyId !== null}
+                          onClick={() => void onRequest(club, "club_parent")}
+                        >
+                          {busyId === `${club.id}:club_parent`
+                            ? "Sending…"
+                            : "Join as parent"}
+                        </button>
+                      </div>
                     )}
                   </li>
                 );
@@ -217,7 +312,10 @@ export default function FindClubPage() {
               {pending.map((r) => (
                 <li key={r.id}>
                   {r.clubName}{" "}
-                  <span className="text-xs text-zinc-500">· waiting on coach</span>
+                  <span className="text-xs text-zinc-500">
+                    · {r.role === "club_coach" ? "coach" : "parent"} · waiting
+                    on admin
+                  </span>
                 </li>
               ))}
             </ul>
@@ -243,8 +341,8 @@ export default function FindClubPage() {
         ) : null}
 
         <p className="text-center text-[11px] text-zinc-600">
-          Have an invite link? Open it from Messages/email — path looks like{" "}
-          <span className="text-zinc-500">{clubsFindUrl()} is search only</span>.
+          Have an invite link? Paste it above, or open the full URL from
+          Messages. Name search only lists clubs marked discoverable.
         </p>
       </div>
     </div>
