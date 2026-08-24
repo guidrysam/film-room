@@ -43,7 +43,13 @@ export function buildViewerRoomUrl(
   origin: string,
   roomId: string,
   videoId: string,
+  opts?: { teamRoom?: boolean; gameId?: string; view?: "sync" | "clip" },
 ): string {
-  const params = new URLSearchParams({ video: videoId });
+  const params = new URLSearchParams();
+  if (videoId.trim()) params.set("video", videoId.trim());
+  params.set("view", opts?.view ?? "sync");
+  params.set("viewer", "1");
+  if (opts?.teamRoom) params.set("teamRoom", "1");
+  if (opts?.gameId?.trim()) params.set("gameId", opts.gameId.trim());
   return `${origin}/room/${roomId}?${params.toString()}`;
 }

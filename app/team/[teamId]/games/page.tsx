@@ -47,7 +47,7 @@ export default function TeamGamesPage() {
 
   return (
     <TeamPageShell teamId={teamId} currentUid={user.uid} active="games">
-      {(team) => (
+      {(team, club) => (
         <>
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-zinc-400">
@@ -60,7 +60,7 @@ export default function TeamGamesPage() {
               Import schedule CSV
             </Link>
           </div>
-          <TeamGames team={team} currentUid={user.uid} />
+          <TeamGames team={team} currentUid={user.uid} club={club} />
         </>
       )}
     </TeamPageShell>

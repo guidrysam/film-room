@@ -20,6 +20,7 @@ import {
   canEditTeamBranding,
   canManageTeam,
   type Team,
+  type TeamClubContext,
 } from "@/lib/teams";
 
 const panelClass =
@@ -28,6 +29,7 @@ const panelClass =
 export type TeamAdminSetupProps = {
   team: Team;
   currentUid: string;
+  club?: TeamClubContext | null;
 };
 
 /**
@@ -35,7 +37,11 @@ export type TeamAdminSetupProps = {
  * roster import and invites stay with the person who maintains Film Room.
  * Parents can update shared team branding (logo).
  */
-export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps) {
+export default function TeamAdminSetup({
+  team,
+  currentUid,
+  club,
+}: TeamAdminSetupProps) {
   const [createSummary] = useState<TeamCreateImportSummary | null>(() => {
     const summary = readTeamCreateImportSummary();
     if (summary) clearTeamCreateImportSummary();
@@ -47,9 +53,9 @@ export default function TeamAdminSetup({ team, currentUid }: TeamAdminSetupProps
     setTeamState(team);
   }, [team]);
 
-  const isOperator = canManageTeam(teamState, currentUid);
-  const canBrand = canEditTeamBranding(teamState, currentUid);
-  const isCoach = canCoachTeam(teamState, currentUid);
+  const isOperator = canManageTeam(teamState, currentUid, club);
+  const canBrand = canEditTeamBranding(teamState, currentUid, club);
+  const isCoach = canCoachTeam(teamState, currentUid, club);
 
   if (!isCoach && !canBrand) {
     return (

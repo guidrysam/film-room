@@ -7,6 +7,8 @@ import {
   buildTeamFilmRoomNavigateUrl,
   timelineEventToFilmRoomChapter,
   timelineEventsToFilmRoomChapters,
+  isTeamFilmRoomId,
+  gameIdFromTeamFilmRoomId,
 } from "./team-film-room";
 
 function source(
@@ -39,6 +41,14 @@ function event(
 describe("teamFilmRoomId", () => {
   it("prefixes game id with g-", () => {
     assert.equal(teamFilmRoomId("abc123"), "g-abc123");
+  });
+});
+
+describe("isTeamFilmRoomId", () => {
+  it("detects g- rooms", () => {
+    assert.equal(isTeamFilmRoomId("g-abc123"), true);
+    assert.equal(isTeamFilmRoomId("abc123"), false);
+    assert.equal(gameIdFromTeamFilmRoomId("g-abc123"), "abc123");
   });
 });
 

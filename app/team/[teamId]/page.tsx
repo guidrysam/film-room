@@ -9,15 +9,21 @@ import TeamGameOverview from "@/components/TeamGameOverview";
 import TeamScheduleImport from "@/components/TeamScheduleImport";
 import { signInWithGoogle } from "@/lib/auth-google";
 import { personProfileUrl, teamPlayerProfileUrl } from "@/lib/team-routes";
-import { canCoachTeam, listTeamPlayers, type Player, type Team } from "@/lib/teams";
+import { canCoachTeam, listTeamPlayers, type Player, type Team, type TeamClubContext } from "@/lib/teams";
 
 const panelClass =
   "rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5 shadow-lg shadow-black/35 ring-1 ring-white/[0.04]";
 
-function TeamRosterContent({ team, teamId, currentUid }: {
+function TeamRosterContent({
+  team,
+  teamId,
+  currentUid,
+  club,
+}: {
   team: Team;
   teamId: string;
   currentUid: string;
+  club?: TeamClubContext | null;
 }) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +46,7 @@ function TeamRosterContent({ team, teamId, currentUid }: {
   return (
   <>
     <TeamGameOverview team={team} currentUid={currentUid} />
-    {canCoachTeam(team, currentUid) ? (
+    {canCoachTeam(team, currentUid, club) ? (
       <TeamScheduleImport team={team} currentUid={currentUid} />
     ) : null}
     <div className="mb-3 flex items-center justify-between gap-2">
@@ -57,7 +63,7 @@ function TeamRosterContent({ team, teamId, currentUid }: {
       ) : players.length === 0 ? (
         <p className="text-sm text-zinc-400">
           No players yet.{" "}
-          {canCoachTeam(team, currentUid) ? (
+          {canCoachTeam(team, currentUid, club) ? (
             <Link
               href={`/team/${teamId}/setup`}
               className="text-blue-300 hover:underline"
@@ -149,8 +155,13 @@ export default function TeamRosterPage() {
 
   return (
     <TeamPageShell teamId={teamId} currentUid={user.uid} active="roster">
-      {(team) => (
-        <TeamRosterContent team={team} teamId={teamId} currentUid={user.uid} />
+      {(team, club) => (
+        <TeamRosterContent
+          team={team}
+          teamId={teamId}
+          currentUid={user.uid}
+          club={club}
+        />
       )}
     </TeamPageShell>
   );

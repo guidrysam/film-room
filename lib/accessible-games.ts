@@ -1,5 +1,5 @@
 import { listGamesForTeam, listMyGames, type Game } from "@/lib/games";
-import { canViewTeam, type Team } from "@/lib/teams";
+import { type Team } from "@/lib/teams";
 
 /** Dedupe games by id and sort newest first. */
 export function mergeAccessibleGames(lists: Game[][]): Game[] {
@@ -15,7 +15,7 @@ export function mergeAccessibleGames(lists: Game[][]): Game[] {
 
 /**
  * Games the user can open on the dashboard: direct membership plus any game
- * linked to a team they belong to (coach/admin/parent/player/viewer).
+ * linked to a team already in their visible team list (includes club teams).
  */
 export async function listAccessibleGames(
   uid: string,
@@ -23,9 +23,8 @@ export async function listAccessibleGames(
 ): Promise<Game[]> {
   if (!uid.trim()) return [];
 
-  const teamIds = teams
-    .filter((team) => canViewTeam(team, uid))
-    .map((team) => team.id);
+  // `teams` is already visibility-filtered (membership + club cascade).
+  const teamIds = teams.map((team) => team.id);
 
   const [directGames, ...teamGameLists] = await Promise.all([
     listMyGames(uid),

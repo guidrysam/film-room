@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import TeamAddStreamGames from "@/components/TeamAddStreamGames";
-import { canCoachTeam, listTeamGames, type Team } from "@/lib/teams";
+import { canCoachTeam, listTeamGames, type Team, type TeamClubContext } from "@/lib/teams";
 import type { Game } from "@/lib/games";
 import { gameCapUrl } from "@/lib/team-routes";
 
@@ -19,9 +19,10 @@ const primaryBtn =
 export type TeamGamesProps = {
   team: Team;
   currentUid: string;
+  club?: TeamClubContext | null;
 };
 
-export default function TeamGames({ team, currentUid }: TeamGamesProps) {
+export default function TeamGames({ team, currentUid, club }: TeamGamesProps) {
   const [games, setGames] = useState<Game[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,7 +41,7 @@ export default function TeamGames({ team, currentUid }: TeamGamesProps) {
     void refresh();
   }, [refresh]);
 
-  const canCreate = canCoachTeam(team, currentUid);
+  const canCreate = canCoachTeam(team, currentUid, club);
 
   return (
     <section className={panelClass}>

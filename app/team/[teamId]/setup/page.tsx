@@ -48,14 +48,14 @@ export default function TeamSetupPage() {
 
   return (
     <TeamPageShell teamId={teamId} currentUid={user.uid} active="setup">
-      {(team) => (
+      {(team, club) => (
         <>
           <p className="mb-5 text-sm text-zinc-400">
-            {canCoachTeam(team, user.uid)
+            {canCoachTeam(team, user.uid, club)
               ? "Import your TeamLinkt roster first, then invite parents to upload video and build highlights."
               : "Coaches and admins manage roster import and invites here."}
           </p>
-          <TeamAdminSetup team={team} currentUid={user.uid} />
+          <TeamAdminSetup team={team} currentUid={user.uid} club={club} />
         </>
       )}
     </TeamPageShell>

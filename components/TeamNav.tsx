@@ -9,7 +9,11 @@ import {
   teamStatsUrl,
   teamTacticsUrl,
 } from "@/lib/team-routes";
-import { canManageTeam, type Team } from "@/lib/teams";
+import {
+  canManageTeam,
+  type Team,
+  type TeamClubContext,
+} from "@/lib/teams";
 import { isSoccerCurriculumSport, sportLabel } from "@/lib/sports";
 
 export type TeamNavTab =
@@ -36,6 +40,7 @@ const iconBtn =
 export type TeamNavProps = {
   team: Team;
   currentUid: string;
+  club?: TeamClubContext | null;
   /** Omit on sub-pages (e.g. player profile) when no tab is active. */
   active?: TeamNavTab;
 };
@@ -44,8 +49,13 @@ export type TeamNavProps = {
  * Team hub navigation organized around the team's lifecycle:
  * Roster, Games, Tactics, Season, plus a Settings gear for admins.
  */
-export default function TeamNav({ team, currentUid, active }: TeamNavProps) {
-  const showSettings = canManageTeam(team, currentUid);
+export default function TeamNav({
+  team,
+  currentUid,
+  club,
+  active,
+}: TeamNavProps) {
+  const showSettings = canManageTeam(team, currentUid, club);
   const showSoccerCurriculum = isSoccerCurriculumSport(team.sport);
   const showAcademy =
     showSoccerCurriculum &&

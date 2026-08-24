@@ -185,8 +185,16 @@ export async function redeemTeamInvite(
     code,
   );
 
-  if (!joined) {
-    /* Already a member — still OK. */
+  const { getTeam } = await import("@/lib/teams");
+  const team = await getTeam(invite.teamId);
+  const isMember =
+    team != null && (team.ownerId === uid || team.members[uid] != null);
+  if (!isMember) {
+    throw new Error(
+      joined
+        ? "Joined, but this team could not be loaded. Refresh and try again."
+        : "Could not join this team. Ask a team admin for a fresh invite link.",
+    );
   }
 
   if (invite.role === "parent" && joined) {

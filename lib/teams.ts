@@ -384,6 +384,42 @@ export async function getTeam(teamId: string): Promise<Team | null> {
   return parseTeam(snap.id, snap.data() as Record<string, unknown>);
 }
 
+/** Load club membership used to cascade club_admin / club_parent onto a team. */
+export async function fetchTeamClubContext(
+  team: Pick<Team, "clubId"> | null | undefined,
+): Promise<TeamClubContext | null> {
+  const clubId = team?.clubId?.trim();
+  if (!clubId) return null;
+  try {
+    const snap = await getDoc(doc(firestore, "clubs", clubId));
+    if (!snap.exists()) return null;
+    const raw = snap.data() as Record<string, unknown>;
+    const ownerId = typeof raw.ownerId === "string" ? raw.ownerId : "";
+    const members: Record<string, string> = {};
+    if (raw.members && typeof raw.members === "object") {
+      for (const [uid, role] of Object.entries(
+        raw.members as Record<string, unknown>,
+      )) {
+        if (typeof role === "string" && role.trim()) members[uid] = role.trim();
+      }
+    }
+    return { id: snap.id, ownerId, members };
+  } catch {
+    return null;
+  }
+}
+
+/** Client access check that includes club-admin / club-parent cascade. */
+export async function userCanAccessTeam(
+  team: Team,
+  uid: string,
+): Promise<boolean> {
+  if (canViewTeam(team, uid)) return true;
+  if (!team.clubId?.trim()) return false;
+  const club = await fetchTeamClubContext(team);
+  return canViewTeam(team, uid, club);
+}
+
 /** Teams where the user is a member, newest first. */
 export async function listMyTeams(uid: string): Promise<Team[]> {
   const q = query(teamsCol(), where("memberUids", "array-contains", uid));

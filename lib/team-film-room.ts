@@ -23,6 +23,15 @@ export function teamFilmRoomId(gameId: string): string {
   return `g-${gameId.trim()}`;
 }
 
+export function isTeamFilmRoomId(roomId: string): boolean {
+  return roomId.startsWith("g-") && roomId.length > 2;
+}
+
+export function gameIdFromTeamFilmRoomId(roomId: string): string | null {
+  if (!isTeamFilmRoomId(roomId)) return null;
+  return roomId.slice(2);
+}
+
 /** Entry route that loads sources/events and seeds RTDB before redirecting. */
 export function teamFilmRoomRoute(
   gameId: string,

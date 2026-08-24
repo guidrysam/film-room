@@ -12,7 +12,7 @@ import {
   getTacticsBoard,
   type TacticsBoard,
 } from "@/lib/tactics-boards";
-import { canCoachTeam, canViewTeam, getTeam, type Team } from "@/lib/teams";
+import { canCoachTeam, canViewTeam, fetchTeamClubContext, getTeam, type Team } from "@/lib/teams";
 import { teamTacticsUrl } from "@/lib/team-routes";
 
 const ghostBtn =
@@ -62,13 +62,14 @@ export default function TeamTacticsBoardPage() {
     setError(null);
     try {
       const t = await getTeam(teamId);
-      if (!t || !canViewTeam(t, user.uid)) {
+      const club = t ? await fetchTeamClubContext(t) : null;
+      if (!t || !canViewTeam(t, user.uid, club)) {
         setError("You do not have access to this team.");
         setTeam(null);
         setBoard(null);
         return;
       }
-      if (!canCoachTeam(t, user.uid)) {
+      if (!canCoachTeam(t, user.uid, club)) {
         setError("Only coaches can open tactics boards from the team library.");
         setTeam(t);
         setBoard(null);

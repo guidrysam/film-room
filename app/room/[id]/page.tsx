@@ -33,6 +33,10 @@ import {
   markRoomHost,
   subscribeToRoomHostStore,
 } from "@/lib/room-host";
+import {
+  gameIdFromTeamFilmRoomId,
+  isTeamFilmRoomId,
+} from "@/lib/team-film-room";
 import { useAuth } from "@/components/AuthProvider";
 import {
   FILM_ROOM_TELESTRATOR_CLEAR_EVENT,
@@ -1889,9 +1893,13 @@ function RoomContent() {
   const videoFromUrl = searchParams.get("video");
   const providerFromUrl = searchParams.get("provider");
   /** Phase 0 bridge: when present, Coach Marks also write a durable Game event. */
-  const gameIdFromUrl = searchParams.get("gameId");
+  const gameIdFromUrl =
+    searchParams.get("gameId")?.trim() ||
+    gameIdFromTeamFilmRoomId(roomId) ||
+    null;
   /** Watch together: marks come from Review; room is view-only for marking. */
-  const teamRoomMode = searchParams.get("teamRoom") === "1";
+  const teamRoomMode =
+    searchParams.get("teamRoom") === "1" || isTeamFilmRoomId(roomId);
   const debugUiEnabled = isDebugUiEnabled(searchParams.get("debug"));
   /** Normalized 11-char id from `?video=` (URLs like /live/…, watch?v=…, youtu.be/…, or raw id). */
   const videoIdFromUrl = useMemo(() => {
@@ -7252,7 +7260,11 @@ function RoomContent() {
   const handleCopyViewerLink = () => {
     const raw = roomState?.videoId ?? videoIdFromUrl;
     if (!roomId || !raw || typeof window === "undefined") return;
-    const url = buildViewerRoomUrl(window.location.origin, roomId, raw);
+    const url = buildViewerRoomUrl(window.location.origin, roomId, raw, {
+      view: "sync",
+      teamRoom: teamRoomMode,
+      ...(gameIdFromUrl ? { gameId: gameIdFromUrl } : {}),
+    });
     void navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
@@ -7261,12 +7273,17 @@ function RoomContent() {
 
   const handleCopySyncViewerLink = useCallback(() => {
     if (!roomId || typeof window === "undefined") return;
-    const url = `${window.location.origin}/room/${roomId}?view=sync`;
+    const raw = roomStateRef.current?.videoId ?? videoIdFromUrl ?? "";
+    const url = buildViewerRoomUrl(window.location.origin, roomId, raw, {
+      view: "sync",
+      teamRoom: teamRoomMode,
+      ...(gameIdFromUrl ? { gameId: gameIdFromUrl } : {}),
+    });
     void navigator.clipboard.writeText(url).then(() => {
       setSyncViewerLinkCopied(true);
       window.setTimeout(() => setSyncViewerLinkCopied(false), 2000);
     });
-  }, [roomId]);
+  }, [roomId, teamRoomMode, gameIdFromUrl, videoIdFromUrl]);
 
   const handleCopySharedToMySessions = useCallback(async () => {
     if (!roomId || !user || isCopyingShared) return;
@@ -7727,7 +7744,7 @@ function RoomContent() {
         >
           ← Game
         </Link>
-        {teamRoomMode ? (
+        {teamRoomMode && isHost ? (
           <Link
             href={`/game/${gameIdFromUrl.trim()}/review`}
             className="fixed left-4 top-[5.5rem] z-50 rounded-lg border border-violet-500/30 bg-violet-950/55 px-2.5 py-1 text-[11px] font-medium text-violet-100 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-violet-400/45 hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40"
@@ -7964,9 +7981,7 @@ function RoomContent() {
       {gameHubNavLink}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
-          {teamRoomMode ? (
-            <p className="text-xs text-zinc-500">Watch together · Sync View</p>
-          ) : (
+          {isHost && !teamRoomMode ? (
             <button
               type="button"
               onClick={() => navigateRoomView("clip")}
@@ -7974,17 +7989,16 @@ function RoomContent() {
             >
               ← Clip View
             </button>
+          ) : (
+            <p className="text-xs text-zinc-500">Watch together</p>
           )}
           <div className="flex min-w-0 items-center gap-2">
+            {isHost && !teamRoomMode ? (
             <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
               <button
                 type="button"
                 onClick={() => navigateRoomView("clip")}
-                disabled={teamRoomMode}
-                title={
-                  teamRoomMode ? "Watch together uses Sync View" : undefined
-                }
-                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                   roomViewMode === "clip"
                     ? "bg-blue-600/40 text-white"
                     : "text-zinc-300 hover:text-white"
@@ -8004,8 +8018,9 @@ function RoomContent() {
                 Sync View
               </button>
             </div>
+            ) : null}
             <span className="text-sm font-semibold text-zinc-100">
-              {teamRoomMode ? "Watch together" : "Film Room"}
+              {teamRoomMode || !isHost ? "Watch together" : "Film Room"}
             </span>
             <span className="rounded-md bg-blue-600/35 px-2 py-0.5 text-[11px] font-semibold text-blue-100">
               {isHost ? "Host" : "Viewer"}
@@ -8047,14 +8062,16 @@ function RoomContent() {
                 Save Session
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={handleCopySyncViewerLink}
-              disabled={!roomId}
-              className={secondaryHostBtn}
-            >
-              {syncViewerLinkCopied ? "Link copied" : "Copy Viewer Link"}
-            </button>
+            {isHost ? (
+              <button
+                type="button"
+                onClick={handleCopySyncViewerLink}
+                disabled={!roomId}
+                className={secondaryHostBtn}
+              >
+                {syncViewerLinkCopied ? "Link copied" : "Copy Viewer Link"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={handleHomeFromSync}
@@ -8069,7 +8086,7 @@ function RoomContent() {
           <p className="mb-3 text-xs text-amber-200">{hostNotice}</p>
         ) : null}
 
-        {!isHost && (!s.ownerId || !user || s.ownerId !== user.uid) ? (
+        {!isHost && !teamRoomMode && (!s.ownerId || !user || s.ownerId !== user.uid) ? (
           <div className="mb-4 rounded-xl border border-white/[0.07] bg-zinc-950/40 px-4 py-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
@@ -8110,6 +8127,8 @@ function RoomContent() {
         ) : null}
 
         <div className="mb-3 grid w-full grid-cols-1 gap-3 rounded-xl border border-white/[0.06] bg-zinc-950/35 p-3 shadow-lg shadow-black/35 ring-1 ring-white/[0.04] backdrop-blur-sm md:grid-cols-5">
+          {isHost ? (
+            <>
           <div className="md:col-span-2">
             <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
               View Mode
@@ -8169,6 +8188,8 @@ function RoomContent() {
               Reset Sync
             </button>
           </div>
+            </>
+          ) : null}
 
           {/* layoutMode removed: Single/Multi view only */}
 
@@ -9344,15 +9365,12 @@ function RoomContent() {
         {!cleanMode ? (
           <div className="mb-4 flex w-full flex-wrap items-center justify-between gap-3 border-b border-white/[0.06] pb-4 text-sm text-zinc-400">
             <div className="flex min-w-0 flex-wrap items-center gap-3">
+              {isHost && !teamRoomMode ? (
               <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] p-1">
                 <button
                   type="button"
                   onClick={() => navigateRoomView("clip")}
-                  disabled={teamRoomMode}
-                  title={
-                    teamRoomMode ? "Watch together uses Sync View" : undefined
-                  }
-                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  className={`rounded-md px-3 py-1 text-[12px] font-semibold transition ${
                     roomViewMode === "clip"
                       ? "bg-blue-600/40 text-white"
                       : "text-zinc-300 hover:text-white"
@@ -9372,6 +9390,7 @@ function RoomContent() {
                   Sync View
                 </button>
               </div>
+              ) : null}
               <p className="min-w-0">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                   Room
@@ -9414,7 +9433,7 @@ function RoomContent() {
           </div>
         ) : null}
 
-        {!cleanMode && !isHost && roomState && (!roomState.ownerId || !user || roomState.ownerId !== user.uid) ? (
+        {!cleanMode && !isHost && !teamRoomMode && roomState && (!roomState.ownerId || !user || roomState.ownerId !== user.uid) ? (
           <div className={frPanel}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
