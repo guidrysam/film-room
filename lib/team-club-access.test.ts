@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  canCoachTeam,
   canManageTeam,
   canViewTeam,
   type Team,
@@ -32,6 +33,17 @@ describe("club cascade on teams", () => {
     assert.equal(canViewTeam(team, "club-owner", club), true);
     assert.equal(canManageTeam(team, "club-owner", club), true);
     assert.equal(canViewTeam(team, "club-admin-2", club), true);
+  });
+
+  it("lets club admins coach linked teams (create games)", () => {
+    const team = stubTeam({ clubId: "club-1" });
+    const club: TeamClubContext = {
+      id: "club-1",
+      ownerId: "club-owner",
+      members: { "club-owner": "club_admin" },
+    };
+    assert.equal(canCoachTeam(team, "club-owner"), false);
+    assert.equal(canCoachTeam(team, "club-owner", club), true);
   });
 
   it("does not grant access when clubId does not match", () => {

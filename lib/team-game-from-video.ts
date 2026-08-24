@@ -13,6 +13,7 @@ import {
 import {
   canCoachTeam,
   createTeamGame,
+  fetchTeamClubContext,
   getTeam,
   teamRoleFor,
   type Team,
@@ -118,7 +119,8 @@ export async function createTeamGameFromYouTubeStream(
 
   const team = await getTeam(teamId);
   if (!team) throw new Error("Team not found.");
-  if (!canCoachTeam(team, uid)) {
+  const club = await fetchTeamClubContext(team);
+  if (!canCoachTeam(team, uid, club)) {
     throw new Error("Only team admins and coaches can create games.");
   }
 

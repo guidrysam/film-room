@@ -21,10 +21,12 @@ import {
 import {
   canCoachTeam,
   createTeamGame,
+  fetchTeamClubContext,
   getTeam,
   listTeamGames,
   teamRoleFor,
   type Team,
+  type TeamClubContext,
 } from "@/lib/teams";
 import { gameCapUrl, teamSetupUrl } from "@/lib/team-routes";
 import { loadUserPrivacySettings } from "@/lib/user-privacy-settings";
@@ -65,6 +67,9 @@ function GameCapPageInner() {
 
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [selectedClub, setSelectedClub] = useState<TeamClubContext | null>(
+    null,
+  );
   const [games, setGames] = useState<Game[]>([]);
   const [gamesLoading, setGamesLoading] = useState(false);
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
@@ -107,12 +112,16 @@ function GameCapPageInner() {
   const refreshTeam = useCallback(async () => {
     if (!selectedTeamId) {
       setSelectedTeam(null);
+      setSelectedClub(null);
       return;
     }
     try {
-      setSelectedTeam(await getTeam(selectedTeamId));
+      const team = await getTeam(selectedTeamId);
+      setSelectedTeam(team);
+      setSelectedClub(team ? await fetchTeamClubContext(team) : null);
     } catch {
       setSelectedTeam(null);
+      setSelectedClub(null);
     }
   }, [selectedTeamId]);
 
@@ -172,7 +181,7 @@ function GameCapPageInner() {
 
   const handleCreate = useCallback(async () => {
     if (!user || !selectedTeamId || !selectedTeam) return;
-    if (!canCoachTeam(selectedTeam, user.uid)) {
+    if (!canCoachTeam(selectedTeam, user.uid, selectedClub)) {
       setError("Only team admins and coaches can create games.");
       return;
     }
@@ -210,6 +219,7 @@ function GameCapPageInner() {
     user,
     selectedTeamId,
     selectedTeam,
+    selectedClub,
     title,
     sport,
     date,
@@ -230,7 +240,9 @@ function GameCapPageInner() {
   );
   const showTeamGamePickers = !attachFocus || showPicker;
   const canCreateGames =
-    selectedTeam && user ? canCoachTeam(selectedTeam, user.uid) : false;
+    selectedTeam && user
+      ? canCoachTeam(selectedTeam, user.uid, selectedClub)
+      : false;
   const isParent =
     selectedTeam && user ? teamRoleFor(selectedTeam, user.uid) === "parent" : false;
   const canAttachSources =
@@ -323,7 +335,7 @@ function GameCapPageInner() {
         <section className={`${panelClass} mb-5`}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">Select team</h2>
-            {selectedTeam && user && canCoachTeam(selectedTeam, user.uid) ? (
+            {selectedTeam && user && canCoachTeam(selectedTeam, user.uid, selectedClub) ? (
               <Link href={teamSetupUrl(selectedTeam.id)} className={ghostBtn}>
                 Team Setup
               </Link>

@@ -673,7 +673,7 @@ export async function removeTeamMember(
   });
 }
 
-/** Create a Game linked to a team. Caller must be admin or coach. */
+/** Create a Game linked to a team. Caller must be admin or coach (incl. club admin). */
 export async function createTeamGame(
   uid: string,
   teamId: string,
@@ -681,7 +681,8 @@ export async function createTeamGame(
 ): Promise<string> {
   const team = await getTeam(teamId);
   if (!team) throw new Error("Team not found.");
-  if (!canCoachTeam(team, uid)) {
+  const club = await fetchTeamClubContext(team);
+  if (!canCoachTeam(team, uid, club)) {
     throw new Error("Only team admins and coaches can create games.");
   }
   const inheritedSport =
@@ -701,7 +702,9 @@ export async function listTeamGames(
   teamId: string,
 ): Promise<Game[]> {
   const team = await getTeam(teamId);
-  if (!team || !canViewTeam(team, uid)) return [];
+  if (!team) return [];
+  const club = await fetchTeamClubContext(team);
+  if (!canViewTeam(team, uid, club)) return [];
   return listGamesForTeam(teamId);
 }
 
