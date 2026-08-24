@@ -183,6 +183,27 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Reusable sponsor logos for highlight reels (data URL per doc).
+      match /sponsors/{sponsorId} {
+        allow read: if request.auth != null && isClubMember(clubId, request.auth.uid);
+        allow create: if request.auth != null
+          && (isClubAdmin(clubId, request.auth.uid) ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_parent')
+          && request.resource.data.logoUrl is string
+          && request.resource.data.logoUrl.size() > 12
+          && request.resource.data.logoUrl.size() < 200000
+          && request.resource.data.createdBy == request.auth.uid;
+        allow update: if request.auth != null
+          && (isClubAdmin(clubId, request.auth.uid) ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_parent');
+        allow delete: if request.auth != null
+          && (isClubAdmin(clubId, request.auth.uid) ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
+              clubRoleOf(clubId, request.auth.uid) == 'club_parent');
+      }
+
       // Parent → coach film drops. Coaches/admins organize later (optional).
       match /coachInbox/{itemId} {
         allow read: if request.auth != null && (

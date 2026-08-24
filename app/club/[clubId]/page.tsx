@@ -10,6 +10,7 @@ import { signInWithGoogle } from "@/lib/auth-google";
 import {
   assignCoachToClubTeam,
   attachTeamToClub,
+  canEditClubBranding,
   canManageClub,
   getClub,
   getClubMembers,
@@ -23,6 +24,7 @@ import {
 } from "@/lib/clubs";
 import ClubCreditsCard from "@/components/ClubCreditsCard";
 import ClubCoachInbox from "@/components/ClubCoachInbox";
+import ClubSponsorLibrary from "@/components/ClubSponsorLibrary";
 import {
   clubInviteJoinPath,
   createClubInvite,
@@ -109,6 +111,11 @@ export default function ClubHubPage() {
 
   const isAdmin = useMemo(
     () => (club && user ? canManageClub(club, user.uid) : false),
+    [club, user],
+  );
+
+  const canEditSponsors = useMemo(
+    () => (club && user ? canEditClubBranding(club, user.uid) : false),
     [club, user],
   );
 
@@ -329,6 +336,8 @@ export default function ClubHubPage() {
             </label>
           </section>
         ) : null}
+
+        <ClubSponsorLibrary clubId={clubId} canEdit={canEditSponsors} />
 
         {isAdmin && joinRequests.length > 0 ? (
           <section className="rounded-xl border border-amber-500/20 bg-amber-950/15 p-5">

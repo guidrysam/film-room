@@ -26,6 +26,12 @@ import {
   newSponsorId,
   type HighlightSponsorLogo,
 } from "@/lib/highlight-sponsors";
+import {
+  addClubSponsor,
+  clubSponsorToReelSponsor,
+  listClubSponsors,
+  type ClubSponsorLogo,
+} from "@/lib/club-sponsors";
 import { resizeLogoToDataUrl, uploadClubLogo, uploadTeamLogo } from "@/lib/team-logo";
 import {
   listMyBrandLogos,
@@ -245,6 +251,8 @@ export default function HighlightReelStudio({
   const [sponsorBusy, setSponsorBusy] = useState(false);
   const [sponsorMessage, setSponsorMessage] = useState<string | null>(null);
   const [thankYouMessage, setThankYouMessage] = useState("");
+  const [clubSponsors, setClubSponsors] = useState<ClubSponsorLogo[]>([]);
+  const [saveSponsorToClub, setSaveSponsorToClub] = useState(true);
   const sponsorFileRef = useRef<HTMLInputElement | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -448,6 +456,22 @@ export default function HighlightReelStudio({
   useEffect(() => {
     void refreshBrandLogos();
   }, [refreshBrandLogos, club?.logoUrl, team?.logoUrl]);
+
+  const refreshClubSponsors = useCallback(async () => {
+    if (!club?.id) {
+      setClubSponsors([]);
+      return;
+    }
+    try {
+      setClubSponsors(await listClubSponsors(club.id));
+    } catch {
+      setClubSponsors([]);
+    }
+  }, [club?.id]);
+
+  useEffect(() => {
+    void refreshClubSponsors();
+  }, [refreshClubSponsors]);
 
   useEffect(() => {
     if (!basePrimary && playableSources[0]) setBasePrimary(playableSources[0].id);
@@ -927,7 +951,24 @@ export default function HighlightReelStudio({
         },
       ]);
       setDirty(true);
-      setSponsorMessage("Sponsor added — shows on black cuts between clips.");
+      let note = "Sponsor added — shows on black cuts between clips.";
+      if (
+        club &&
+        canEditClubBranding(club, currentUid) &&
+        saveSponsorToClub
+      ) {
+        try {
+          await addClubSponsor(club.id, { logoUrl });
+          await refreshClubSponsors();
+          note = "Sponsor added to this reel and saved to the club library.";
+        } catch (e) {
+          note =
+            e instanceof Error
+              ? `Added to reel, but club save failed: ${e.message}`
+              : "Added to reel, but could not save to club library.";
+        }
+      }
+      setSponsorMessage(note);
     } catch (e) {
       setSponsorMessage(
         e instanceof Error ? e.message : "Could not add sponsor logo.",
@@ -936,7 +977,34 @@ export default function HighlightReelStudio({
       setSponsorBusy(false);
       if (sponsorFileRef.current) sponsorFileRef.current.value = "";
     }
-  }, [sponsors.length]);
+  }, [
+    sponsors.length,
+    club,
+    currentUid,
+    saveSponsorToClub,
+    refreshClubSponsors,
+  ]);
+
+  const addClubSponsorToReel = useCallback(
+    (entry: ClubSponsorLogo) => {
+      if (sponsors.length >= MAX_REEL_SPONSORS) {
+        setSponsorMessage(`Up to ${MAX_REEL_SPONSORS} sponsor logos on a reel.`);
+        return;
+      }
+      if (sponsors.some((s) => s.logoUrl === entry.logoUrl)) {
+        setSponsorMessage("That logo is already on this reel.");
+        return;
+      }
+      setSponsors((prev) => [...prev, clubSponsorToReelSponsor(entry)]);
+      setDirty(true);
+      setSponsorMessage(
+        entry.name
+          ? `Added ${entry.name} from club library.`
+          : "Added from club library.",
+      );
+    },
+    [sponsors],
+  );
 
   const removeSponsor = useCallback((id: string) => {
     setSponsors((prev) => prev.filter((s) => s.id !== id));
@@ -1521,7 +1589,65 @@ export default function HighlightReelStudio({
             </div>
             <p className="mt-1 text-[10px] text-zinc-500">
               Logos cycle on black cuts between clips (~¾s outbound + 5s inbound).
+              {club
+                ? " Pick from the club library or upload once and keep it."
+                : ""}
             </p>
+            {club && canEditClubBranding(club, currentUid) ? (
+              <label className="mt-2 flex items-center gap-2 text-[10px] text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={saveSponsorToClub}
+                  onChange={(e) => setSaveSponsorToClub(e.target.checked)}
+                />
+                Also save new uploads to club library
+              </label>
+            ) : null}
+            {clubSponsors.length > 0 ? (
+              <div className="mt-2">
+                <p className="text-[10px] font-medium text-zinc-500">
+                  Club library
+                </p>
+                <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                  {clubSponsors.map((entry) => {
+                    const onReel = sponsors.some(
+                      (s) => s.logoUrl === entry.logoUrl,
+                    );
+                    return (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          disabled={
+                            onReel || sponsors.length >= MAX_REEL_SPONSORS
+                          }
+                          title={
+                            onReel
+                              ? "Already on this reel"
+                              : entry.name
+                                ? `Add ${entry.name}`
+                                : "Add to reel"
+                          }
+                          onClick={() => addClubSponsorToReel(entry)}
+                          className="rounded-md border border-white/10 bg-white/[0.03] p-1 transition hover:border-blue-500/40 disabled:cursor-default disabled:opacity-45"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={entry.logoUrl}
+                            alt={entry.name || "Sponsor"}
+                            className="h-9 w-9 rounded object-contain bg-white/90"
+                          />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : club ? (
+              <p className="mt-1.5 text-[10px] text-zinc-500">
+                No club sponsors yet — upload with “save to library” or add them
+                on the club page.
+              </p>
+            ) : null}
             <label className="mt-2 block text-[10px] text-zinc-400">
               Thank-you message
               <input
