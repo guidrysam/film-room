@@ -38,6 +38,7 @@ import {
   isTeamFilmRoomId,
 } from "@/lib/team-film-room";
 import { useAuth } from "@/components/AuthProvider";
+import CoachFilmSessionStream from "@/components/CoachFilmSessionStream";
 import {
   FILM_ROOM_TELESTRATOR_CLEAR_EVENT,
   type FilmRoomTelestratorClearDetail,
@@ -72,7 +73,7 @@ import {
   parseCoachAlertLatest,
   parseRoomGameMark,
 } from "@/lib/room-game-marks";
-import { addGameEvent, getDirectorTrack } from "@/lib/games";
+import { addGameEvent, getDirectorTrack, getGame } from "@/lib/games";
 import { persistRoomManualSyncPairToGame } from "@/lib/persist-room-game-sync";
 import { roomGameMarkToTimelineEvent } from "@/lib/game-events";
 import {
@@ -1923,6 +1924,15 @@ function RoomContent() {
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
+  const [coachSessionGameTitle, setCoachSessionGameTitle] = useState<
+    string | null
+  >(null);
+  const [coachFilmSessionBanner, setCoachFilmSessionBanner] = useState<{
+    status?: string;
+    watchUrl?: string;
+    liveWatchUrl?: string;
+    title?: string;
+  } | null>(null);
   const [clipUrlDraft, setClipUrlDraft] = useState("");
   const [fbLandscapeCaptureOpen, setFbLandscapeCaptureOpen] = useState(false);
   const [telDrawOn, setTelDrawOn] = useState(false);
@@ -2332,6 +2342,49 @@ function RoomContent() {
       navigateRoomView("sync");
     }
   }, [teamRoomMode, roomState, roomViewMode, navigateRoomView]);
+
+  useEffect(() => {
+    const gid = gameIdFromUrl?.trim();
+    if (!gid) {
+      setCoachSessionGameTitle(null);
+      return;
+    }
+    let cancelled = false;
+    void getGame(gid)
+      .then((g) => {
+        if (!cancelled) setCoachSessionGameTitle(g?.title?.trim() || null);
+      })
+      .catch(() => {
+        if (!cancelled) setCoachSessionGameTitle(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gameIdFromUrl]);
+
+  useEffect(() => {
+    if (!roomId.trim()) {
+      setCoachFilmSessionBanner(null);
+      return;
+    }
+    const sessionRef = ref(db, `rooms/${roomId}/coachFilmSession`);
+    return onValue(sessionRef, (snap) => {
+      const v = snap.val() as Record<string, unknown> | null;
+      if (!v || typeof v !== "object") {
+        setCoachFilmSessionBanner(null);
+        return;
+      }
+      setCoachFilmSessionBanner({
+        ...(typeof v.status === "string" ? { status: v.status } : {}),
+        ...(typeof v.watchUrl === "string" ? { watchUrl: v.watchUrl } : {}),
+        ...(typeof v.liveWatchUrl === "string"
+          ? { liveWatchUrl: v.liveWatchUrl }
+          : {}),
+        ...(typeof v.title === "string" ? { title: v.title } : {}),
+      });
+    });
+  }, [roomId]);
+
   const [syncSetupUi, setSyncSetupUi] = useState<{
     primaryTime: number;
     primaryDur: number;
@@ -7979,6 +8032,51 @@ function RoomContent() {
       <>
       {embedErrorBanner}
       {gameHubNavLink}
+      {coachFilmSessionBanner?.status === "live" ||
+      coachFilmSessionBanner?.status === "uploading" ||
+      coachFilmSessionBanner?.watchUrl ? (
+        <div className="mb-3 rounded-lg border border-rose-500/25 bg-rose-950/20 px-3 py-2 text-[11px] text-rose-50/90">
+          {coachFilmSessionBanner.status === "live" ? (
+            <span>
+              Coach is recording this film session with voice
+              {coachFilmSessionBanner.title
+                ? ` (“${coachFilmSessionBanner.title}”)`
+                : ""}
+              .
+            </span>
+          ) : null}
+          {coachFilmSessionBanner.status === "uploading" ? (
+            <span>Coach film session is uploading to YouTube…</span>
+          ) : null}
+          {coachFilmSessionBanner.watchUrl ? (
+            <span>
+              {" "}
+              Missed it?{" "}
+              <a
+                href={coachFilmSessionBanner.watchUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-rose-100 underline decoration-rose-400/40"
+              >
+                Watch coach film archive
+              </a>
+            </span>
+          ) : coachFilmSessionBanner.liveWatchUrl &&
+            coachFilmSessionBanner.status === "live" ? (
+            <span>
+              {" "}
+              <a
+                href={coachFilmSessionBanner.liveWatchUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-rose-100 underline decoration-rose-400/40"
+              >
+                YouTube live page
+              </a>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex min-h-screen flex-col px-4 py-6 text-zinc-50">
         <div className="mb-4 flex items-center justify-between gap-3">
           {isHost && !teamRoomMode ? (
@@ -8032,6 +8130,15 @@ function RoomContent() {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {isHost && user && (teamRoomMode || roomViewMode === "sync") ? (
+              <CoachFilmSessionStream
+                roomId={roomId}
+                gameId={gameIdFromUrl}
+                gameTitle={coachSessionGameTitle ?? roomState?.name ?? null}
+                currentUid={user.uid}
+                displayName={user.displayName}
+              />
+            ) : null}
             {showGoLiveControls ? (
               <>
                 <button
