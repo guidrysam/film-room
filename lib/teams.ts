@@ -508,6 +508,17 @@ function isClubParentContext(
   );
 }
 
+function isClubCoachContext(
+  club: TeamClubContext | null | undefined,
+  team: Team,
+  uid: string,
+): boolean {
+  if (!club || !uid || team.clubId !== club.id) return false;
+  return (
+    club.members[uid] === "club_coach" || isClubAdminContext(club, team, uid)
+  );
+}
+
 export function canManageTeam(
   team: Team,
   uid: string,
@@ -616,7 +627,9 @@ export function canViewTeam(
   if (!uid) return false;
   if (team.ownerId === uid || team.members[uid] != null) return true;
   return (
-    isClubAdminContext(club, team, uid) || isClubParentContext(club, team, uid)
+    isClubAdminContext(club, team, uid) ||
+    isClubParentContext(club, team, uid) ||
+    isClubCoachContext(club, team, uid)
   );
 }
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   dismissClubCoachInboxItem,
   listClubCoachInbox,
+  listClubCoachInboxForTeams,
   markClubCoachInboxOrganized,
   type ClubCoachInboxItem,
 } from "@/lib/club-coach-inbox";
@@ -32,10 +33,18 @@ const selectClass =
 type Props = {
   clubId: string;
   uid: string;
+  /** Club admin/coach: full inbox + organize/dismiss. */
   canManage: boolean;
+  /** Team ids this viewer coaches (used when canManage is false). */
+  coachTeamIds?: string[];
 };
 
-export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
+export default function ClubCoachInbox({
+  clubId,
+  uid,
+  canManage,
+  coachTeamIds = [],
+}: Props) {
   const [items, setItems] = useState<ClubCoachInboxItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,11 +55,18 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
   const [teamId, setTeamId] = useState("");
   const [gameId, setGameId] = useState("");
 
+  const coachTeamKey = coachTeamIds.join(",");
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const rows = await listClubCoachInbox(clubId);
+      const teamIds = coachTeamKey
+        ? coachTeamKey.split(",").filter(Boolean)
+        : [];
+      const rows = canManage
+        ? await listClubCoachInbox(clubId)
+        : await listClubCoachInboxForTeams(clubId, teamIds);
       setItems(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load coach inbox.");
@@ -58,7 +74,7 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [clubId]);
+  }, [clubId, canManage, coachTeamKey]);
 
   useEffect(() => {
     void refresh();
@@ -209,10 +225,6 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
     }
   };
 
-  if (!canManage) {
-    return null;
-  }
-
   return (
     <section className="rounded-xl border border-white/[0.07] bg-zinc-950/45 p-5">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -228,7 +240,10 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
       </div>
       <p className="mb-3 text-xs text-zinc-400">
         Parents share tagged film here. Items already placed on a team are
-        ready to open; organizing onto a different game is optional.
+        ready to open
+        {canManage
+          ? "; organizing onto a different game is optional."
+          : "."}
       </p>
 
       {error ? (
@@ -297,7 +312,7 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
                     {busyId === item.id ? "Opening…" : "Open in Film Room"}
                   </button>
                 )}
-                {item.status === "open" && !item.gameId ? (
+                {canManage && item.status === "open" && !item.gameId ? (
                   <button
                     type="button"
                     className={ghostBtn}
@@ -312,7 +327,7 @@ export default function ClubCoachInbox({ clubId, uid, canManage }: Props) {
                     Organize by team
                   </button>
                 ) : null}
-                {item.status !== "dismissed" ? (
+                {canManage && item.status !== "dismissed" ? (
                   <button
                     type="button"
                     className={ghostBtn}

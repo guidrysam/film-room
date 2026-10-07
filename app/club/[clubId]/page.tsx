@@ -22,6 +22,7 @@ import {
   type Club,
   type ClubMemberEntry,
 } from "@/lib/clubs";
+import { canViewClubCoachInbox } from "@/lib/club-coach-inbox";
 import ClubCreditsCard from "@/components/ClubCreditsCard";
 import ClubCoachInbox from "@/components/ClubCoachInbox";
 import ClubSponsorLibrary from "@/components/ClubSponsorLibrary";
@@ -120,6 +121,11 @@ export default function ClubHubPage() {
   );
 
   const canSeeCoachInbox = useMemo(
+    () => (club && user ? canViewClubCoachInbox(club, user.uid, teams) : false),
+    [club, user, teams],
+  );
+
+  const canManageCoachInbox = useMemo(
     () =>
       club && user
         ? canManageClub(club, user.uid) || isClubCoach(club, user.uid)
@@ -422,7 +428,15 @@ export default function ClubHubPage() {
           <ClubCoachInbox
             clubId={clubId}
             uid={user.uid}
-            canManage={canSeeCoachInbox}
+            canManage={canManageCoachInbox}
+            coachTeamIds={teams
+              .filter(
+                (t) =>
+                  t.ownerId === user.uid ||
+                  t.members[user.uid] === "admin" ||
+                  t.members[user.uid] === "coach",
+              )
+              .map((t) => t.id)}
           />
         ) : null}
 

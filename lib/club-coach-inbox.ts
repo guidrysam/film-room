@@ -151,6 +151,23 @@ export function canManageClubCoachInbox(
   return canManageClub(club, uid) || isClubCoach(club, uid);
 }
 
+/** Club coaches/admins see the full inbox; team coaches see drops for their teams. */
+export function canViewClubCoachInbox(
+  club: Awaited<ReturnType<typeof getClub>>,
+  uid: string,
+  teams: Team[] = [],
+): boolean {
+  if (!club || !uid) return false;
+  if (canManageClubCoachInbox(club, uid)) return true;
+  return teams.some(
+    (team) =>
+      team.clubId === club.id &&
+      (team.ownerId === uid ||
+        team.members[uid] === "admin" ||
+        team.members[uid] === "coach"),
+  );
+}
+
 function sourceCopyInput(source: GameVideoSource, uid: string) {
   const { id: _id, createdAt: _createdAt, uploadedAt: _uploadedAt, ...rest } =
     source;
@@ -203,6 +220,16 @@ async function attachFilmClipToGame(
 /**
  * Copy a tagged My Film review onto a club team so coaches see video + marks.
  */
+/** Team owner + admins/coaches who should see parent-shared film immediately. */
+function teamCoachUids(team: Team): string[] {
+  const uids = new Set<string>();
+  if (team.ownerId) uids.add(team.ownerId);
+  for (const [uid, role] of Object.entries(team.members)) {
+    if (role === "admin" || role === "coach") uids.add(uid);
+  }
+  return [...uids];
+}
+
 async function copyTaggedFilmOntoTeam(opts: {
   uid: string;
   team: Team;
@@ -213,8 +240,14 @@ async function copyTaggedFilmOntoTeam(opts: {
     formatGameCapMogoDisplayName(opts.source.label) ||
     opts.source.label ||
     "Shared film";
+  // Parents cannot create with teamId (coach-only rule). Create first, link
+  // the team, then copy sources so denormalized gameTeamId is stamped.
   const gameId = await createGame(opts.uid, {
     title,
+    clubId: opts.clubId,
+  });
+  await updateGame(gameId, {
+    teamId: opts.team.id,
     clubId: opts.clubId,
   });
 
@@ -263,15 +296,14 @@ async function copyTaggedFilmOntoTeam(opts: {
     await attachFilmClipToGame(gameId, opts.uid, opts.source);
   }
 
-  await updateGame(gameId, {
-    teamId: opts.team.id,
-    clubId: opts.clubId,
-  });
-  if (opts.team.ownerId && opts.team.ownerId !== opts.uid) {
+  // Grant every team coach editor access so the game hits memberUids and
+  // shows in Recent games / My games without waiting on teamId queries.
+  for (const coachUid of teamCoachUids(opts.team)) {
+    if (coachUid === opts.uid) continue;
     try {
-      await updateGameContributor(gameId, opts.team.ownerId, "editor");
+      await updateGameContributor(gameId, coachUid, "editor");
     } catch {
-      /* team members can still open via teamId */
+      /* teamId membership still allows open */
     }
   }
   return { gameId, eventCount };
@@ -380,6 +412,44 @@ export async function listClubCoachInbox(
   );
   if (opts?.includeDismissed) return out;
   return out.filter((i) => i.status !== "dismissed");
+}
+
+/**
+ * Inbox rows for specific teams (team coaches who are not club_coach).
+ * Per-team queries stay query-safe under Firestore rules.
+ */
+export async function listClubCoachInboxForTeams(
+  clubId: string,
+  teamIds: string[],
+  opts?: { includeDismissed?: boolean; max?: number },
+): Promise<ClubCoachInboxItem[]> {
+  const unique = [...new Set(teamIds.map((id) => id.trim()).filter(Boolean))];
+  if (unique.length === 0) return [];
+  const max = opts?.max ?? 60;
+  const snaps = await Promise.all(
+    unique.map((teamId) =>
+      getDocs(
+        query(inboxCol(clubId), where("teamId", "==", teamId), limit(max)),
+      ),
+    ),
+  );
+  const byId = new Map<string, ClubCoachInboxItem>();
+  for (const snap of snaps) {
+    for (const d of snap.docs) {
+      byId.set(
+        d.id,
+        parseItem(clubId, d.id, d.data() as Record<string, unknown>),
+      );
+    }
+  }
+  let out = [...byId.values()].sort(
+    (a, b) =>
+      (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
+  );
+  if (!opts?.includeDismissed) {
+    out = out.filter((item) => item.status !== "dismissed");
+  }
+  return out.slice(0, max);
 }
 
 export async function listOpenClubCoachInbox(

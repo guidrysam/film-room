@@ -209,7 +209,12 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isClubAdmin(clubId, request.auth.uid) ||
           clubRoleOf(clubId, request.auth.uid) == 'club_coach' ||
-          resource.data.sharedByUid == request.auth.uid
+          resource.data.sharedByUid == request.auth.uid ||
+          // Team coaches assigned to the target team (may not be club_coach).
+          ('teamId' in resource.data &&
+           resource.data.teamId is string &&
+           resource.data.teamId.size() > 0 &&
+           isTeamCoach(resource.data.teamId, request.auth.uid))
         );
         allow create: if request.auth != null
           && isClubMember(clubId, request.auth.uid)
@@ -285,11 +290,17 @@ service cloud.firestore {
              (clubRoleOf(teamData(teamId).clubId, uid) == 'club_parent' ||
               isClubAdmin(teamData(teamId).clubId, uid));
     }
+    function isClubCoachForTeam(teamId, uid) {
+      return teamHasClub(teamId) &&
+             (clubRoleOf(teamData(teamId).clubId, uid) == 'club_coach' ||
+              isClubAdmin(teamData(teamId).clubId, uid));
+    }
     function isTeamMember(teamId, uid) {
       return teamData(teamId).ownerId == uid ||
              teamRoleOf(teamId, uid) != null ||
              isClubAdminForTeam(teamId, uid) ||
-             isClubParentForTeam(teamId, uid);
+             isClubParentForTeam(teamId, uid) ||
+             isClubCoachForTeam(teamId, uid);
     }
     function isTeamAdmin(teamId, uid) {
       return teamData(teamId).ownerId == uid ||

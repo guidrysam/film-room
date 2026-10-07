@@ -55,4 +55,17 @@ describe("club cascade on teams", () => {
     };
     assert.equal(canViewTeam(team, "club-owner", club), false);
   });
+
+  it("lets club coaches view linked team film (not manage)", () => {
+    const team = stubTeam({ clubId: "club-1" });
+    const club: TeamClubContext = {
+      id: "club-1",
+      ownerId: "club-owner",
+      members: { "club-coach-1": "club_coach" },
+    };
+    assert.equal(canViewTeam(team, "club-coach-1"), false);
+    assert.equal(canViewTeam(team, "club-coach-1", club), true);
+    assert.equal(canManageTeam(team, "club-coach-1", club), false);
+    assert.equal(canCoachTeam(team, "club-coach-1", club), false);
+  });
 });
