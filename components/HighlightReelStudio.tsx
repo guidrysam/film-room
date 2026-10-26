@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HighlightReelPlayer, {
   type HighlightReelPlayerHandle,
@@ -206,6 +206,9 @@ export default function HighlightReelStudio({
   currentUid,
   currentDisplayName,
 }: HighlightReelStudioProps) {
+  const searchParams = useSearchParams();
+  const draftParam = searchParams.get("draft");
+
   const playableSources = useMemo(
     () => sources.filter((s) => gameSourceToVideoAngle(s) != null),
     [sources],
@@ -521,6 +524,13 @@ export default function HighlightReelStudio({
     setDirty(false);
     setMessage(null);
   }, []);
+
+  // Open a specific draft when arriving with ?draft= (e.g. season highlight).
+  useEffect(() => {
+    if (!draftParam || editingId) return;
+    const match = reels.find((r) => r.id === draftParam);
+    if (match) loadReel(match);
+  }, [draftParam, reels, editingId, loadReel]);
 
   const mutateMoments = useCallback(
     (next: HighlightMoment[]) => {

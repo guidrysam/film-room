@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import HighlightReelStudio from "@/components/HighlightReelStudio";
 import { signInWithGoogle } from "@/lib/auth-google";
@@ -100,14 +100,18 @@ export default function GameReelPage() {
       ) : error ? (
         <p className="text-sm text-rose-200">{error}</p>
       ) : game ? (
-        <HighlightReelStudio
-          gameId={gameId}
-          game={game}
-          sources={sources}
-          events={events}
-          currentUid={user.uid}
-          currentDisplayName={user.displayName}
-        />
+        <Suspense
+          fallback={<p className="text-sm text-zinc-400">Loading reel…</p>}
+        >
+          <HighlightReelStudio
+            gameId={gameId}
+            game={game}
+            sources={sources}
+            events={events}
+            currentUid={user.uid}
+            currentDisplayName={user.displayName}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

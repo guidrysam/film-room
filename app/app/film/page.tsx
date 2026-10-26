@@ -34,6 +34,10 @@ import {
   addGameSourceFromYouTubeUpload,
   createGame,
 } from "@/lib/games";
+import {
+  createSeasonHighlightFromClips,
+  filmSourceToSeasonClip,
+} from "@/lib/season-highlight-from-film";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 import ShareFilmWithCoach from "@/components/ShareFilmWithCoach";
@@ -85,6 +89,9 @@ export default function MyFilmPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  /** Ordered selection for season highlight (YouTube clips only). */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [buildingSeason, setBuildingSeason] = useState(false);
 
   const loadList = useCallback(async () => {
     if (!user) return;
@@ -235,12 +242,80 @@ export default function MyFilmPage() {
     reviewFilter !== "all" ||
     lengthFilter !== "all";
 
+  const selectableFiltered = useMemo(
+    () => filteredSources.filter((s) => filmSourceToSeasonClip(s) != null),
+    [filteredSources],
+  );
+
+  const selectedCount = selectedIds.length;
+  const allVisibleSelected =
+    selectableFiltered.length > 0 &&
+    selectableFiltered.every((s) => selectedIds.includes(s.id));
+
   const clearSearch = () => {
     setSearchQuery("");
     setDateFrom("");
     setDateTo("");
     setReviewFilter("all");
     setLengthFilter("all");
+  };
+
+  const toggleSelect = (sourceId: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(sourceId)
+        ? prev.filter((id) => id !== sourceId)
+        : [...prev, sourceId],
+    );
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = [...prev];
+      for (const s of selectableFiltered) {
+        if (!next.includes(s.id)) next.push(s.id);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds([]);
+
+  const makeSeasonHighlight = async () => {
+    if (!user || selectedIds.length === 0) return;
+    setBuildingSeason(true);
+    setBusyId("__season__");
+    setError(null);
+    try {
+      const byId = new Map(sources.map((s) => [s.id, s]));
+      const clips = [];
+      for (const id of selectedIds) {
+        const source = byId.get(id);
+        if (!source) continue;
+        const clip = filmSourceToSeasonClip(source);
+        if (clip) clips.push(clip);
+      }
+      if (clips.length === 0) {
+        throw new Error("Selected items need a YouTube video to include.");
+      }
+      const result = await createSeasonHighlightFromClips(user.uid, clips, {
+        createdByName: user.displayName || undefined,
+      });
+      setSelectedIds([]);
+      setSyncNote(
+        `Season highlight ready — ${result.clipCount} clip${
+          result.clipCount === 1 ? "" : "s"
+        }. Opening reel studio…`,
+      );
+      router.push(
+        `/game/${result.gameId}/reel?draft=${encodeURIComponent(result.draftId)}`,
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Could not build season highlight.",
+      );
+      setBuildingSeason(false);
+      setBusyId(null);
+    }
   };
 
   const setKind = async (source: FilmSource, organizeKind: FilmOrganizeKind) => {
@@ -365,36 +440,68 @@ export default function MyFilmPage() {
   const renderSource = (source: FilmSource) => {
     const reviewed = isFilmReviewed(source);
     const whenMs = filmSourceDateMs(source);
+    const seasonClip = filmSourceToSeasonClip(source);
+    const selected = selectedIds.includes(source.id);
+    const selectIndex = selected ? selectedIds.indexOf(source.id) + 1 : 0;
     return (
     <li
       key={source.id}
-      className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-3"
+      className={`rounded-lg border px-3 py-3 ${
+        selected
+          ? "border-blue-500/40 bg-blue-950/20"
+          : "border-white/[0.06] bg-black/20"
+      }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">
-            {formatGameCapMogoDisplayName(source.label) || source.label}
-          </p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">
-            {reviewed ? "reviewed" : "unreviewed"}
-            {" · "}
-            {source.organizeKind}
-            {source.captureDevice === "tripod"
-              ? " · Tripod"
-              : source.captureDevice === "mogo"
-                ? " · MOGO"
+        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+          {seasonClip ? (
+            <label className="mt-0.5 flex shrink-0 cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-white/30 bg-black/40 text-blue-500 focus:ring-blue-500/40"
+                checked={selected}
+                disabled={buildingSeason}
+                onChange={() => toggleSelect(source.id)}
+                aria-label={`Select ${formatGameCapMogoDisplayName(source.label) || source.label}`}
+              />
+              {selectIndex > 0 ? (
+                <span className="min-w-[1.1rem] text-[10px] font-semibold tabular-nums text-blue-300">
+                  {selectIndex}
+                </span>
+              ) : null}
+            </label>
+          ) : (
+            <span
+              className="mt-0.5 inline-block h-4 w-4 shrink-0"
+              title="Drive uploads can’t join a YouTube season reel yet"
+              aria-hidden
+            />
+          )}
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-white">
+              {formatGameCapMogoDisplayName(source.label) || source.label}
+            </p>
+            <p className="mt-0.5 text-[11px] text-zinc-500">
+              {reviewed ? "reviewed" : "unreviewed"}
+              {" · "}
+              {source.organizeKind}
+              {source.captureDevice === "tripod"
+                ? " · Tripod"
+                : source.captureDevice === "mogo"
+                  ? " · MOGO"
+                  : ""}
+              {source.filmKind === "highlight" || isFilmUnderTenMinutes(source)
+                ? " · highlight"
                 : ""}
-            {source.filmKind === "highlight" || isFilmUnderTenMinutes(source)
-              ? " · highlight"
-              : ""}
-            {typeof source.durationSec === "number" && source.durationSec > 0
-              ? ` · ${formatDurationShort(source.durationSec)}`
-              : " · length unknown"}
-            {source.marksImported ? ` · ${source.marksImported} marks` : ""}
-            {whenMs
-              ? ` · ${new Date(whenMs).toLocaleString()}`
-              : ""}
-          </p>
+              {typeof source.durationSec === "number" && source.durationSec > 0
+                ? ` · ${formatDurationShort(source.durationSec)}`
+                : " · length unknown"}
+              {source.marksImported ? ` · ${source.marksImported} marks` : ""}
+              {whenMs
+                ? ` · ${new Date(whenMs).toLocaleString()}`
+                : ""}
+            </p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {(["game", "practice", "other"] as const).map((k) => (
@@ -406,7 +513,7 @@ export default function MyFilmPage() {
                   ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
                   : ""
               }`}
-              disabled={busyId === source.id}
+              disabled={busyId === source.id || buildingSeason}
               onClick={() => void setKind(source, k)}
             >
               {k}
@@ -743,12 +850,81 @@ export default function MyFilmPage() {
               ) : null}
             </div>
           ) : (
-            <ul className="space-y-3">
-              {filteredSources.map((s) => renderSource(s))}
-            </ul>
+            <>
+              {selectableFiltered.length > 0 ? (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    disabled={buildingSeason}
+                    onClick={() =>
+                      allVisibleSelected
+                        ? clearSelection()
+                        : selectAllVisible()
+                    }
+                  >
+                    {allVisibleSelected
+                      ? "Deselect visible"
+                      : `Select visible (${selectableFiltered.length})`}
+                  </button>
+                  {selectedCount > 0 ? (
+                    <button
+                      type="button"
+                      className={ghostBtn}
+                      disabled={buildingSeason}
+                      onClick={clearSelection}
+                    >
+                      Clear selection
+                    </button>
+                  ) : (
+                    <p className="text-[11px] text-zinc-500">
+                      Check clips to build a season highlight reel
+                    </p>
+                  )}
+                </div>
+              ) : null}
+              <ul className="space-y-3 pb-20">
+                {filteredSources.map((s) => renderSource(s))}
+              </ul>
+            </>
           )}
         </section>
       </div>
+
+      {selectedCount > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-zinc-950/95 px-4 py-3 shadow-[0_-8px_30px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white">
+                {selectedCount} clip{selectedCount === 1 ? "" : "s"} selected
+              </p>
+              <p className="text-[11px] text-zinc-500">
+                Order = selection order. Team labels come later.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={ghostBtn}
+                disabled={buildingSeason}
+                onClick={clearSelection}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={primaryBtn}
+                disabled={buildingSeason}
+                onClick={() => void makeSeasonHighlight()}
+              >
+                {buildingSeason
+                  ? "Building…"
+                  : "Make season highlight"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
