@@ -40,6 +40,29 @@ const primaryBtn =
 
 const linkBack = "text-sm text-zinc-400 transition hover:text-zinc-100";
 
+const HIGHLIGHT_MAX_SEC = 10 * 60;
+
+type QueueFilter = "all" | "under10";
+type SyncMode = "all" | "under10";
+
+function formatDurationShort(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    return `${h}h ${m % 60}m`;
+  }
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function isUnderTenMinutes(source: FilmSource): boolean {
+  if (typeof source.durationSec === "number" && source.durationSec > 0) {
+    return source.durationSec <= HIGHLIGHT_MAX_SEC;
+  }
+  return source.filmKind === "highlight";
+}
+
 export default function MyFilmPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -51,6 +74,8 @@ export default function MyFilmPage() {
   const [listLoading, setListLoading] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>("under10");
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
 
   const loadList = useCallback(async () => {
     if (!user) return;
@@ -65,42 +90,71 @@ export default function MyFilmPage() {
     return yt;
   }, [user]);
 
-  const syncChannel = useCallback(async () => {
-    if (!user) return;
-    setSyncing(true);
-    setError(null);
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch("/api/youtube/sync-channel", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        imported?: number;
-        matched?: number;
-        scanned?: number;
-        error?: string;
-      } | null;
-      if (!res.ok) {
-        throw new Error(json?.error || "Could not sync YouTube channel.");
+  const syncChannel = useCallback(
+    async (mode: SyncMode = "under10") => {
+      if (!user) return;
+      setSyncing(true);
+      setSyncMenuOpen(false);
+      setError(null);
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/youtube/sync-channel", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            mode === "under10"
+              ? { maxDurationSec: HIGHLIGHT_MAX_SEC }
+              : {},
+          ),
+        });
+        const json = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          imported?: number;
+          matched?: number;
+          scanned?: number;
+          skippedTooLong?: number;
+          error?: string;
+        } | null;
+        if (!res.ok) {
+          throw new Error(json?.error || "Could not sync YouTube channel.");
+        }
+        const imported = json?.imported ?? 0;
+        const matched = json?.matched ?? 0;
+        const skippedTooLong = json?.skippedTooLong ?? 0;
+        if (mode === "under10") {
+          setQueueFilter("under10");
+          setSyncNote(
+            imported > 0
+              ? `Pulled ${imported} highlight-length clip${imported === 1 ? "" : "s"} (under 10 min).`
+              : matched > 0
+                ? `Found ${matched} short clip${matched === 1 ? "" : "s"} — already in your queue or cleared.`
+                : `Scanned ${json?.scanned ?? 0} videos — no new under-10-min Game Cap matches${
+                    skippedTooLong
+                      ? ` (${skippedTooLong} longer game${skippedTooLong === 1 ? "" : "s"} skipped)`
+                      : ""
+                  }.`,
+          );
+        } else {
+          setSyncNote(
+            imported > 0
+              ? `Pulled ${imported} new Game Cap upload${imported === 1 ? "" : "s"} (MOGO + Tripod).`
+              : matched > 0
+                ? `Found ${matched} Game Cap upload${matched === 1 ? "" : "s"} — already in your queue or cleared.`
+                : `Scanned ${json?.scanned ?? 0} recent videos — no new MOGO/Tripod matches.`,
+          );
+        }
+        await loadList();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Sync failed.");
+      } finally {
+        setSyncing(false);
       }
-      const imported = json?.imported ?? 0;
-      const matched = json?.matched ?? 0;
-      setSyncNote(
-        imported > 0
-          ? `Pulled ${imported} new Game Cap MOGO upload${imported === 1 ? "" : "s"} into your stack.`
-          : matched > 0
-            ? `Found ${matched} MOGO upload${matched === 1 ? "" : "s"} — already in your queue or cleared.`
-            : `Scanned ${json?.scanned ?? 0} recent videos — no new GameCapMOGO titles.`,
-      );
-      await loadList();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed.");
-    } finally {
-      setSyncing(false);
-    }
-  }, [user, loadList]);
+    },
+    [user, loadList],
+  );
 
   const refresh = useCallback(async () => {
     if (!user) return;
@@ -109,7 +163,7 @@ export default function MyFilmPage() {
     try {
       const yt = await loadList();
       if (yt?.connectedAt) {
-        await syncChannel();
+        await syncChannel("under10");
       }
     } catch (e) {
       console.error("[my-film]", e);
@@ -123,12 +177,29 @@ export default function MyFilmPage() {
     void refresh();
   }, [refresh]);
 
+  const workQueueAll = useMemo(() => {
+    const open = sources.filter(
+      (s) => !s.reviewGameId && (s.kind === "youtube" || s.youtubeVideoId),
+    );
+    return [...open].sort((a, b) => {
+      const ah = isUnderTenMinutes(a) ? 0 : 1;
+      const bh = isUnderTenMinutes(b) ? 0 : 1;
+      if (ah !== bh) return ah - bh;
+      return (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0);
+    });
+  }, [sources]);
+
   const workQueue = useMemo(
     () =>
-      sources.filter(
-        (s) => !s.reviewGameId && (s.kind === "youtube" || s.youtubeVideoId),
-      ),
-    [sources],
+      queueFilter === "under10"
+        ? workQueueAll.filter(isUnderTenMinutes)
+        : workQueueAll,
+    [workQueueAll, queueFilter],
+  );
+
+  const shortCount = useMemo(
+    () => workQueueAll.filter(isUnderTenMinutes).length,
+    [workQueueAll],
   );
   const rest = useMemo(
     () =>
@@ -269,6 +340,17 @@ export default function MyFilmPage() {
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
             {source.organizeKind}
+            {source.captureDevice === "tripod"
+              ? " · Tripod"
+              : source.captureDevice === "mogo"
+                ? " · MOGO"
+                : ""}
+            {source.filmKind === "highlight" || isUnderTenMinutes(source)
+              ? " · highlight"
+              : ""}
+            {typeof source.durationSec === "number" && source.durationSec > 0
+              ? ` · ${formatDurationShort(source.durationSec)}`
+              : ""}
             {source.marksImported ? ` · ${source.marksImported} marks` : ""}
             {source.createdAt
               ? ` · ${source.createdAt.toDate().toLocaleString()}`
@@ -410,16 +492,41 @@ export default function MyFilmPage() {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">
               To review{workQueue.length ? ` (${workQueue.length})` : ""}
+              {shortCount
+                ? ` · ${shortCount} under 10 min`
+                : ""}
             </h2>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={ghostBtn}
-                disabled={syncing || !youtube}
-                onClick={() => void syncChannel()}
-              >
-                {syncing ? "Syncing…" : "Sync YouTube"}
-              </button>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  className={primaryBtn}
+                  disabled={syncing || !youtube}
+                  onClick={() => setSyncMenuOpen((o) => !o)}
+                >
+                  {syncing ? "Syncing…" : "Sync YouTube ▾"}
+                </button>
+                {syncMenuOpen ? (
+                  <div className="absolute right-0 z-20 mt-1 min-w-[14rem] rounded-lg border border-white/12 bg-zinc-950 p-1 shadow-xl">
+                    <button
+                      type="button"
+                      className="block w-full rounded-md px-3 py-2 text-left text-xs text-zinc-100 hover:bg-white/[0.08]"
+                      disabled={syncing}
+                      onClick={() => void syncChannel("under10")}
+                    >
+                      Highlights only (under 10 min)
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full rounded-md px-3 py-2 text-left text-xs text-zinc-100 hover:bg-white/[0.08]"
+                      disabled={syncing}
+                      onClick={() => void syncChannel("all")}
+                    >
+                      All Game Cap (games + highlights)
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 className={ghostBtn}
@@ -429,6 +536,31 @@ export default function MyFilmPage() {
                 {listLoading ? "Loading…" : "Refresh"}
               </button>
             </div>
+          </div>
+
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={`${ghostBtn} ${
+                queueFilter === "under10"
+                  ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                  : ""
+              }`}
+              onClick={() => setQueueFilter("under10")}
+            >
+              Under 10 min
+            </button>
+            <button
+              type="button"
+              className={`${ghostBtn} ${
+                queueFilter === "all"
+                  ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                  : ""
+              }`}
+              onClick={() => setQueueFilter("all")}
+            >
+              All
+            </button>
           </div>
 
           {error ? (
@@ -444,13 +576,16 @@ export default function MyFilmPage() {
 
           {!youtube ? (
             <p className="text-sm text-zinc-500">
-              Connect YouTube upload above — then your GameCapMOGO videos appear
-              here automatically.
+              Connect YouTube upload above — then Game Cap MOGO and Tripod
+              uploads appear here when you sync.
             </p>
           ) : workQueue.length === 0 ? (
             <p className="text-sm text-zinc-500">
-              No open work. Upload from MOGO (title starts with GameCapMOGO) or
-              hit Sync YouTube.
+              {queueFilter === "under10" && workQueueAll.length > 0
+                ? "Nothing under 10 minutes in the queue. Switch to All to see full games, or Sync → Highlights only."
+                : queueFilter === "under10"
+                  ? "No short clips yet. Use Sync YouTube → Highlights only (under 10 min)."
+                  : "No open work. Sync YouTube for MOGO/Tripod film, or filter to Under 10 min for highlight-length cuts."}
             </p>
           ) : (
             <ul className="space-y-3">

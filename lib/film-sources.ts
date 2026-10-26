@@ -29,6 +29,9 @@ export type UserDrivePublic = {
   accountEmail?: string;
 };
 
+export type FilmCaptureDevice = "mogo" | "tripod";
+export type FilmKind = "highlight" | "full";
+
 export type FilmSource = {
   id: string;
   ownerUid: string;
@@ -44,6 +47,10 @@ export type FilmSource = {
   marksImported?: number;
   recordedStartTime?: string;
   durationSec?: number;
+  /** Set when imported from YouTube channel sync (MOGO / Tripod). */
+  captureDevice?: FilmCaptureDevice;
+  /** Highlight-titled channel uploads vs full-game film. */
+  filmKind?: FilmKind;
   clubId?: string;
   teamId?: string;
   gameId?: string;
@@ -117,6 +124,12 @@ export function parseFilmSource(
     ...(trimOrUndef(raw.seasonId) ? { seasonId: String(raw.seasonId) } : {}),
     ...(trimOrUndef(raw.reviewGameId)
       ? { reviewGameId: String(raw.reviewGameId) }
+      : {}),
+    ...(raw.captureDevice === "mogo" || raw.captureDevice === "tripod"
+      ? { captureDevice: raw.captureDevice }
+      : {}),
+    ...(raw.filmKind === "highlight" || raw.filmKind === "full"
+      ? { filmKind: raw.filmKind }
       : {}),
     createdAt:
       raw.createdAt && typeof raw.createdAt === "object"
