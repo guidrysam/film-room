@@ -1,6 +1,6 @@
 import "server-only";
 
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type DocumentReference } from "firebase-admin/firestore";
 import { adminFirestore } from "@/lib/firebase-admin";
 import { getUserYouTubeUploadAccessToken } from "@/lib/youtube/user-upload-oauth";
 import {
@@ -230,6 +230,36 @@ export async function syncGameCapMogoChannelToInbox(
       continue;
     }
 
+    const classified = classifyGameCapChannelUpload(row.title, row.description);
+    const label =
+      classified?.label ||
+      row.title.replace(/\.mov$/i, "").trim() ||
+      row.videoId;
+    const shortEnough =
+      typeof row.durationSec === "number" &&
+      row.durationSec > 0 &&
+      row.durationSec <= HIGHLIGHT_MAX_DURATION_SEC;
+    const isHighlight = Boolean(classified?.isHighlight || shortEnough);
+
+    const patchExisting = async (
+      ref: DocumentReference,
+      existingLabel: string,
+    ) => {
+      // Backfill duration / highlight flags so Under 10 min works on older rows.
+      const patch: Record<string, unknown> = {
+        updatedAt: FieldValue.serverTimestamp(),
+        status: "ready",
+        workQueue: true,
+      };
+      if (typeof row.durationSec === "number") patch.durationSec = row.durationSec;
+      if (isHighlight) patch.filmKind = "highlight";
+      if (classified?.device) patch.captureDevice = classified.device;
+      if (row.publishedAt) patch.publishedAt = row.publishedAt;
+      if (row.thumbnailUrl) patch.thumbnailUrl = row.thumbnailUrl;
+      if (!existingLabel.trim() && label) patch.label = label;
+      await ref.set(patch, { merge: true });
+    };
+
     const existing = await filmCol
       .where("youtubeVideoId", "==", row.videoId)
       .limit(1)
@@ -237,13 +267,13 @@ export async function syncGameCapMogoChannelToInbox(
     if (!existing.empty) {
       skippedExisting += 1;
       const doc = existing.docs[0]!;
+      const existingLabel =
+        typeof doc.data().label === "string" ? doc.data().label : "";
+      await patchExisting(doc.ref, existingLabel);
       sources.push({
         id: doc.id,
         videoId: row.videoId,
-        label:
-          typeof doc.data().label === "string"
-            ? doc.data().label
-            : row.title,
+        label: existingLabel || label,
       });
       continue;
     }
@@ -255,20 +285,19 @@ export async function syncGameCapMogoChannelToInbox(
       .get();
     if (!existingVid.empty) {
       skippedExisting += 1;
+      const doc = existingVid.docs[0]!;
+      const existingLabel =
+        typeof doc.data().label === "string" ? doc.data().label : "";
+      await patchExisting(doc.ref, existingLabel);
+      sources.push({
+        id: doc.id,
+        videoId: row.videoId,
+        label: existingLabel || label,
+      });
       continue;
     }
 
     const sourceRef = filmCol.doc();
-    const classified = classifyGameCapChannelUpload(row.title, row.description);
-    const label =
-      classified?.label ||
-      row.title.replace(/\.mov$/i, "").trim() ||
-      row.videoId;
-    const shortEnough =
-      typeof row.durationSec === "number" &&
-      row.durationSec > 0 &&
-      row.durationSec <= HIGHLIGHT_MAX_DURATION_SEC;
-    const isHighlight = Boolean(classified?.isHighlight || shortEnough);
     await sourceRef.set({
       id: sourceRef.id,
       ownerUid: uid,

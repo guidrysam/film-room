@@ -5,6 +5,22 @@ export type FilmLengthFilter = "all" | "under10";
 
 export const FILM_HIGHLIGHT_MAX_SEC = 10 * 60;
 
+/** True when YouTube duration is known and longer than the highlight cutoff. */
+export function isFilmKnownLongerThan(
+  source: FilmSource,
+  maxSec = FILM_HIGHLIGHT_MAX_SEC,
+): boolean {
+  return (
+    typeof source.durationSec === "number" &&
+    Number.isFinite(source.durationSec) &&
+    source.durationSec > maxSec
+  );
+}
+
+/**
+ * Known-short clips, or highlight-tagged when duration was never stored.
+ * Older inbox rows often lack durationSec — those are not "known short".
+ */
 export function isFilmUnderTenMinutes(
   source: FilmSource,
   maxSec = FILM_HIGHLIGHT_MAX_SEC,
@@ -13,6 +29,19 @@ export function isFilmUnderTenMinutes(
     return source.durationSec <= maxSec;
   }
   return source.filmKind === "highlight";
+}
+
+/**
+ * Under-10 filter: hide only full games we *know* are long.
+ * Unknown duration stays visible so older imports aren't wiped from the list.
+ */
+export function matchesLengthFilter(
+  source: FilmSource,
+  length: FilmLengthFilter,
+  maxSec = FILM_HIGHLIGHT_MAX_SEC,
+): boolean {
+  if (length === "all") return true;
+  return !isFilmKnownLongerThan(source, maxSec);
 }
 
 export function isFilmReviewed(source: FilmSource): boolean {
@@ -77,7 +106,7 @@ export function filterFilmSources(
   return sources.filter((source) => {
     if (review === "unreviewed" && isFilmReviewed(source)) return false;
     if (review === "reviewed" && !isFilmReviewed(source)) return false;
-    if (length === "under10" && !isFilmUnderTenMinutes(source)) return false;
+    if (!matchesLengthFilter(source, length)) return false;
 
     if (fromMs != null || toMs != null) {
       const when = filmSourceDateMs(source);

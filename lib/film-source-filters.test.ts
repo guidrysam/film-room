@@ -4,10 +4,12 @@ import type { FilmSource } from "./film-sources";
 import {
   filterFilmSources,
   filmSourceDateMs,
+  isFilmKnownLongerThan,
   isFilmReviewed,
   isFilmUnderTenMinutes,
   localDateInputEndMs,
   localDateInputStartMs,
+  matchesLengthFilter,
 } from "./film-source-filters";
 
 function stub(overrides: Partial<FilmSource> = {}): FilmSource {
@@ -32,6 +34,13 @@ describe("film source filters", () => {
   it("uses duration for under-10-min", () => {
     assert.equal(isFilmUnderTenMinutes(stub({ durationSec: 540 })), true);
     assert.equal(isFilmUnderTenMinutes(stub({ durationSec: 1200 })), false);
+    assert.equal(isFilmKnownLongerThan(stub({ durationSec: 1200 })), true);
+    // Older imports without duration stay visible in the under-10 filter.
+    assert.equal(matchesLengthFilter(stub({}), "under10"), true);
+    assert.equal(
+      matchesLengthFilter(stub({ durationSec: 5400 }), "under10"),
+      false,
+    );
   });
 
   it("parses local date bounds", () => {
@@ -68,8 +77,14 @@ describe("film source filters", () => {
       length: "under10",
       review: "unreviewed",
     });
+    // Known-long "b" is reviewed anyway; unreviewed short/unknown = a + c
     assert.deepEqual(
       shortUnreviewed.map((r) => r.id).sort(),
+      ["a", "c"],
+    );
+    const under10All = filterFilmSources(rows, { length: "under10" });
+    assert.deepEqual(
+      under10All.map((r) => r.id).sort(),
       ["a", "c"],
     );
 

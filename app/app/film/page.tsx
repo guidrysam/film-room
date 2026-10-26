@@ -23,6 +23,7 @@ import {
   FILM_HIGHLIGHT_MAX_SEC,
   filterFilmSources,
   filmSourceDateMs,
+  isFilmKnownLongerThan,
   isFilmReviewed,
   isFilmUnderTenMinutes,
   type FilmLengthFilter,
@@ -77,7 +78,7 @@ export default function MyFilmPage() {
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [lengthFilter, setLengthFilter] =
-    useState<FilmLengthFilter>("under10");
+    useState<FilmLengthFilter>("all");
   const [reviewFilter, setReviewFilter] =
     useState<FilmReviewFilter>("unreviewed");
   const [searchQuery, setSearchQuery] = useState("");
@@ -133,13 +134,17 @@ export default function MyFilmPage() {
         const matched = json?.matched ?? 0;
         const skippedTooLong = json?.skippedTooLong ?? 0;
         if (mode === "under10") {
-          setLengthFilter("under10");
+          // Show the shorts that sync just matched — clear date traps first.
+          setSearchQuery("");
+          setDateFrom("");
+          setDateTo("");
           setReviewFilter("unreviewed");
+          setLengthFilter("under10");
           setSyncNote(
             imported > 0
               ? `Pulled ${imported} highlight-length clip${imported === 1 ? "" : "s"} (under 10 min).`
               : matched > 0
-                ? `Found ${matched} short clip${matched === 1 ? "" : "s"} — already in your queue or cleared.`
+                ? `Found ${matched} short clip${matched === 1 ? "" : "s"} — showing them below (dates cleared).`
                 : `Scanned ${json?.scanned ?? 0} videos — no new under-10-min Game Cap matches${
                     skippedTooLong
                       ? ` (${skippedTooLong} longer game${skippedTooLong === 1 ? "" : "s"} skipped)`
@@ -195,9 +200,12 @@ export default function MyFilmPage() {
       length: lengthFilter,
     });
     return [...rows].sort((a, b) => {
-      const ah = isFilmUnderTenMinutes(a) ? 0 : 1;
-      const bh = isFilmUnderTenMinutes(b) ? 0 : 1;
-      if (ah !== bh) return ah - bh;
+      // Known-short first, then unknown length, then anything else.
+      const rank = (s: typeof a) =>
+        isFilmUnderTenMinutes(s) ? 0 : isFilmKnownLongerThan(s) ? 2 : 1;
+      const ar = rank(a);
+      const br = rank(b);
+      if (ar !== br) return ar - br;
       return (filmSourceDateMs(b) ?? 0) - (filmSourceDateMs(a) ?? 0);
     });
   }, [sources, searchQuery, dateFrom, dateTo, reviewFilter, lengthFilter]);
@@ -210,6 +218,16 @@ export default function MyFilmPage() {
     () => sources.filter((s) => !isFilmReviewed(s)).length,
     [sources],
   );
+  const hiddenByLength = useMemo(() => {
+    if (lengthFilter !== "under10") return 0;
+    return filterFilmSources(sources, {
+      query: searchQuery,
+      dateFrom,
+      dateTo,
+      review: reviewFilter,
+      length: "all",
+    }).filter((s) => isFilmKnownLongerThan(s)).length;
+  }, [sources, searchQuery, dateFrom, dateTo, reviewFilter, lengthFilter]);
   const hasActiveSearch =
     Boolean(searchQuery.trim()) ||
     Boolean(dateFrom) ||
@@ -371,7 +389,7 @@ export default function MyFilmPage() {
               : ""}
             {typeof source.durationSec === "number" && source.durationSec > 0
               ? ` · ${formatDurationShort(source.durationSec)}`
-              : ""}
+              : " · length unknown"}
             {source.marksImported ? ` · ${source.marksImported} marks` : ""}
             {whenMs
               ? ` · ${new Date(whenMs).toLocaleString()}`
@@ -576,6 +594,7 @@ export default function MyFilmPage() {
                 From
                 <input
                   type="date"
+                  autoComplete="off"
                   className={`${inputClass} mt-1`}
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
@@ -585,12 +604,32 @@ export default function MyFilmPage() {
                 To
                 <input
                   type="date"
+                  autoComplete="off"
                   className={`${inputClass} mt-1`}
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
                 />
               </label>
             </div>
+            {dateFrom || dateTo ? (
+              <p className="text-[11px] text-amber-200/90">
+                Date filter is on
+                {dateFrom || dateTo
+                  ? ` (${dateFrom || "…"} → ${dateTo || "…"})`
+                  : ""}
+                — season clips outside this range stay hidden.{" "}
+                <button
+                  type="button"
+                  className="underline hover:text-amber-100"
+                  onClick={() => {
+                    setDateFrom("");
+                    setDateTo("");
+                  }}
+                >
+                  Clear dates
+                </button>
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2 pt-1">
               {(
                 [
@@ -665,11 +704,44 @@ export default function MyFilmPage() {
               uploads appear here when you sync.
             </p>
           ) : filteredSources.length === 0 ? (
-            <p className="text-sm text-zinc-500">
-              {sources.length === 0
-                ? "No film yet. Use Sync YouTube → Highlights only (under 10 min)."
-                : "No clips match these filters. Clear filters or widen the date range."}
-            </p>
+            <div className="space-y-2 text-sm text-zinc-500">
+              <p>
+                {sources.length === 0
+                  ? "No film yet. Use Sync YouTube → Highlights only (under 10 min)."
+                  : dateFrom || dateTo
+                    ? `Nothing in ${dateFrom || "…"} → ${dateTo || "…"}. Your ${unreviewedCount} unreviewed clip${unreviewedCount === 1 ? "" : "s"} are on other days.`
+                    : reviewFilter === "unreviewed" && unreviewedCount === 0
+                      ? "Nothing unreviewed — try Reviewed or All status."
+                      : hiddenByLength > 0
+                        ? `${hiddenByLength} clip${hiddenByLength === 1 ? "" : "s"} look like full games (over 10 min). Switch to Any length to see them.`
+                        : "No clips match these filters. Clear filters or widen the date range."}
+              </p>
+              {sources.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {dateFrom || dateTo ? (
+                    <button
+                      type="button"
+                      className={primaryBtn}
+                      onClick={() => {
+                        setDateFrom("");
+                        setDateTo("");
+                        setLengthFilter("under10");
+                        setReviewFilter("unreviewed");
+                      }}
+                    >
+                      Clear dates & show shorts
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={ghostBtn}
+                    onClick={clearSearch}
+                  >
+                    Show everything
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : (
             <ul className="space-y-3">
               {filteredSources.map((s) => renderSource(s))}
