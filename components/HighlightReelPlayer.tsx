@@ -36,12 +36,16 @@ import { reelStepTransitionKind } from "@/lib/highlight-reel-event";
 import {
   REEL_FADE_IN_MS,
   REEL_FADE_OUT_MS,
-  REEL_USE_BLACK_TRANSITIONS,
   delayMs,
   reelPlaybackStartSec,
   reelPrerollWallMs,
-  reelTransitionLeadSec,
 } from "@/lib/highlight-reel-transition";
+import {
+  REEL_USE_STACKED_PLAYERS,
+  reelDeckAtInPoint,
+  reelDeckMinPrerollWallMs,
+  reelStackStageLeadSec,
+} from "@/lib/highlight-reel-stack";
 import { computeKenBurnsScale } from "@/lib/highlight-ken-burns";
 import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
 
@@ -59,6 +63,13 @@ const YT_CUED = 5;
 type YouTubePlayerWithCue = YouTubePlayer & {
   loadVideoById?: (o: { videoId: string; startSeconds?: number }) => void;
   cueVideoById?: (o: { videoId: string; startSeconds?: number }) => void;
+};
+
+type DeckTarget = {
+  index: number;
+  pass: number;
+  videoId: string;
+  startedAt: number;
 };
 
 export type HighlightReelPlayerHandle = {
@@ -86,7 +97,7 @@ export type HighlightReelPlayerProps = {
    * When set, YouTube segment audio is muted so the song is the bed.
    */
   soundtrackUrl?: string | null;
-  /** Sponsor logos cycled on black cuts between clips. */
+  /** Sponsor logos cycled on cuts between clips. */
   sponsors?: HighlightSponsorLogo[] | null;
   /** Custom thank-you copy on sponsor cuts (default if omitted). */
   thankYouMessage?: string | null;
@@ -122,7 +133,11 @@ const HighlightReelPlayer = forwardRef<
   ref,
 ) {
   const [playing, setPlaying] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [readySlots, setReadySlots] = useState<[boolean, boolean]>([
+    false,
+    false,
+  ]);
+  const [frontSlot, setFrontSlot] = useState(0);
   const [fadeOpaque, setFadeOpaque] = useState(false);
   const [interstitial, setInterstitial] = useState<ReelInterstitialCard | null>(
     null,
@@ -130,10 +145,16 @@ const HighlightReelPlayer = forwardRef<
   const [kenBurnsScale, setKenBurnsScale] = useState(1);
   const [liveScore, setLiveScore] = useState<ScoreboardState | null>(null);
 
-  const playerRef = useRef<YouTubePlayer | null>(null);
+  const playersRef = useRef<[YouTubePlayer | null, YouTubePlayer | null]>([
+    null,
+    null,
+  ]);
+  const loadedVideoIdsRef = useRef<[string | null, string | null]>([
+    null,
+    null,
+  ]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const loadedVideoIdRef = useRef<string | null>(null);
   const stepsRef = useRef(steps);
   const titleCardRef = useRef(titleCard);
   const scoreboardRef = useRef(scoreboard);
@@ -141,6 +162,9 @@ const HighlightReelPlayer = forwardRef<
   const sponsorsRef = useRef(sponsors);
   const thankYouMessageRef = useRef(thankYouMessage);
   const cutIndexRef = useRef(0);
+  const frontSlotRef = useRef(0);
+  const videoIdForSourceRef = useRef(videoIdForSource);
+
   useEffect(() => {
     stepsRef.current = steps;
   });
@@ -159,19 +183,30 @@ const HighlightReelPlayer = forwardRef<
   useEffect(() => {
     thankYouMessageRef.current = thankYouMessage;
   });
+  useEffect(() => {
+    videoIdForSourceRef.current = videoIdForSource;
+  });
+  useEffect(() => {
+    frontSlotRef.current = frontSlot;
+  }, [frontSlot]);
 
   const playingRef = useRef(false);
   const stepIndexRef = useRef(-1);
   const repeatPassRef = useRef(0);
   const pendingPlayRef = useRef(false);
   const transitioningRef = useRef(false);
-  const preTransitionArmRef = useRef(false);
   const finishingRef = useRef(false);
   const playSeqRef = useRef(0);
   const seekSettledAtRef = useRef(0);
   const lastPlayKickAtRef = useRef(0);
   const lastObservedTimeRef = useRef(0);
   const lastTimeAdvanceAtRef = useRef(0);
+  const deckTargetRef = useRef<DeckTarget | null>(null);
+  const deckReadyRef = useRef<DeckTarget | null>(null);
+  const stagingRef = useRef(false);
+
+  const bothReady = readySlots[0] && readySlots[1];
+  const ready = REEL_USE_STACKED_PLAYERS ? bothReady : readySlots[0];
 
   const setPlayingState = useCallback(
     (next: boolean) => {
@@ -261,17 +296,23 @@ const HighlightReelPlayer = forwardRef<
     [captureRef],
   );
 
+  const deckSlotOf = useCallback((front: number) => (front === 0 ? 1 : 0), []);
+
   const syncPlayerSize = useCallback((player?: YouTubePlayer | null) => {
     const el = stageRef.current;
-    const pl = player ?? playerRef.current;
-    if (!el || !pl) return;
+    if (!el) return;
     const w = Math.round(el.clientWidth);
     const h = Math.round(el.clientHeight);
     if (w < 2 || h < 2) return;
-    try {
-      pl.setSize?.(w, h);
-    } catch {
-      /* player not ready */
+    const targets = player
+      ? [player]
+      : playersRef.current.filter(Boolean);
+    for (const pl of targets) {
+      try {
+        pl?.setSize?.(w, h);
+      } catch {
+        /* player not ready */
+      }
     }
   }, []);
 
@@ -297,21 +338,35 @@ const HighlightReelPlayer = forwardRef<
     }
   }, []);
 
-  const applyYouTubeMuteForSoundtrack = useCallback((player?: YouTubePlayer | null) => {
-    const pl = player ?? playerRef.current;
-    if (!pl) return;
+  const mutePlayer = useCallback((player: YouTubePlayer | null | undefined) => {
+    if (!player) return;
     try {
-      if (soundtrackUrlRef.current) {
-        pl.mute?.();
-        pl.setVolume?.(0);
-      } else {
-        pl.unMute?.();
-        pl.setVolume?.(100);
-      }
+      player.mute?.();
+      player.setVolume?.(0);
     } catch {
-      /* player not ready */
+      /* ignore */
     }
   }, []);
+
+  const applyFrontAudio = useCallback(
+    (player?: YouTubePlayer | null) => {
+      const pl =
+        player ?? playersRef.current[frontSlotRef.current] ?? null;
+      if (!pl) return;
+      try {
+        if (soundtrackUrlRef.current) {
+          pl.mute?.();
+          pl.setVolume?.(0);
+        } else {
+          pl.unMute?.();
+          pl.setVolume?.(100);
+        }
+      } catch {
+        /* player not ready */
+      }
+    },
+    [],
+  );
 
   const stopSoundtrack = useCallback(() => {
     const audio = audioRef.current;
@@ -332,12 +387,12 @@ const HighlightReelPlayer = forwardRef<
       typeof audio.volume === "number" && Number.isFinite(audio.volume)
         ? audio.volume
         : 1;
-    const steps = 24;
-    const dt = Math.max(16, ms / steps);
-    for (let i = 1; i <= steps; i += 1) {
+    const n = 24;
+    const dt = Math.max(16, ms / n);
+    for (let i = 1; i <= n; i += 1) {
       if (seq !== playSeqRef.current) return;
       try {
-        audio.volume = Math.max(0, startVol * (1 - i / steps));
+        audio.volume = Math.max(0, startVol * (1 - i / n));
       } catch {
         break;
       }
@@ -369,53 +424,111 @@ const HighlightReelPlayer = forwardRef<
   }, []);
 
   useEffect(() => {
-    applyYouTubeMuteForSoundtrack();
-  }, [soundtrackUrl, ready, applyYouTubeMuteForSoundtrack]);
+    applyFrontAudio();
+  }, [soundtrackUrl, ready, frontSlot, applyFrontAudio]);
 
-  /** Park on the first segment without cue/load thrash (matches Review embed). */
-  const cueIdlePreview = useCallback(
-    (player: YouTubePlayer) => {
-      if (playingRef.current) return;
-      const step = stepsRef.current[0];
-      if (!step) return;
-      const videoId = videoIdForSource(step.sourceId);
+  const loadOnSlot = useCallback(
+    (
+      slot: number,
+      index: number,
+      pass: number,
+      opts: { preroll: boolean; play: boolean; mute: boolean },
+    ) => {
+      const player = playersRef.current[slot];
+      const step = stepsRef.current[index];
+      if (!player || !step) return;
+      const videoId = videoIdForSourceRef.current(step.sourceId);
       if (!videoId) return;
-      const start = Math.max(0, step.sourceStartTime);
+
+      const playbackStart = reelPlaybackStartSec(
+        step.sourceStartTime,
+        opts.preroll,
+        step.speed,
+      );
+      seekSettledAtRef.current = Date.now() + SEEK_SETTLE_MS;
+      lastObservedTimeRef.current = Math.max(0, playbackStart);
+      lastTimeAdvanceAtRef.current = Date.now();
+
       try {
-        if (loadedVideoIdRef.current === videoId) {
-          player.seekTo?.(start, true);
-          applyYouTubeMuteForSoundtrack(player);
-          return;
+        if (opts.mute) mutePlayer(player);
+        if (loadedVideoIdsRef.current[slot] === videoId) {
+          player.seekTo?.(playbackStart, true);
+          if (opts.play) player.playVideo?.();
+        } else {
+          loadedVideoIdsRef.current[slot] = videoId;
+          if (opts.play) {
+            (player as YouTubePlayerWithCue).loadVideoById?.({
+              videoId,
+              startSeconds: playbackStart,
+            });
+            window.setTimeout(() => kickPlayback(player), 180);
+          } else {
+            (player as YouTubePlayerWithCue).cueVideoById?.({
+              videoId,
+              startSeconds: playbackStart,
+            });
+          }
         }
-        const yt = player as YouTubePlayerWithCue;
-        yt.cueVideoById?.({ videoId, startSeconds: start });
-        loadedVideoIdRef.current = videoId;
-        applyYouTubeMuteForSoundtrack(player);
+        window.setTimeout(() => {
+          try {
+            player.setPlaybackRate?.(step.speed);
+            if (opts.mute) mutePlayer(player);
+            else if (slot === frontSlotRef.current) applyFrontAudio(player);
+            if (opts.play) kickPlayback(player);
+          } catch {
+            /* unsupported rate */
+          }
+        }, 120);
       } catch {
         /* player not ready */
       }
     },
-    [videoIdForSource, applyYouTubeMuteForSoundtrack],
+    [applyFrontAudio, kickPlayback, mutePlayer],
   );
 
-  const waitForSegmentPlaying = useCallback(
-    (index: number): Promise<void> => {
+  const cueIdlePreview = useCallback(
+    (player: YouTubePlayer, slot = 0) => {
+      if (playingRef.current) return;
+      const step = stepsRef.current[0];
+      if (!step) return;
+      const videoId = videoIdForSourceRef.current(step.sourceId);
+      if (!videoId) return;
+      const start = Math.max(0, step.sourceStartTime);
+      try {
+        if (loadedVideoIdsRef.current[slot] === videoId) {
+          player.seekTo?.(start, true);
+          applyFrontAudio(player);
+          return;
+        }
+        (player as YouTubePlayerWithCue).cueVideoById?.({
+          videoId,
+          startSeconds: start,
+        });
+        loadedVideoIdsRef.current[slot] = videoId;
+        applyFrontAudio(player);
+      } catch {
+        /* player not ready */
+      }
+    },
+    [applyFrontAudio],
+  );
+
+  const waitForSlotPlaying = useCallback(
+    (slot: number, index: number, usePreroll: boolean): Promise<void> => {
       return new Promise((resolve) => {
         const step = stepsRef.current[index];
         if (!step) {
           resolve();
           return;
         }
-        // Shared/mobile players often need longer than a few seconds to leave
-        // UNSTARTED after loadVideoById — keep kicking until deadline.
         const deadline = Date.now() + 10000;
         const playbackStart = reelPlaybackStartSec(
           step.sourceStartTime,
-          REEL_USE_BLACK_TRANSITIONS,
+          usePreroll,
           step.speed,
         );
         const check = () => {
-          const player = playerRef.current;
+          const player = playersRef.current[slot];
           if (!player) {
             resolve();
             return;
@@ -458,23 +571,111 @@ const HighlightReelPlayer = forwardRef<
     [kickPlayback],
   );
 
-  const waitUntilSourceTime = useCallback(
-    (targetTime: number, seq: number): Promise<void> => {
-      return new Promise((resolve) => {
-        const deadline = Date.now() + 8000;
+  const clearDeck = useCallback(() => {
+    deckTargetRef.current = null;
+    deckReadyRef.current = null;
+    stagingRef.current = false;
+  }, []);
+
+  const pauseSlot = useCallback((slot: number) => {
+    try {
+      playersRef.current[slot]?.pauseVideo?.();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /**
+   * Load next clip on the hidden deck, preroll muted through YouTube chrome,
+   * then pause at the highlight in-point until swap.
+   */
+  const stageOnDeck = useCallback(
+    async (index: number, pass: number, seq: number) => {
+      if (!REEL_USE_STACKED_PLAYERS) return;
+      if (!playingRef.current || seq !== playSeqRef.current) return;
+      const step = stepsRef.current[index];
+      if (!step) return;
+      const videoId = videoIdForSourceRef.current(step.sourceId);
+      if (!videoId) return;
+
+      const ready = deckReadyRef.current;
+      if (ready && ready.index === index && ready.pass === pass) return;
+      const target = deckTargetRef.current;
+      if (
+        stagingRef.current &&
+        target &&
+        target.index === index &&
+        target.pass === pass
+      ) {
+        return;
+      }
+
+      stagingRef.current = true;
+      deckReadyRef.current = null;
+      const front = frontSlotRef.current;
+      const deck = deckSlotOf(front);
+      const startedAt = Date.now();
+      deckTargetRef.current = { index, pass, videoId, startedAt };
+
+      mutePlayer(playersRef.current[deck]);
+      loadOnSlot(deck, index, pass, {
+        preroll: true,
+        play: true,
+        mute: true,
+      });
+
+      await waitForSlotPlaying(deck, index, true);
+      if (seq !== playSeqRef.current || !playingRef.current) {
+        stagingRef.current = false;
+        return;
+      }
+      if (
+        !deckTargetRef.current ||
+        deckTargetRef.current.index !== index ||
+        deckTargetRef.current.pass !== pass
+      ) {
+        stagingRef.current = false;
+        return;
+      }
+
+      const minWall = reelDeckMinPrerollWallMs();
+      const deadline = startedAt + minWall + 4000;
+      await new Promise<void>((resolve) => {
         const check = () => {
           if (seq !== playSeqRef.current || !playingRef.current) {
             resolve();
             return;
           }
-          const player = playerRef.current;
+          if (
+            !deckTargetRef.current ||
+            deckTargetRef.current.index !== index ||
+            deckTargetRef.current.pass !== pass
+          ) {
+            resolve();
+            return;
+          }
+          const player = playersRef.current[deck];
           if (!player) {
             resolve();
             return;
           }
           try {
             const current = player.getCurrentTime?.() ?? 0;
-            if (current >= targetTime - 0.05 || Date.now() >= deadline) {
+            const state = player.getPlayerState?.();
+            if (
+              state === YT_PAUSED ||
+              state === YT_CUED ||
+              state === YT_UNSTARTED ||
+              state === YT_BUFFERING
+            ) {
+              kickPlayback(player);
+            }
+            const wallOk = Date.now() - startedAt >= minWall;
+            if (wallOk && reelDeckAtInPoint(current, step.sourceStartTime)) {
+              resolve();
+              return;
+            }
+            if (Date.now() >= deadline) {
               resolve();
               return;
             }
@@ -482,220 +683,290 @@ const HighlightReelPlayer = forwardRef<
             resolve();
             return;
           }
-          window.setTimeout(check, 50);
+          window.setTimeout(check, 80);
         };
         check();
       });
+
+      if (seq !== playSeqRef.current || !playingRef.current) {
+        stagingRef.current = false;
+        return;
+      }
+      if (
+        !deckTargetRef.current ||
+        deckTargetRef.current.index !== index ||
+        deckTargetRef.current.pass !== pass
+      ) {
+        stagingRef.current = false;
+        return;
+      }
+
+      const player = playersRef.current[deck];
+      try {
+        // Park exactly on the in-point so the swap is frame-accurate.
+        player?.seekTo?.(step.sourceStartTime, true);
+        player?.pauseVideo?.();
+        mutePlayer(player);
+        player?.setPlaybackRate?.(step.speed);
+      } catch {
+        /* ignore */
+      }
+
+      deckReadyRef.current = { index, pass, videoId, startedAt };
+      stagingRef.current = false;
     },
-    [],
+    [deckSlotOf, kickPlayback, loadOnSlot, mutePlayer, waitForSlotPlaying],
   );
 
-  const loadStep = useCallback(
+  const maybeStageNext = useCallback(
+    (seq: number) => {
+      if (!REEL_USE_STACKED_PLAYERS) return;
+      if (!playingRef.current || finishingRef.current) return;
+      const cur = stepIndexRef.current;
+      if (cur < 0) return;
+      const step = stepsRef.current[cur];
+      if (!step) return;
+      const pass = repeatPassRef.current;
+      if (pass + 1 < step.repeat) {
+        void stageOnDeck(cur, pass + 1, seq);
+        return;
+      }
+      const next = cur + 1;
+      if (next >= stepsRef.current.length) return;
+      void stageOnDeck(next, 0, seq);
+    },
+    [stageOnDeck],
+  );
+
+  const promoteDeck = useCallback(
     (index: number, pass: number) => {
-      const player = playerRef.current;
-      const step = stepsRef.current[index];
-      if (!player || !step) return;
-      const videoId = videoIdForSource(step.sourceId);
-      if (!videoId) return;
+      const front = frontSlotRef.current;
+      const deck = deckSlotOf(front);
+      const nextFront = deck;
 
       stepIndexRef.current = index;
       repeatPassRef.current = pass;
-      seekSettledAtRef.current = Date.now() + SEEK_SETTLE_MS;
-      const playbackStart = reelPlaybackStartSec(
-        step.sourceStartTime,
-        REEL_USE_BLACK_TRANSITIONS,
-        step.speed,
-      );
-      lastObservedTimeRef.current = Math.max(0, playbackStart);
+      seekSettledAtRef.current = Date.now() + 250;
+      lastObservedTimeRef.current =
+        stepsRef.current[index]?.sourceStartTime ?? 0;
       lastTimeAdvanceAtRef.current = Date.now();
 
-      const start = playbackStart;
+      frontSlotRef.current = nextFront;
+      setFrontSlot(nextFront);
+
+      const newFront = playersRef.current[nextFront];
+      applyFrontAudio(newFront);
       try {
-        if (loadedVideoIdRef.current === videoId) {
-          player.seekTo(start, true);
-          player.playVideo?.();
-        } else {
-          loadedVideoIdRef.current = videoId;
-          (player as YouTubePlayerWithCue).loadVideoById?.({
-            videoId,
-            startSeconds: start,
-          });
-          if (playingRef.current) {
-            window.setTimeout(() => kickPlayback(player), 180);
-          }
-        }
-        window.setTimeout(() => {
-          try {
-            player.setPlaybackRate?.(step.speed);
-            applyYouTubeMuteForSoundtrack(player);
-            if (playingRef.current) kickPlayback(player);
-          } catch {
-            /* unsupported rate */
-          }
-        }, 120);
+        newFront?.playVideo?.();
+        if (newFront) kickPlayback(newFront);
       } catch {
-        /* player not ready */
+        /* ignore */
       }
+
+      pauseSlot(front);
+      mutePlayer(playersRef.current[front]);
+      clearDeck();
     },
-    [videoIdForSource, kickPlayback, applyYouTubeMuteForSoundtrack],
+    [applyFrontAudio, clearDeck, deckSlotOf, kickPlayback, mutePlayer, pauseSlot],
   );
 
-  const ensureSegmentPlaying = useCallback(
-    (index: number, pass: number, reuseIfSame: boolean) => {
-      const player = playerRef.current;
-      if (!player) return;
-      if (
-        reuseIfSame &&
-        stepIndexRef.current === index &&
-        repeatPassRef.current === pass
-      ) {
-        kickPlayback(player);
-        return;
-      }
-      loadStep(index, pass);
-    },
-    [kickPlayback, loadStep],
-  );
-
-  const presentSegmentUnderBlack = useCallback(
-    async (
-      index: number,
-      pass: number,
-      seq: number,
-      options?: { alreadyBlack?: boolean; segmentStarted?: boolean },
-    ) => {
-      const { alreadyBlack = false, segmentStarted = false } = options ?? {};
-      const step = stepsRef.current[index];
-      // Keep the title card on-screen through first-clip preroll so YouTube
-      // chrome stays covered under the branded black.
-      if (!(alreadyBlack && segmentStarted)) {
-        setInterstitial(step ? statInterstitialFromStep(step) : null);
-      }
-
-      const clearCover = () => {
+  const presentFirstUnderCover = useCallback(
+    async (seq: number, options?: { alreadyBlack?: boolean }) => {
+      const { alreadyBlack = false } = options ?? {};
+      const step = stepsRef.current[0];
+      if (!step) {
         setInterstitial(null);
         setFadeOpaque(false);
-      };
+        return;
+      }
+      if (!alreadyBlack) {
+        setInterstitial(statInterstitialFromStep(step));
+        setFadeOpaque(true);
+      }
+
+      const front = frontSlotRef.current;
+      stepIndexRef.current = 0;
+      repeatPassRef.current = 0;
+      loadOnSlot(front, 0, 0, { preroll: true, play: true, mute: true });
+      await waitForSlotPlaying(front, 0, true);
+      if (seq !== playSeqRef.current || !playingRef.current) return;
+
+      await delayMs(reelPrerollWallMs(step.speed));
+      if (seq !== playSeqRef.current || !playingRef.current) return;
 
       try {
-        if (!step) {
-          clearCover();
-          return;
-        }
-        if (!alreadyBlack) {
-          setFadeOpaque(true);
-          if (!segmentStarted) ensureSegmentPlaying(index, pass, false);
-          if (seq !== playSeqRef.current || !playingRef.current) return;
-        } else if (segmentStarted) {
-          // Force a fresh seek/play — reuse-only kick often no-ops while cued.
-          ensureSegmentPlaying(index, pass, false);
-        } else {
-          ensureSegmentPlaying(index, pass, false);
-        }
-
-        await waitForSegmentPlaying(index);
-        if (seq !== playSeqRef.current || !playingRef.current) return;
-
-        await delayMs(reelPrerollWallMs(step.speed));
-        if (seq !== playSeqRef.current || !playingRef.current) return;
-
-        clearCover();
-        await delayMs(REEL_FADE_OUT_MS);
+        const player = playersRef.current[front];
+        player?.seekTo?.(step.sourceStartTime, true);
+        applyFrontAudio(player);
+        player?.playVideo?.();
+        if (player) kickPlayback(player);
       } catch {
-        if (seq === playSeqRef.current) clearCover();
-      } finally {
-        if (seq !== playSeqRef.current || !playingRef.current) {
-          clearCover();
-        }
+        /* ignore */
       }
+
+      setInterstitial(null);
+      setFadeOpaque(false);
+      await delayMs(REEL_FADE_OUT_MS);
+      maybeStageNext(seq);
     },
-    [ensureSegmentPlaying, waitForSegmentPlaying],
+    [
+      applyFrontAudio,
+      kickPlayback,
+      loadOnSlot,
+      maybeStageNext,
+      waitForSlotPlaying,
+    ],
   );
 
-  const runPreRollTransition = useCallback(
-    async (
-      fromIndex: number,
-      toIndex: number,
-      toPass: number,
-      kind: "event" | "beat",
-    ) => {
+  /**
+   * Cut to the next segment via deck swap when ready; fall back to a short
+   * black cover only if the deck missed its preroll window.
+   */
+  const cutToNext = useCallback(
+    async (fromIndex: number, toIndex: number, toPass: number, seq: number) => {
       if (transitioningRef.current) return;
       transitioningRef.current = true;
-      preTransitionArmRef.current = true;
-      const seq = playSeqRef.current;
       const fromStep = stepsRef.current[fromIndex];
       const toStep = stepsRef.current[toIndex];
       if (!fromStep || !toStep) {
         transitioningRef.current = false;
-        preTransitionArmRef.current = false;
         return;
       }
 
       try {
+        const kind = reelStepTransitionKind(fromStep, toStep);
         const cut = cutIndexRef.current++;
         const sponsorCard = sponsorInterstitialForCut(
           sponsorsRef.current,
           cut,
           { message: thankYouMessageRef.current },
         );
+
+        const readyDeck =
+          deckReadyRef.current &&
+          deckReadyRef.current.index === toIndex &&
+          deckReadyRef.current.pass === toPass
+            ? deckReadyRef.current
+            : null;
+
         if (sponsorCard) {
           setInterstitial(sponsorCard);
-        } else if (kind === "event") {
-          setInterstitial(statInterstitialFromStep(toStep));
-        } else {
-          setInterstitial(null);
+          setFadeOpaque(true);
+          await delayMs(REEL_FADE_IN_MS + 400);
+          if (seq !== playSeqRef.current || !playingRef.current) return;
         }
-        setFadeOpaque(true);
+
+        if (REEL_USE_STACKED_PLAYERS && readyDeck) {
+          promoteDeck(toIndex, toPass);
+          if (sponsorCard) {
+            setInterstitial(null);
+            setFadeOpaque(false);
+            await delayMs(REEL_FADE_OUT_MS);
+          }
+          maybeStageNext(seq);
+          return;
+        }
+
+        // Fallback: deck not ready — brief black while we load on front.
+        if (!sponsorCard) {
+          if (kind === "event") {
+            setInterstitial(statInterstitialFromStep(toStep));
+          }
+          setFadeOpaque(true);
+          await delayMs(REEL_FADE_IN_MS);
+        }
         if (seq !== playSeqRef.current || !playingRef.current) return;
 
-        await waitUntilSourceTime(fromStep.sourceEndTime, seq);
-        if (seq !== playSeqRef.current || !playingRef.current) return;
-
-        ensureSegmentPlaying(toIndex, toPass, false);
-        await waitForSegmentPlaying(toIndex);
-        if (seq !== playSeqRef.current || !playingRef.current) return;
-
-        await delayMs(reelPrerollWallMs(toStep.speed));
-        if (seq !== playSeqRef.current || !playingRef.current) return;
+        if (REEL_USE_STACKED_PLAYERS) {
+          // Still try to finish staging then swap.
+          await stageOnDeck(toIndex, toPass, seq);
+          if (seq !== playSeqRef.current || !playingRef.current) return;
+          if (
+            deckReadyRef.current &&
+            deckReadyRef.current.index === toIndex &&
+            deckReadyRef.current.pass === toPass
+          ) {
+            promoteDeck(toIndex, toPass);
+          } else {
+            const front = frontSlotRef.current;
+            stepIndexRef.current = toIndex;
+            repeatPassRef.current = toPass;
+            loadOnSlot(front, toIndex, toPass, {
+              preroll: true,
+              play: true,
+              mute: true,
+            });
+            await waitForSlotPlaying(front, toIndex, true);
+            if (seq !== playSeqRef.current || !playingRef.current) return;
+            await delayMs(reelPrerollWallMs(toStep.speed));
+            if (seq !== playSeqRef.current || !playingRef.current) return;
+            try {
+              const player = playersRef.current[front];
+              player?.seekTo?.(toStep.sourceStartTime, true);
+              applyFrontAudio(player);
+              player?.playVideo?.();
+              if (player) kickPlayback(player);
+            } catch {
+              /* ignore */
+            }
+            clearDeck();
+          }
+        } else {
+          const front = frontSlotRef.current;
+          stepIndexRef.current = toIndex;
+          repeatPassRef.current = toPass;
+          loadOnSlot(front, toIndex, toPass, {
+            preroll: true,
+            play: true,
+            mute: true,
+          });
+          await waitForSlotPlaying(front, toIndex, true);
+          if (seq !== playSeqRef.current || !playingRef.current) return;
+          await delayMs(reelPrerollWallMs(toStep.speed));
+          applyFrontAudio(playersRef.current[front]);
+        }
 
         setInterstitial(null);
         setFadeOpaque(false);
         await delayMs(REEL_FADE_OUT_MS);
+        maybeStageNext(seq);
       } finally {
         transitioningRef.current = false;
-        preTransitionArmRef.current = false;
         if (seq !== playSeqRef.current || !playingRef.current) {
           setInterstitial(null);
           setFadeOpaque(false);
         }
       }
     },
-    [ensureSegmentPlaying, waitForSegmentPlaying, waitUntilSourceTime],
+    [
+      applyFrontAudio,
+      clearDeck,
+      kickPlayback,
+      loadOnSlot,
+      maybeStageNext,
+      promoteDeck,
+      stageOnDeck,
+      waitForSlotPlaying,
+    ],
   );
 
   const beginPlayback = useCallback(async () => {
     const seq = ++playSeqRef.current;
     cutIndexRef.current = 0;
     finishingRef.current = false;
+    clearDeck();
     setPlayingState(true);
     void startSoundtrack();
-    applyYouTubeMuteForSoundtrack();
-
-    if (!REEL_USE_BLACK_TRANSITIONS) {
-      setInterstitial(null);
-      setFadeOpaque(false);
-      loadStep(0, 0);
-      return;
-    }
 
     const title = titleCardRef.current;
-    let segmentStarted = false;
     try {
       if (title) {
         setInterstitial({ kind: "title", ...title });
         setFadeOpaque(true);
-        ensureSegmentPlaying(0, 0, false);
-        segmentStarted = true;
+        const front = frontSlotRef.current;
+        stepIndexRef.current = 0;
+        repeatPassRef.current = 0;
+        loadOnSlot(front, 0, 0, { preroll: true, play: true, mute: true });
         await delayMs(REEL_FADE_IN_MS);
         await delayMs(REEL_TITLE_HOLD_MS);
         if (seq !== playSeqRef.current) return;
@@ -704,12 +975,11 @@ const HighlightReelPlayer = forwardRef<
           setFadeOpaque(false);
           return;
         }
+        await presentFirstUnderCover(seq, { alreadyBlack: true });
+        return;
       }
 
-      await presentSegmentUnderBlack(0, 0, seq, {
-        alreadyBlack: !!title,
-        segmentStarted,
-      });
+      await presentFirstUnderCover(seq);
     } catch {
       if (seq === playSeqRef.current) {
         setInterstitial(null);
@@ -717,32 +987,12 @@ const HighlightReelPlayer = forwardRef<
       }
     }
   }, [
-    ensureSegmentPlaying,
-    loadStep,
-    presentSegmentUnderBlack,
+    clearDeck,
+    loadOnSlot,
+    presentFirstUnderCover,
     setPlayingState,
     startSoundtrack,
-    applyYouTubeMuteForSoundtrack,
   ]);
-
-  const transitionToNextStep = useCallback(
-    (fromIndex: number, nextIndex: number, pass: number) => {
-      if (!REEL_USE_BLACK_TRANSITIONS) {
-        loadStep(nextIndex, pass);
-        return;
-      }
-      const cur = stepsRef.current[fromIndex];
-      const next = stepsRef.current[nextIndex];
-      const kind = reelStepTransitionKind(cur, next);
-      void runPreRollTransition(
-        fromIndex,
-        nextIndex,
-        pass,
-        kind === "beat" ? "beat" : "event",
-      );
-    },
-    [loadStep, runPreRollTransition],
-  );
 
   const stop = useCallback(() => {
     playSeqRef.current += 1;
@@ -750,35 +1000,38 @@ const HighlightReelPlayer = forwardRef<
     setPlayingState(false);
     pendingPlayRef.current = false;
     transitioningRef.current = false;
-    preTransitionArmRef.current = false;
+    clearDeck();
     setFadeOpaque(false);
     setInterstitial(null);
     stepIndexRef.current = -1;
     repeatPassRef.current = 0;
     stopSoundtrack();
-    try {
-      playerRef.current?.pauseVideo?.();
-    } catch {
-      /* ignore */
+    for (const pl of playersRef.current) {
+      try {
+        pl?.pauseVideo?.();
+      } catch {
+        /* ignore */
+      }
     }
-  }, [setPlayingState, stopSoundtrack]);
+  }, [clearDeck, setPlayingState, stopSoundtrack]);
 
   const finishReel = useCallback(async () => {
     if (finishingRef.current) return;
     finishingRef.current = true;
     const seq = playSeqRef.current;
     transitioningRef.current = true;
-    preTransitionArmRef.current = true;
 
     const endCard = buildReelEndCard(sponsorsRef.current, {
       message: thankYouMessageRef.current,
     });
     setInterstitial(endCard);
     setFadeOpaque(true);
-    try {
-      playerRef.current?.pauseVideo?.();
-    } catch {
-      /* ignore */
+    for (const pl of playersRef.current) {
+      try {
+        pl?.pauseVideo?.();
+      } catch {
+        /* ignore */
+      }
     }
 
     try {
@@ -793,18 +1046,17 @@ const HighlightReelPlayer = forwardRef<
       }
       finishingRef.current = false;
       transitioningRef.current = false;
-      preTransitionArmRef.current = false;
+      clearDeck();
       setPlayingState(false);
       stepIndexRef.current = -1;
       repeatPassRef.current = 0;
-      // Leave the end card up; a later Stop / Play clears it.
       onEnded?.();
     }
-  }, [fadeSoundtrackOut, onEnded, setPlayingState]);
+  }, [clearDeck, fadeSoundtrackOut, onEnded, setPlayingState]);
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
-    if (!playerRef.current || !ready) {
+    if (!ready) {
       pendingPlayRef.current = true;
       setPlayingState(true);
       return;
@@ -814,10 +1066,9 @@ const HighlightReelPlayer = forwardRef<
 
   useImperativeHandle(ref, () => ({ play, stop }), [play, stop]);
 
-  /** Shared watch page: start after Watch while player finishes becoming ready. */
   useEffect(() => {
     if (!autoPlay || playingRef.current) return;
-    if (!ready || !playerRef.current) {
+    if (!ready) {
       pendingPlayRef.current = true;
       return;
     }
@@ -826,9 +1077,9 @@ const HighlightReelPlayer = forwardRef<
 
   useEffect(() => {
     if (!ready || playingRef.current) return;
-    const player = playerRef.current;
+    const player = playersRef.current[0];
     if (!player) return;
-    const id = window.setTimeout(() => cueIdlePreview(player), 120);
+    const id = window.setTimeout(() => cueIdlePreview(player, 0), 120);
     return () => window.clearTimeout(id);
   }, [steps, ready, cueIdlePreview]);
 
@@ -845,7 +1096,7 @@ const HighlightReelPlayer = forwardRef<
         return;
       }
       const step = stepsRef.current[stepIndexRef.current];
-      const player = playerRef.current;
+      const player = playersRef.current[frontSlotRef.current];
       if (
         !step?.kenBurns ||
         !player ||
@@ -878,11 +1129,19 @@ const HighlightReelPlayer = forwardRef<
   useEffect(() => {
     if (!playing) return;
     const id = window.setInterval(() => {
-      const player = playerRef.current;
-      if (!player || !playingRef.current || transitioningRef.current || finishingRef.current) return;
+      if (
+        !playingRef.current ||
+        transitioningRef.current ||
+        finishingRef.current
+      ) {
+        return;
+      }
+      const front = frontSlotRef.current;
+      const player = playersRef.current[front];
       const step = stepsRef.current[stepIndexRef.current];
-      if (!step) return;
+      if (!player || !step) return;
       if (Date.now() < seekSettledAtRef.current) return;
+
       let current = 0;
       let state: number | undefined;
       try {
@@ -891,6 +1150,7 @@ const HighlightReelPlayer = forwardRef<
       } catch {
         return;
       }
+
       if (
         Number.isFinite(current) &&
         current > lastObservedTimeRef.current + 0.08
@@ -917,55 +1177,51 @@ const HighlightReelPlayer = forwardRef<
         /* ignore */
       }
       syncScoreboardFromPlayback(current, step);
+
+      const seq = playSeqRef.current;
       const pass = repeatPassRef.current;
       const nextIndex = stepIndexRef.current + 1;
       const hasNextStep = nextIndex < stepsRef.current.length;
+      const hasNextPass = pass + 1 < step.repeat;
 
-      if (
-        REEL_USE_BLACK_TRANSITIONS &&
-        !transitioningRef.current &&
-        !preTransitionArmRef.current &&
-        pass + 1 >= step.repeat &&
-        hasNextStep
-      ) {
-        const leadSec = reelTransitionLeadSec(step);
-        if (leadSec > 0 && current >= step.sourceEndTime - leadSec) {
-          transitionToNextStep(stepIndexRef.current, nextIndex, 0);
-          return;
-        }
+      // Eagerly stage the next on-deck clip while this one runs.
+      if (REEL_USE_STACKED_PLAYERS) {
+        const lead = reelStackStageLeadSec(step, step.speed);
+        const shouldStage =
+          lead <= 0
+            ? current >= step.sourceStartTime + 0.35
+            : current >= step.sourceEndTime - lead;
+        if (shouldStage) maybeStageNext(seq);
       }
 
       if (current >= step.sourceEndTime - 0.05) {
-        if (pass + 1 < step.repeat) {
-          loadStep(stepIndexRef.current, pass + 1);
+        if (hasNextPass) {
+          void cutToNext(stepIndexRef.current, stepIndexRef.current, pass + 1, seq);
           return;
         }
         if (!hasNextStep) {
           void finishReel();
           return;
         }
-        if (REEL_USE_BLACK_TRANSITIONS) {
-          if (!transitioningRef.current && !preTransitionArmRef.current) {
-            transitionToNextStep(stepIndexRef.current, nextIndex, 0);
-          }
-        } else {
-          loadStep(nextIndex, 0);
-        }
+        void cutToNext(stepIndexRef.current, nextIndex, 0, seq);
       }
     }, POLL_MS);
     return () => window.clearInterval(id);
   }, [
     playing,
-    loadStep,
-    transitionToNextStep,
+    cutToNext,
     finishReel,
     kickPlayback,
+    maybeStageNext,
     syncScoreboardFromPlayback,
   ]);
 
-  const handleYoutubeStateChange = useCallback(
-    (event: { data: number; target: YouTubePlayer }) => {
+  const handleSlotStateChange = useCallback(
+    (slot: number, event: { data: number; target: YouTubePlayer }) => {
       if (!playingRef.current || finishingRef.current) return;
+      // Only nudge the front player; deck is intentionally paused when ready.
+      if (slot !== frontSlotRef.current) return;
+      if (transitioningRef.current) return;
       const state = event.data;
       if (
         state === YT_PAUSED ||
@@ -975,12 +1231,12 @@ const HighlightReelPlayer = forwardRef<
         kickPlayback(event.target);
       }
       if (state === YT_ENDED) {
-        if (transitioningRef.current || preTransitionArmRef.current) return;
         const pass = repeatPassRef.current;
         const step = stepsRef.current[stepIndexRef.current];
         if (!step) return;
+        const seq = playSeqRef.current;
         if (pass + 1 < step.repeat) {
-          loadStep(stepIndexRef.current, pass + 1);
+          void cutToNext(stepIndexRef.current, stepIndexRef.current, pass + 1, seq);
           return;
         }
         const nextIndex = stepIndexRef.current + 1;
@@ -988,11 +1244,36 @@ const HighlightReelPlayer = forwardRef<
           void finishReel();
           return;
         }
-        transitionToNextStep(stepIndexRef.current, nextIndex, 0);
+        void cutToNext(stepIndexRef.current, nextIndex, 0, seq);
       }
     },
-    [kickPlayback, loadStep, finishReel, transitionToNextStep],
+    [cutToNext, finishReel, kickPlayback],
   );
+
+  const markSlotReady = useCallback(
+    (slot: number, player: YouTubePlayer) => {
+      playersRef.current[slot] = player;
+      syncPlayerSize(player);
+      setReadySlots((prev) => {
+        if (prev[slot]) return prev;
+        const next: [boolean, boolean] = [...prev];
+        next[slot] = true;
+        return next;
+      });
+      if (slot === 0 && loadedVideoIdsRef.current[0] == null && firstVideoId) {
+        loadedVideoIdsRef.current[0] = firstVideoId;
+      }
+    },
+    [firstVideoId, syncPlayerSize],
+  );
+
+  useEffect(() => {
+    if (!ready || !pendingPlayRef.current) return;
+    pendingPlayRef.current = false;
+    void beginPlayback();
+  }, [ready, beginPlayback]);
+
+  const slotIds = REEL_USE_STACKED_PLAYERS ? [0, 1] : [0];
 
   return (
     <div
@@ -1001,7 +1282,8 @@ const HighlightReelPlayer = forwardRef<
           ? "h-full w-full"
           : "rounded-lg border border-white/[0.08]"
       }`}
-    >      <audio ref={audioRef} preload="auto" className="hidden" />
+    >
+      <audio ref={audioRef} preload="auto" className="hidden" />
       <div
         ref={setStageNode}
         data-reel-capture
@@ -1011,37 +1293,37 @@ const HighlightReelPlayer = forwardRef<
       >
         {firstVideoId ? (
           <YoutubeChromelessStage className="absolute inset-0 h-full w-full overflow-hidden bg-black">
-            <div
-              className="h-full w-full"
-              style={{
-                transform:
-                  playing && kenBurnsScale !== 1
-                    ? `scale(${kenBurnsScale})`
-                    : undefined,
-                transformOrigin: "center center",
-              }}
-            >
-              <YouTube
-                key={firstVideoId}
-                videoId={firstVideoId}
-                className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
-                iframeClassName="h-full w-full"
-                opts={youtubeOpts}
-                onReady={(e) => {
-                  playerRef.current = e.target;
-                  loadedVideoIdRef.current = firstVideoId;
-                  syncPlayerSize(e.target);
-                  setReady(true);
-                  if (pendingPlayRef.current) {
-                    pendingPlayRef.current = false;
-                    void beginPlayback();
-                    return;
-                  }
-                  cueIdlePreview(e.target);
-                }}
-                onStateChange={handleYoutubeStateChange}
-              />
-            </div>
+            {slotIds.map((slot) => {
+              const isFront = frontSlot === slot;
+              return (
+                <div
+                  key={slot}
+                  className="absolute inset-0 h-full w-full overflow-hidden"
+                  style={{
+                    zIndex: isFront ? 20 : 10,
+                    opacity: isFront ? 1 : 0.01,
+                    transform:
+                      isFront && playing && kenBurnsScale !== 1
+                        ? `scale(${kenBurnsScale})`
+                        : undefined,
+                    transformOrigin: "center center",
+                  }}
+                  aria-hidden={!isFront}
+                >
+                  <YouTube
+                    videoId={firstVideoId}
+                    className="h-full w-full [&>iframe]:h-full [&>iframe]:w-full"
+                    iframeClassName="h-full w-full"
+                    opts={youtubeOpts}
+                    onReady={(e) => {
+                      markSlotReady(slot, e.target);
+                      if (slot === 0) cueIdlePreview(e.target, 0);
+                    }}
+                    onStateChange={(e) => handleSlotStateChange(slot, e)}
+                  />
+                </div>
+              );
+            })}
           </YoutubeChromelessStage>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
@@ -1049,22 +1331,20 @@ const HighlightReelPlayer = forwardRef<
           </div>
         )}
 
-        {REEL_USE_BLACK_TRANSITIONS && interstitial && fadeOpaque ? (
+        {interstitial && fadeOpaque ? (
           <div className="pointer-events-none absolute inset-0 z-[45] bg-black">
             <ReelInterstitial card={interstitial} />
           </div>
         ) : null}
 
-        {REEL_USE_BLACK_TRANSITIONS ? (
-          <div
-            className="pointer-events-none absolute inset-0 z-40 bg-black transition-opacity ease-in-out"
-            style={{
-              opacity: fadeOpaque ? 1 : 0,
-              transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
-            }}
-            aria-hidden
-          />
-        ) : null}
+        <div
+          className="pointer-events-none absolute inset-0 z-40 bg-black transition-opacity ease-in-out"
+          style={{
+            opacity: fadeOpaque ? 1 : 0,
+            transitionDuration: `${fadeOpaque ? REEL_FADE_IN_MS : REEL_FADE_OUT_MS}ms`,
+          }}
+          aria-hidden
+        />
 
         {liveScore && !fadeOpaque ? (
           <MatchScoreboardOverlay score={liveScore} />
@@ -1088,7 +1368,7 @@ const HighlightReelPlayer = forwardRef<
           <span className="text-[10px] text-zinc-500">
             {steps.length} segment{steps.length === 1 ? "" : "s"}
             {soundtrackUrl ? " · song bed" : ""}
-            {!REEL_USE_BLACK_TRANSITIONS ? " · direct cuts (no black)" : ""}
+            {REEL_USE_STACKED_PLAYERS ? " · stacked cuts" : ""}
           </span>
         </div>
       ) : null}
