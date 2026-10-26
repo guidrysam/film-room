@@ -51,6 +51,8 @@ export type FilmSource = {
   captureDevice?: FilmCaptureDevice;
   /** Highlight-titled channel uploads vs full-game film. */
   filmKind?: FilmKind;
+  /** YouTube publish time (ISO) when imported from channel sync. */
+  publishedAt?: string;
   clubId?: string;
   teamId?: string;
   gameId?: string;
@@ -131,6 +133,9 @@ export function parseFilmSource(
     ...(raw.filmKind === "highlight" || raw.filmKind === "full"
       ? { filmKind: raw.filmKind }
       : {}),
+    ...(trimOrUndef(raw.publishedAt)
+      ? { publishedAt: String(raw.publishedAt) }
+      : {}),
     createdAt:
       raw.createdAt && typeof raw.createdAt === "object"
         ? (raw.createdAt as Timestamp)
@@ -192,7 +197,7 @@ export type UserYouTubeUploadPublic = {
 
 export async function listMyFilmSources(
   uid: string,
-  max = 40,
+  max = 200,
 ): Promise<FilmSource[]> {
   const q = query(
     filmSourcesCol(uid),

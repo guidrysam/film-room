@@ -20,6 +20,15 @@ import {
   type UserYouTubeUploadPublic,
 } from "@/lib/film-sources";
 import {
+  FILM_HIGHLIGHT_MAX_SEC,
+  filterFilmSources,
+  filmSourceDateMs,
+  isFilmReviewed,
+  isFilmUnderTenMinutes,
+  type FilmLengthFilter,
+  type FilmReviewFilter,
+} from "@/lib/film-source-filters";
+import {
   addGameSourceFromDriveUpload,
   addGameSourceFromYouTubeUpload,
   createGame,
@@ -40,9 +49,9 @@ const primaryBtn =
 
 const linkBack = "text-sm text-zinc-400 transition hover:text-zinc-100";
 
-const HIGHLIGHT_MAX_SEC = 10 * 60;
+const inputClass =
+  "w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5 text-xs text-white placeholder:text-zinc-600";
 
-type QueueFilter = "all" | "under10";
 type SyncMode = "all" | "under10";
 
 function formatDurationShort(sec: number): string {
@@ -56,13 +65,6 @@ function formatDurationShort(sec: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
-function isUnderTenMinutes(source: FilmSource): boolean {
-  if (typeof source.durationSec === "number" && source.durationSec > 0) {
-    return source.durationSec <= HIGHLIGHT_MAX_SEC;
-  }
-  return source.filmKind === "highlight";
-}
-
 export default function MyFilmPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
@@ -74,7 +76,13 @@ export default function MyFilmPage() {
   const [listLoading, setListLoading] = useState(false);
   const [syncNote, setSyncNote] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>("under10");
+  const [lengthFilter, setLengthFilter] =
+    useState<FilmLengthFilter>("under10");
+  const [reviewFilter, setReviewFilter] =
+    useState<FilmReviewFilter>("unreviewed");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
 
   const loadList = useCallback(async () => {
@@ -106,7 +114,7 @@ export default function MyFilmPage() {
           },
           body: JSON.stringify(
             mode === "under10"
-              ? { maxDurationSec: HIGHLIGHT_MAX_SEC }
+              ? { maxDurationSec: FILM_HIGHLIGHT_MAX_SEC }
               : {},
           ),
         });
@@ -125,7 +133,8 @@ export default function MyFilmPage() {
         const matched = json?.matched ?? 0;
         const skippedTooLong = json?.skippedTooLong ?? 0;
         if (mode === "under10") {
-          setQueueFilter("under10");
+          setLengthFilter("under10");
+          setReviewFilter("unreviewed");
           setSyncNote(
             imported > 0
               ? `Pulled ${imported} highlight-length clip${imported === 1 ? "" : "s"} (under 10 min).`
@@ -177,37 +186,44 @@ export default function MyFilmPage() {
     void refresh();
   }, [refresh]);
 
-  const workQueueAll = useMemo(() => {
-    const open = sources.filter(
-      (s) => !s.reviewGameId && (s.kind === "youtube" || s.youtubeVideoId),
-    );
-    return [...open].sort((a, b) => {
-      const ah = isUnderTenMinutes(a) ? 0 : 1;
-      const bh = isUnderTenMinutes(b) ? 0 : 1;
-      if (ah !== bh) return ah - bh;
-      return (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0);
+  const filteredSources = useMemo(() => {
+    const rows = filterFilmSources(sources, {
+      query: searchQuery,
+      dateFrom,
+      dateTo,
+      review: reviewFilter,
+      length: lengthFilter,
     });
-  }, [sources]);
-
-  const workQueue = useMemo(
-    () =>
-      queueFilter === "under10"
-        ? workQueueAll.filter(isUnderTenMinutes)
-        : workQueueAll,
-    [workQueueAll, queueFilter],
-  );
+    return [...rows].sort((a, b) => {
+      const ah = isFilmUnderTenMinutes(a) ? 0 : 1;
+      const bh = isFilmUnderTenMinutes(b) ? 0 : 1;
+      if (ah !== bh) return ah - bh;
+      return (filmSourceDateMs(b) ?? 0) - (filmSourceDateMs(a) ?? 0);
+    });
+  }, [sources, searchQuery, dateFrom, dateTo, reviewFilter, lengthFilter]);
 
   const shortCount = useMemo(
-    () => workQueueAll.filter(isUnderTenMinutes).length,
-    [workQueueAll],
-  );
-  const rest = useMemo(
-    () =>
-      sources.filter(
-        (s) => Boolean(s.reviewGameId) || !(s.kind === "youtube" || s.youtubeVideoId),
-      ),
+    () => sources.filter((s) => isFilmUnderTenMinutes(s)).length,
     [sources],
   );
+  const unreviewedCount = useMemo(
+    () => sources.filter((s) => !isFilmReviewed(s)).length,
+    [sources],
+  );
+  const hasActiveSearch =
+    Boolean(searchQuery.trim()) ||
+    Boolean(dateFrom) ||
+    Boolean(dateTo) ||
+    reviewFilter !== "all" ||
+    lengthFilter !== "all";
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setDateFrom("");
+    setDateTo("");
+    setReviewFilter("all");
+    setLengthFilter("all");
+  };
 
   const setKind = async (source: FilmSource, organizeKind: FilmOrganizeKind) => {
     if (!user) return;
@@ -328,7 +344,10 @@ export default function MyFilmPage() {
     );
   }
 
-  const renderSource = (source: FilmSource, queued: boolean) => (
+  const renderSource = (source: FilmSource) => {
+    const reviewed = isFilmReviewed(source);
+    const whenMs = filmSourceDateMs(source);
+    return (
     <li
       key={source.id}
       className="rounded-lg border border-white/[0.06] bg-black/20 px-3 py-3"
@@ -339,21 +358,23 @@ export default function MyFilmPage() {
             {formatGameCapMogoDisplayName(source.label) || source.label}
           </p>
           <p className="mt-0.5 text-[11px] text-zinc-500">
+            {reviewed ? "reviewed" : "unreviewed"}
+            {" · "}
             {source.organizeKind}
             {source.captureDevice === "tripod"
               ? " · Tripod"
               : source.captureDevice === "mogo"
                 ? " · MOGO"
                 : ""}
-            {source.filmKind === "highlight" || isUnderTenMinutes(source)
+            {source.filmKind === "highlight" || isFilmUnderTenMinutes(source)
               ? " · highlight"
               : ""}
             {typeof source.durationSec === "number" && source.durationSec > 0
               ? ` · ${formatDurationShort(source.durationSec)}`
               : ""}
             {source.marksImported ? ` · ${source.marksImported} marks` : ""}
-            {source.createdAt
-              ? ` · ${source.createdAt.toDate().toLocaleString()}`
+            {whenMs
+              ? ` · ${new Date(whenMs).toLocaleString()}`
               : ""}
           </p>
         </div>
@@ -425,7 +446,7 @@ export default function MyFilmPage() {
             }}
           />
         ) : null}
-        {queued ? (
+        {!reviewed ? (
           <button
             type="button"
             className={ghostBtn}
@@ -449,13 +470,14 @@ export default function MyFilmPage() {
           Linked to a team game
         </p>
       ) : null}
-      {queued ? (
+      {!reviewed ? (
         <p className="mt-2 text-[11px] text-zinc-600">
           Work item — Review it or Clear (stays on YouTube, won’t reappear).
         </p>
       ) : null}
     </li>
-  );
+    );
+  };
 
   return (
     <div className="mx-auto min-h-screen max-w-2xl px-4 py-10 text-zinc-50">
@@ -491,10 +513,10 @@ export default function MyFilmPage() {
         <section className={panelClass}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-white">
-              To review{workQueue.length ? ` (${workQueue.length})` : ""}
-              {shortCount
-                ? ` · ${shortCount} under 10 min`
-                : ""}
+              Film library
+              {filteredSources.length ? ` (${filteredSources.length})` : ""}
+              {unreviewedCount ? ` · ${unreviewedCount} unreviewed` : ""}
+              {shortCount ? ` · ${shortCount} under 10 min` : ""}
             </h2>
             <div className="flex flex-wrap gap-2">
               <div className="relative">
@@ -538,29 +560,92 @@ export default function MyFilmPage() {
             </div>
           </div>
 
-          <div className="mb-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={`${ghostBtn} ${
-                queueFilter === "under10"
-                  ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
-                  : ""
-              }`}
-              onClick={() => setQueueFilter("under10")}
-            >
-              Under 10 min
-            </button>
-            <button
-              type="button"
-              className={`${ghostBtn} ${
-                queueFilter === "all"
-                  ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
-                  : ""
-              }`}
-              onClick={() => setQueueFilter("all")}
-            >
-              All
-            </button>
+          <div className="mb-3 space-y-2 rounded-lg border border-white/[0.06] bg-black/25 p-3">
+            <label className="block text-[11px] text-zinc-500">
+              Search
+              <input
+                type="search"
+                className={`${inputClass} mt-1`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Title, Tripod, highlight…"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-[11px] text-zinc-500">
+                From
+                <input
+                  type="date"
+                  className={`${inputClass} mt-1`}
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                />
+              </label>
+              <label className="block text-[11px] text-zinc-500">
+                To
+                <input
+                  type="date"
+                  className={`${inputClass} mt-1`}
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {(
+                [
+                  ["unreviewed", "Unreviewed"],
+                  ["reviewed", "Reviewed"],
+                  ["all", "All status"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`${ghostBtn} ${
+                    reviewFilter === value
+                      ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                      : ""
+                  }`}
+                  onClick={() => setReviewFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={`${ghostBtn} ${
+                  lengthFilter === "under10"
+                    ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                    : ""
+                }`}
+                onClick={() => setLengthFilter("under10")}
+              >
+                Under 10 min
+              </button>
+              <button
+                type="button"
+                className={`${ghostBtn} ${
+                  lengthFilter === "all"
+                    ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                    : ""
+                }`}
+                onClick={() => setLengthFilter("all")}
+              >
+                Any length
+              </button>
+              {hasActiveSearch ? (
+                <button
+                  type="button"
+                  className={ghostBtn}
+                  onClick={clearSearch}
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {error ? (
@@ -579,31 +664,18 @@ export default function MyFilmPage() {
               Connect YouTube upload above — then Game Cap MOGO and Tripod
               uploads appear here when you sync.
             </p>
-          ) : workQueue.length === 0 ? (
+          ) : filteredSources.length === 0 ? (
             <p className="text-sm text-zinc-500">
-              {queueFilter === "under10" && workQueueAll.length > 0
-                ? "Nothing under 10 minutes in the queue. Switch to All to see full games, or Sync → Highlights only."
-                : queueFilter === "under10"
-                  ? "No short clips yet. Use Sync YouTube → Highlights only (under 10 min)."
-                  : "No open work. Sync YouTube for MOGO/Tripod film, or filter to Under 10 min for highlight-length cuts."}
+              {sources.length === 0
+                ? "No film yet. Use Sync YouTube → Highlights only (under 10 min)."
+                : "No clips match these filters. Clear filters or widen the date range."}
             </p>
           ) : (
             <ul className="space-y-3">
-              {workQueue.map((s) => renderSource(s, true))}
+              {filteredSources.map((s) => renderSource(s))}
             </ul>
           )}
         </section>
-
-        {rest.length > 0 ? (
-          <section className={panelClass}>
-            <h2 className="mb-3 text-sm font-semibold text-white">
-              Reviewed / other
-            </h2>
-            <ul className="space-y-3">
-              {rest.map((s) => renderSource(s, false))}
-            </ul>
-          </section>
-        ) : null}
       </div>
     </div>
   );
