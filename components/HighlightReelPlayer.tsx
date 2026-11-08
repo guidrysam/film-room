@@ -47,7 +47,10 @@ import {
   reelStackStageLeadSec,
 } from "@/lib/highlight-reel-stack";
 import { computeKenBurnsScale } from "@/lib/highlight-ken-burns";
-import { YOUTUBE_CHROMELESS_PLAYER_VARS } from "@/lib/youtube-player-vars";
+import {
+  disableYouTubeCaptions,
+  YOUTUBE_CHROMELESS_PLAYER_VARS,
+} from "@/lib/youtube-player-vars";
 
 const POLL_MS = 150;
 const SEEK_SETTLE_MS = 900;
@@ -481,6 +484,7 @@ const HighlightReelPlayer = forwardRef<
         }
         window.setTimeout(() => {
           try {
+            disableYouTubeCaptions(player);
             player.setPlaybackRate?.(step.speed);
             if (opts.mute) mutePlayer(player);
             else if (slot === frontSlotRef.current) applyFrontAudio(player);
@@ -1394,6 +1398,7 @@ const HighlightReelPlayer = forwardRef<
                     iframeClassName="h-full w-full"
                     opts={youtubeOpts}
                     onReady={(e) => {
+                      disableYouTubeCaptions(e.target);
                       markSlotReady(slot, e.target);
                       if (slot === 0) cueIdlePreview(e.target, 0);
                     }}
