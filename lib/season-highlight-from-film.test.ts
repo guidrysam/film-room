@@ -7,6 +7,7 @@ import {
   seasonHighlightChapterSeeds,
   SEASON_CLIP_DEFAULT_DURATION_SEC,
 } from "./season-highlight-from-film";
+import { SEASON_PLAY_CYCLE_SEC } from "./season-highlight-split";
 import type { FilmSource } from "./film-sources";
 
 function stub(overrides: Partial<FilmSource> = {}): FilmSource {
@@ -39,19 +40,20 @@ describe("season highlight from film", () => {
     );
   });
 
-  it("builds live + slow-mo reel moments at 1x", () => {
-    const clip = filmSourceToSeasonClip(stub())!;
-    const moments = momentInputsForSeasonClip("src1", clip);
-    assert.equal(moments.length, 2);
-    assert.equal(moments[0]!.activeSourceId, "src1");
+  it("builds play live + slow-mo reel moments at 1x on a virtual timeline", () => {
+    const clip = filmSourceToSeasonClip(
+      stub({ durationSec: SEASON_PLAY_CYCLE_SEC * 2 }),
+    )!;
+    const cursor = 100;
+    const moments = momentInputsForSeasonClip("src1", clip, cursor);
+    // 2 plays × 2 segments
+    assert.equal(moments.length, 4);
+    assert.equal(moments[0]!.gameTime, cursor);
     assert.equal(moments[0]!.startOffsetSec, 0);
-    assert.equal(moments[0]!.endOffsetSec, 90);
     assert.equal(moments[0]!.speed, 1);
-    assert.match(moments[0]!.label ?? "", /Live/);
-    assert.equal(moments[1]!.startOffsetSec, 90);
-    assert.equal(moments[1]!.endOffsetSec, 180);
-    assert.equal(moments[1]!.speed, 1);
-    assert.match(moments[1]!.label ?? "", /Slow-mo/);
+    assert.match(moments[0]!.label ?? "", /Play 1 · Live/);
+    assert.match(moments[2]!.label ?? "", /Play 2 · Live/);
+    assert.ok((moments[2]!.gameTime ?? 0) > cursor);
   });
 
   it("falls back when duration is missing", () => {
@@ -65,18 +67,18 @@ describe("season highlight from film", () => {
     );
   });
 
-  it("seeds Film Room chapters per clip segment", () => {
+  it("seeds Film Room chapters per play segment", () => {
     const chapters = seasonHighlightChapterSeeds([
       {
         id: "a",
         label: "Clip A",
         youtubeVideoId: "abcdefghijk",
-        durationSec: 100,
+        durationSec: SEASON_PLAY_CYCLE_SEC * 2,
       },
     ]);
-    assert.equal(chapters.length, 2);
+    assert.equal(chapters.length, 4);
     assert.equal(chapters[0]!.videoId, "abcdefghijk");
     assert.equal(chapters[0]!.time, 0);
-    assert.equal(chapters[1]!.time, 50);
+    assert.match(chapters[0]!.label, /Play 1 · Live/);
   });
 });

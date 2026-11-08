@@ -1,15 +1,21 @@
 /**
- * Game Cap / MOGO-style highlight VODs are usually already cut as:
- *   real-time action → baked slow-mo of the same play.
+ * Game Cap / MOGO-style highlight VODs are usually a sequence of plays,
+ * each already cut as: real-time action → baked slow-mo of the same play.
  *
- * We auto-mark both halves at 1× playback (do NOT use Instant Replay 0.5× —
- * the slomo is already in the pixels).
+ * We auto-mark every play (and both halves) at 1× playback — do NOT use
+ * Instant Replay 0.5×; the slomo is already in the pixels.
+ *
+ * Cycle length is a heuristic until we have cut detection / AI. Tune via
+ * SEASON_PLAY_CYCLE_SEC if your exports are consistently shorter/longer.
  */
 
-/** Fraction of the VOD treated as live before the baked slomo starts. */
+/** Typical length of one live + slow-mo play pair in a highlight export. */
+export const SEASON_PLAY_CYCLE_SEC = 30;
+
+/** Fraction of each play treated as live before baked slomo. */
 export const SEASON_HIGHLIGHT_LIVE_RATIO = 0.5;
 
-/** Minimum live / slomo window so tiny clips still get two usable marks. */
+/** Minimum live / slomo window so tiny segments stay usable. */
 export const SEASON_HIGHLIGHT_MIN_SEGMENT_SEC = 2;
 
 export type SeasonHighlightSegmentKind = "live" | "slomo";
@@ -21,19 +27,39 @@ export type SeasonHighlightSegment = {
   /** Source-local end (seconds). */
   endSec: number;
   label: "Live" | "Slow-mo";
+  /** 1-based play index within the VOD. */
+  playIndex: number;
+};
+
+export type SeasonHighlightPlay = {
+  playIndex: number;
+  startSec: number;
+  endSec: number;
+  segments: SeasonHighlightSegment[];
 };
 
 /**
- * Split a highlight VOD into live + baked slow-mo windows.
- * Returns a single full-clip live segment when the file is too short to split.
+ * Split one play window [playStart, playEnd) into live + baked slow-mo.
  */
-export function seasonHighlightSegmentsForDuration(
-  durationSec: number,
+export function seasonHighlightSegmentsForPlayWindow(
+  playStartSec: number,
+  playEndSec: number,
+  playIndex: number,
   opts?: { liveRatio?: number },
 ): SeasonHighlightSegment[] {
-  const duration = Math.max(0, durationSec);
+  const start = Math.max(0, playStartSec);
+  const end = Math.max(start, playEndSec);
+  const duration = end - start;
   if (duration <= 0) {
-    return [{ kind: "live", startSec: 0, endSec: 0, label: "Live" }];
+    return [
+      {
+        kind: "live",
+        startSec: start,
+        endSec: start,
+        label: "Live",
+        playIndex,
+      },
+    ];
   }
 
   const ratio = Math.min(
@@ -44,22 +70,101 @@ export function seasonHighlightSegmentsForDuration(
 
   if (duration < minSeg * 2) {
     return [
-      { kind: "live", startSec: 0, endSec: duration, label: "Live" },
+      {
+        kind: "live",
+        startSec: start,
+        endSec: end,
+        label: "Live",
+        playIndex,
+      },
     ];
   }
 
-  let split = duration * ratio;
-  split = Math.min(duration - minSeg, Math.max(minSeg, split));
+  let split = start + duration * ratio;
+  split = Math.min(end - minSeg, Math.max(start + minSeg, split));
 
   return [
-    { kind: "live", startSec: 0, endSec: split, label: "Live" },
+    {
+      kind: "live",
+      startSec: start,
+      endSec: split,
+      label: "Live",
+      playIndex,
+    },
     {
       kind: "slomo",
       startSec: split,
-      endSec: duration,
+      endSec: end,
       label: "Slow-mo",
+      playIndex,
     },
   ];
+}
+
+/**
+ * Break a full highlight VOD into plays, then live + slow-mo within each.
+ * Short clips (< ~1.5 cycles) stay a single play.
+ */
+export function seasonPlaysForDuration(
+  durationSec: number,
+  opts?: { cycleSec?: number; liveRatio?: number },
+): SeasonHighlightPlay[] {
+  const duration = Math.max(0, durationSec);
+  if (duration <= 0) {
+    return [
+      {
+        playIndex: 1,
+        startSec: 0,
+        endSec: 0,
+        segments: seasonHighlightSegmentsForPlayWindow(0, 0, 1, opts),
+      },
+    ];
+  }
+
+  const cycle = Math.max(
+    SEASON_HIGHLIGHT_MIN_SEGMENT_SEC * 2,
+    opts?.cycleSec ?? SEASON_PLAY_CYCLE_SEC,
+  );
+
+  // One play if the whole file is shorter than ~1.5 cycles.
+  if (duration <= cycle * 1.5) {
+    return [
+      {
+        playIndex: 1,
+        startSec: 0,
+        endSec: duration,
+        segments: seasonHighlightSegmentsForPlayWindow(0, duration, 1, opts),
+      },
+    ];
+  }
+
+  const playCount = Math.max(1, Math.round(duration / cycle));
+  const plays: SeasonHighlightPlay[] = [];
+  for (let i = 0; i < playCount; i++) {
+    const playIndex = i + 1;
+    const startSec = (duration * i) / playCount;
+    const endSec = (duration * (i + 1)) / playCount;
+    plays.push({
+      playIndex,
+      startSec,
+      endSec,
+      segments: seasonHighlightSegmentsForPlayWindow(
+        startSec,
+        endSec,
+        playIndex,
+        opts,
+      ),
+    });
+  }
+  return plays;
+}
+
+/** Flat list of live/slomo segments across all plays (source-local times). */
+export function seasonHighlightSegmentsForDuration(
+  durationSec: number,
+  opts?: { cycleSec?: number; liveRatio?: number },
+): SeasonHighlightSegment[] {
+  return seasonPlaysForDuration(durationSec, opts).flatMap((p) => p.segments);
 }
 
 export function seasonSegmentMarkLabel(
@@ -67,5 +172,5 @@ export function seasonSegmentMarkLabel(
   segment: SeasonHighlightSegment,
 ): string {
   const base = clipLabel.trim() || "Highlight";
-  return `${base} · ${segment.label}`;
+  return `${base} · Play ${segment.playIndex} · ${segment.label}`;
 }

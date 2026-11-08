@@ -2,10 +2,10 @@
  * Build a season highlight session from selected My Film YouTube clips.
  *
  * Flow:
- * 1. Private game + one YouTube source per clip (queue order)
- * 2. Auto-mark each clip as Live then baked Slow-mo (Game Cap format)
- * 3. Highlight reel from those marks (playback rate 1× — slomo is in the VOD)
- * 4. Film Room clip queue so you can browse / tweak marks like a session
+ * 1. Private game + one YouTube source per clip on a virtual timeline
+ * 2. Auto-break each clip into plays (Live → baked Slow-mo each)
+ * 3. Highlight reel from those segments — delete ones you don't want
+ * 4. Film Room clip queue for browsing like a session
  *
  * Team separation comes later.
  */
@@ -31,6 +31,7 @@ import {
 } from "@/lib/open-season-highlight-room";
 import {
   seasonHighlightSegmentsForDuration,
+  seasonPlaysForDuration,
   seasonSegmentMarkLabel,
 } from "@/lib/season-highlight-split";
 
@@ -79,28 +80,35 @@ export function seasonClipDurationSec(clip: SeasonHighlightClipInput): number {
   return SEASON_CLIP_DEFAULT_DURATION_SEC;
 }
 
-/** Reel moments for one clip: Live then Slow-mo (both speed 1). */
+/**
+ * Reel moments for one clip: every play's Live + Slow-mo (speed 1).
+ * gameTimeCursor = start of this clip on the season virtual timeline.
+ */
 export function momentInputsForSeasonClip(
   sourceId: string,
   clip: SeasonHighlightClipInput,
+  gameTimeCursor = 0,
 ): AddHighlightMomentInput[] {
   const duration = seasonClipDurationSec(clip);
   return seasonHighlightSegmentsForDuration(duration).map((seg) => ({
-    gameTime: 0,
+    // Mark sits at the segment start on the virtual timeline; offsets are
+    // relative to that mark so sourceTime = gameTime + offset maps correctly
+    // when the source has offsetFromGameTime = -gameTimeCursor.
+    gameTime: gameTimeCursor + seg.startSec,
     activeSourceId: sourceId,
-    startOffsetSec: seg.startSec,
-    endOffsetSec: seg.endSec,
+    startOffsetSec: 0,
+    endOffsetSec: Math.max(0, seg.endSec - seg.startSec),
     label: seasonSegmentMarkLabel(clip.label, seg),
     speed: 1,
   }));
 }
 
-/** @deprecated Use momentInputsForSeasonClip (live + slomo). */
+/** @deprecated Prefer momentInputsForSeasonClip. */
 export function momentInputForSeasonClip(
   sourceId: string,
   clip: SeasonHighlightClipInput,
 ): AddHighlightMomentInput {
-  const moments = momentInputsForSeasonClip(sourceId, clip);
+  const moments = momentInputsForSeasonClip(sourceId, clip, 0);
   return moments[0] ?? {
     gameTime: 0,
     activeSourceId: sourceId,
@@ -134,11 +142,12 @@ export type CreateSeasonHighlightResult = {
   roomUrl: string;
   clipCount: number;
   markCount: number;
+  playCount: number;
 };
 
 /**
- * Create a private game, auto-mark Live + Slow-mo per clip, build a reel from
- * those marks, and open a Film Room clip queue for the banquet session.
+ * Create a private game, auto-break each clip into plays, build a reel from
+ * those segments, and open a Film Room clip queue for browsing.
  */
 export async function createSeasonHighlightFromClips(
   uid: string,
@@ -169,28 +178,34 @@ export async function createSeasonHighlightFromClips(
 
   const moments: AddHighlightMomentInput[] = [];
   let markCount = 0;
+  let playCount = 0;
+  let gameTimeCursor = 0;
 
   for (const clip of clips) {
     const duration = seasonClipDurationSec(clip);
+    const plays = seasonPlaysForDuration(duration);
+    playCount += plays.length;
+
+    // Virtual timeline: each clip occupies [cursor, cursor+duration).
+    // offset so sourceTime 0 aligns with gameTime cursor.
     const sourceId = await addGameSourceFromYouTubeUpload(gameId, uid, {
       videoId: clip.youtubeVideoId,
       label: clip.label,
       youtubePrivacyStatus: "unlisted",
-      offsetFromGameTime: 0,
+      offsetFromGameTime: -gameTimeCursor,
       syncStatus: "manually_synced",
       ...(typeof clip.durationSec === "number"
         ? { durationSec: clip.durationSec }
         : {}),
     });
 
-    const segs = seasonHighlightSegmentsForDuration(duration);
-    for (const seg of segs) {
+    for (const seg of seasonHighlightSegmentsForDuration(duration)) {
       const label = seasonSegmentMarkLabel(clip.label, seg);
       await addGameEvent(
         gameId,
         {
           type: "coach_mark",
-          t: seg.startSec,
+          t: gameTimeCursor + seg.startSec,
           label,
           sourceId,
           createdBy: uid,
@@ -200,6 +215,7 @@ export async function createSeasonHighlightFromClips(
           payload: {
             videoId: clip.youtubeVideoId,
             seasonSegment: seg.kind,
+            seasonPlayIndex: seg.playIndex,
             segmentStartSec: seg.startSec,
             segmentEndSec: seg.endSec,
             autoMarked: true,
@@ -210,7 +226,10 @@ export async function createSeasonHighlightFromClips(
       markCount += 1;
     }
 
-    moments.push(...momentInputsForSeasonClip(sourceId, clip));
+    moments.push(
+      ...momentInputsForSeasonClip(sourceId, clip, gameTimeCursor),
+    );
+    gameTimeCursor += duration;
   }
 
   const draftId = await createHighlightReel(gameId, uid, {
@@ -244,5 +263,6 @@ export async function createSeasonHighlightFromClips(
     roomUrl,
     clipCount: clips.length,
     markCount,
+    playCount,
   };
 }

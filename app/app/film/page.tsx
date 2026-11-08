@@ -319,11 +319,11 @@ export default function MyFilmPage() {
       setSyncNote(
         `Season session ready — ${result.clipCount} clip${
           result.clipCount === 1 ? "" : "s"
-        }, ${result.markCount} auto-marks (Live + Slow-mo). Opening Film Room…`,
+        }, ${result.playCount} plays auto-marked (${result.markCount} Live/Slow-mo segments). Remove any you don’t want in the reel.`,
       );
-      // Clip queue session first; reel studio is linked from the game / room.
+      // Reel studio first so you can drop weak plays; Film Room stays linked.
       router.push(
-        `${result.roomUrl}&draft=${encodeURIComponent(result.draftId)}`,
+        `/game/${result.gameId}/reel?draft=${encodeURIComponent(result.draftId)}&room=${encodeURIComponent(result.roomId)}`,
       );
     } catch (e) {
       setError(
@@ -956,8 +956,8 @@ export default function MyFilmPage() {
                 {selectedCount} clip{selectedCount === 1 ? "" : "s"} selected
               </p>
               <p className="text-[11px] text-zinc-500">
-                Opens a Film Room queue with Live + Slow-mo marks, then a
-                season reel.
+                Auto-breaks each clip into plays (Live → Slow-mo). Pick the
+                best in the reel studio.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

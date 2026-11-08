@@ -208,6 +208,7 @@ export default function HighlightReelStudio({
 }: HighlightReelStudioProps) {
   const searchParams = useSearchParams();
   const draftParam = searchParams.get("draft");
+  const seasonRoomId = searchParams.get("room")?.trim() || null;
 
   const playableSources = useMemo(
     () => sources.filter((s) => gameSourceToVideoAngle(s) != null),
@@ -1309,13 +1310,28 @@ export default function HighlightReelStudio({
               Highlight Reel Studio
             </p>
             <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-              Build a highlight reel from every angle, then share a watch link
-              with parents and players — no screen recording needed.
+              {seasonRoomId
+                ? "Season plays were auto-marked (Live → Slow-mo). Remove any you don’t want, then share a watch link for the banquet."
+                : "Build a highlight reel from every angle, then share a watch link with parents and players — no screen recording needed."}
             </p>
           </div>
-          <button type="button" onClick={startNewReel} className={ghostBtn}>
-            + New reel
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {seasonRoomId ? (
+              <a
+                href={`/room/${encodeURIComponent(seasonRoomId)}?gameId=${encodeURIComponent(gameId)}&season=1${
+                  draftParam
+                    ? `&draft=${encodeURIComponent(draftParam)}`
+                    : ""
+                }`}
+                className={ghostBtn}
+              >
+                Film Room queue
+              </a>
+            ) : null}
+            <button type="button" onClick={startNewReel} className={ghostBtn}>
+              + New reel
+            </button>
+          </div>
         </div>
 
         {reels.length > 0 ? (
