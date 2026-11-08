@@ -39,6 +39,7 @@ import {
 import {
   createSeasonHighlightFromClips,
   filmSourceToSeasonClip,
+  type SeasonSegmentFilter,
 } from "@/lib/season-highlight-from-film";
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
@@ -94,6 +95,8 @@ export default function MyFilmPage() {
   /** Ordered selection for season highlight (YouTube clips only). */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [buildingSeason, setBuildingSeason] = useState(false);
+  const [seasonSegmentFilter, setSeasonSegmentFilter] =
+    useState<SeasonSegmentFilter>("slomo");
   const [preview, setPreview] = useState<{
     videoId: string;
     title: string;
@@ -314,12 +317,19 @@ export default function MyFilmPage() {
       }
       const result = await createSeasonHighlightFromClips(user.uid, clips, {
         createdByName: user.displayName || undefined,
+        segmentFilter: seasonSegmentFilter,
       });
       setSelectedIds([]);
+      const filterNote =
+        seasonSegmentFilter === "slomo"
+          ? "slow-mo only"
+          : seasonSegmentFilter === "live"
+            ? "live only"
+            : "live + slow-mo";
       setSyncNote(
         `Season session ready — ${result.clipCount} clip${
           result.clipCount === 1 ? "" : "s"
-        }, ${result.playCount} plays auto-marked (${result.markCount} Live/Slow-mo segments). Remove any you don’t want in the reel.`,
+        }, ${result.playCount} plays (${result.markCount} ${filterNote} segments). Remove any you don’t want in the reel.`,
       );
       // Reel studio first so you can drop weak plays; Film Room stays linked.
       router.push(
@@ -950,15 +960,38 @@ export default function MyFilmPage() {
 
       {selectedCount > 0 ? (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-white/10 bg-zinc-950/95 px-4 py-3 shadow-[0_-8px_30px_rgba(0,0,0,0.45)] backdrop-blur">
-          <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-3">
+          <div className="mx-auto flex max-w-2xl flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="text-sm font-medium text-white">
                 {selectedCount} clip{selectedCount === 1 ? "" : "s"} selected
               </p>
               <p className="text-[11px] text-zinc-500">
-                Auto-breaks each clip into plays (Live → Slow-mo). Pick the
-                best in the reel studio.
+                Auto-breaks each clip into plays. Choose Live, Slow-mo, or
+                both — then drop any you don’t want in the reel studio.
               </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {(
+                  [
+                    ["slomo", "Slow-mo only"],
+                    ["live", "Live only"],
+                    ["all", "Live + Slow-mo"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    disabled={buildingSeason}
+                    className={`${ghostBtn} ${
+                      seasonSegmentFilter === value
+                        ? "border-blue-500/40 bg-blue-950/40 text-blue-100"
+                        : ""
+                    }`}
+                    onClick={() => setSeasonSegmentFilter(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -977,7 +1010,9 @@ export default function MyFilmPage() {
               >
                 {buildingSeason
                   ? "Building…"
-                  : "Make season highlight"}
+                  : seasonSegmentFilter === "slomo"
+                    ? "Make slow-mo reel"
+                    : "Make season highlight"}
               </button>
             </div>
           </div>

@@ -30,10 +30,14 @@ import {
   type SeasonRoomChapterSeed,
 } from "@/lib/open-season-highlight-room";
 import {
+  filterSeasonHighlightSegments,
   seasonHighlightSegmentsForDuration,
   seasonPlaysForDuration,
   seasonSegmentMarkLabel,
+  type SeasonSegmentFilter,
 } from "@/lib/season-highlight-split";
+
+export type { SeasonSegmentFilter };
 
 /** Fallback when a short clip has no stored duration. */
 export const SEASON_CLIP_DEFAULT_DURATION_SEC = 90;
@@ -81,16 +85,20 @@ export function seasonClipDurationSec(clip: SeasonHighlightClipInput): number {
 }
 
 /**
- * Reel moments for one clip: every play's Live + Slow-mo (speed 1).
+ * Reel moments for one clip: play segments at speed 1 (baked slomo stays 1×).
  * gameTimeCursor = start of this clip on the season virtual timeline.
  */
 export function momentInputsForSeasonClip(
   sourceId: string,
   clip: SeasonHighlightClipInput,
   gameTimeCursor = 0,
+  segmentFilter: SeasonSegmentFilter = "all",
 ): AddHighlightMomentInput[] {
   const duration = seasonClipDurationSec(clip);
-  return seasonHighlightSegmentsForDuration(duration).map((seg) => ({
+  return filterSeasonHighlightSegments(
+    seasonHighlightSegmentsForDuration(duration),
+    segmentFilter,
+  ).map((seg) => ({
     // Mark sits at the segment start on the virtual timeline; offsets are
     // relative to that mark so sourceTime = gameTime + offset maps correctly
     // when the source has offsetFromGameTime = -gameTimeCursor.
@@ -120,11 +128,15 @@ export function momentInputForSeasonClip(
 
 export function seasonHighlightChapterSeeds(
   clips: SeasonHighlightClipInput[],
+  segmentFilter: SeasonSegmentFilter = "all",
 ): SeasonRoomChapterSeed[] {
   const chapters: SeasonRoomChapterSeed[] = [];
   for (const clip of clips) {
     const duration = seasonClipDurationSec(clip);
-    for (const seg of seasonHighlightSegmentsForDuration(duration)) {
+    for (const seg of filterSeasonHighlightSegments(
+      seasonHighlightSegmentsForDuration(duration),
+      segmentFilter,
+    )) {
       chapters.push({
         time: seg.startSec,
         label: seasonSegmentMarkLabel(clip.label, seg),
@@ -152,7 +164,12 @@ export type CreateSeasonHighlightResult = {
 export async function createSeasonHighlightFromClips(
   uid: string,
   clips: SeasonHighlightClipInput[],
-  opts?: { name?: string; createdByName?: string },
+  opts?: {
+    name?: string;
+    createdByName?: string;
+    /** Default `all`. Use `slomo` for a banquet slow-mo-only reel. */
+    segmentFilter?: SeasonSegmentFilter;
+  },
 ): Promise<CreateSeasonHighlightResult> {
   if (clips.length === 0) {
     throw new Error("Select at least one clip.");
@@ -163,13 +180,24 @@ export async function createSeasonHighlightFromClips(
     }
   }
 
+  const segmentFilter = opts?.segmentFilter ?? "all";
+  const filterLabel =
+    segmentFilter === "slomo"
+      ? "Slow-mo"
+      : segmentFilter === "live"
+        ? "Live"
+        : "Live + Slow-mo";
+
   const name =
     opts?.name?.trim() ||
-    `Season highlights · ${new Date().toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })}`;
+    `Season highlights · ${filterLabel} · ${new Date().toLocaleDateString(
+      undefined,
+      {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      },
+    )}`;
 
   const gameId = await createGame(uid, {
     title: name,
@@ -199,7 +227,11 @@ export async function createSeasonHighlightFromClips(
         : {}),
     });
 
-    for (const seg of seasonHighlightSegmentsForDuration(duration)) {
+    const segs = filterSeasonHighlightSegments(
+      seasonHighlightSegmentsForDuration(duration),
+      segmentFilter,
+    );
+    for (const seg of segs) {
       const label = seasonSegmentMarkLabel(clip.label, seg);
       await addGameEvent(
         gameId,
@@ -227,9 +259,18 @@ export async function createSeasonHighlightFromClips(
     }
 
     moments.push(
-      ...momentInputsForSeasonClip(sourceId, clip, gameTimeCursor),
+      ...momentInputsForSeasonClip(
+        sourceId,
+        clip,
+        gameTimeCursor,
+        segmentFilter,
+      ),
     );
     gameTimeCursor += duration;
+  }
+
+  if (moments.length === 0) {
+    throw new Error("No highlight segments matched that filter.");
   }
 
   const draftId = await createHighlightReel(gameId, uid, {
@@ -244,7 +285,7 @@ export async function createSeasonHighlightFromClips(
       youtubeVideoId: c.youtubeVideoId,
       label: c.label,
     })),
-    seasonHighlightChapterSeeds(clips),
+    seasonHighlightChapterSeeds(clips, segmentFilter),
     uid,
   );
 

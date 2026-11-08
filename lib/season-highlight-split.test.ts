@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  filterSeasonHighlightSegments,
   seasonHighlightSegmentsForDuration,
   seasonPlaysForDuration,
   seasonSegmentMarkLabel,
@@ -41,5 +42,12 @@ describe("season highlight split", () => {
       seasonSegmentMarkLabel("CMFC vs Rangers", live!),
       "CMFC vs Rangers · Play 1 · Live",
     );
+  });
+
+  it("filters to slow-mo only", () => {
+    const segs = seasonHighlightSegmentsForDuration(SEASON_PLAY_CYCLE_SEC * 2);
+    const slomo = filterSeasonHighlightSegments(segs, "slomo");
+    assert.equal(slomo.length, 2);
+    assert.ok(slomo.every((s) => s.kind === "slomo"));
   });
 });

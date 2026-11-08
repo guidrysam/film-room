@@ -20,6 +20,9 @@ export const SEASON_HIGHLIGHT_MIN_SEGMENT_SEC = 2;
 
 export type SeasonHighlightSegmentKind = "live" | "slomo";
 
+/** Which auto-marked halves to keep in the season reel. */
+export type SeasonSegmentFilter = "all" | "live" | "slomo";
+
 export type SeasonHighlightSegment = {
   kind: SeasonHighlightSegmentKind;
   /** Source-local start (seconds). */
@@ -30,6 +33,14 @@ export type SeasonHighlightSegment = {
   /** 1-based play index within the VOD. */
   playIndex: number;
 };
+
+export function filterSeasonHighlightSegments(
+  segments: SeasonHighlightSegment[],
+  filter: SeasonSegmentFilter = "all",
+): SeasonHighlightSegment[] {
+  if (filter === "all") return segments;
+  return segments.filter((s) => s.kind === filter);
+}
 
 export type SeasonHighlightPlay = {
   playIndex: number;
