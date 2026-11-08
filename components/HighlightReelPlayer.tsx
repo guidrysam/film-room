@@ -75,6 +75,14 @@ type DeckTarget = {
 export type HighlightReelPlayerHandle = {
   play: () => void;
   stop: () => void;
+  /**
+   * Jump the preview to a step and play from there.
+   * `stopAfter: true` plays only that segment (edit workflow), then stops.
+   */
+  playFromStep: (
+    stepIndex: number,
+    opts?: { stopAfter?: boolean },
+  ) => void;
 };
 
 export type HighlightReelScoreboard = {
@@ -196,6 +204,8 @@ const HighlightReelPlayer = forwardRef<
   const pendingPlayRef = useRef(false);
   const transitioningRef = useRef(false);
   const finishingRef = useRef(false);
+  /** When true, end the current segment with stop() instead of advancing. */
+  const stopAfterClipRef = useRef(false);
   const playSeqRef = useRef(0);
   const seekSettledAtRef = useRef(0);
   const lastPlayKickAtRef = useRef(0);
@@ -770,10 +780,18 @@ const HighlightReelPlayer = forwardRef<
     [applyFrontAudio, clearDeck, deckSlotOf, kickPlayback, mutePlayer, pauseSlot],
   );
 
-  const presentFirstUnderCover = useCallback(
-    async (seq: number, options?: { alreadyBlack?: boolean }) => {
+  const presentStepUnderCover = useCallback(
+    async (
+      seq: number,
+      stepIndex: number,
+      options?: { alreadyBlack?: boolean },
+    ) => {
       const { alreadyBlack = false } = options ?? {};
-      const step = stepsRef.current[0];
+      const index = Math.max(
+        0,
+        Math.min(stepIndex, stepsRef.current.length - 1),
+      );
+      const step = stepsRef.current[index];
       if (!step) {
         setInterstitial(null);
         setFadeOpaque(false);
@@ -785,10 +803,11 @@ const HighlightReelPlayer = forwardRef<
       }
 
       const front = frontSlotRef.current;
-      stepIndexRef.current = 0;
+      stepIndexRef.current = index;
       repeatPassRef.current = 0;
-      loadOnSlot(front, 0, 0, { preroll: true, play: true, mute: true });
-      await waitForSlotPlaying(front, 0, true);
+      clearDeck();
+      loadOnSlot(front, index, 0, { preroll: true, play: true, mute: true });
+      await waitForSlotPlaying(front, index, true);
       if (seq !== playSeqRef.current || !playingRef.current) return;
 
       await delayMs(reelPrerollWallMs(step.speed));
@@ -807,15 +826,23 @@ const HighlightReelPlayer = forwardRef<
       setInterstitial(null);
       setFadeOpaque(false);
       await delayMs(REEL_FADE_OUT_MS);
-      maybeStageNext(seq);
+      if (!stopAfterClipRef.current) maybeStageNext(seq);
     },
     [
       applyFrontAudio,
+      clearDeck,
       kickPlayback,
       loadOnSlot,
       maybeStageNext,
       waitForSlotPlaying,
     ],
+  );
+
+  const presentFirstUnderCover = useCallback(
+    async (seq: number, options?: { alreadyBlack?: boolean }) => {
+      await presentStepUnderCover(seq, 0, options);
+    },
+    [presentStepUnderCover],
   );
 
   /**
@@ -954,6 +981,7 @@ const HighlightReelPlayer = forwardRef<
     const seq = ++playSeqRef.current;
     cutIndexRef.current = 0;
     finishingRef.current = false;
+    stopAfterClipRef.current = false;
     clearDeck();
     setPlayingState(true);
     void startSoundtrack();
@@ -997,6 +1025,7 @@ const HighlightReelPlayer = forwardRef<
   const stop = useCallback(() => {
     playSeqRef.current += 1;
     finishingRef.current = false;
+    stopAfterClipRef.current = false;
     setPlayingState(false);
     pendingPlayRef.current = false;
     transitioningRef.current = false;
@@ -1056,6 +1085,7 @@ const HighlightReelPlayer = forwardRef<
 
   const play = useCallback(() => {
     if (stepsRef.current.length === 0) return;
+    stopAfterClipRef.current = false;
     if (!ready) {
       pendingPlayRef.current = true;
       setPlayingState(true);
@@ -1064,7 +1094,43 @@ const HighlightReelPlayer = forwardRef<
     void beginPlayback();
   }, [beginPlayback, ready, setPlayingState]);
 
-  useImperativeHandle(ref, () => ({ play, stop }), [play, stop]);
+  const playFromStep = useCallback(
+    (stepIndex: number, opts?: { stopAfter?: boolean }) => {
+      if (stepsRef.current.length === 0) return;
+      const index = Math.max(
+        0,
+        Math.min(Math.floor(stepIndex), stepsRef.current.length - 1),
+      );
+      stopAfterClipRef.current = opts?.stopAfter !== false;
+      if (!ready) {
+        pendingPlayRef.current = true;
+        setPlayingState(true);
+        return;
+      }
+      const seq = ++playSeqRef.current;
+      cutIndexRef.current = 0;
+      finishingRef.current = false;
+      clearDeck();
+      setPlayingState(true);
+      void (async () => {
+        try {
+          await presentStepUnderCover(seq, index);
+        } catch {
+          if (seq === playSeqRef.current) {
+            setInterstitial(null);
+            setFadeOpaque(false);
+          }
+        }
+      })();
+    },
+    [clearDeck, presentStepUnderCover, ready, setPlayingState],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({ play, stop, playFromStep }),
+    [play, stop, playFromStep],
+  );
 
   useEffect(() => {
     if (!autoPlay || playingRef.current) return;
@@ -1195,6 +1261,17 @@ const HighlightReelPlayer = forwardRef<
       }
 
       if (current >= step.sourceEndTime - 0.05) {
+        if (stopAfterClipRef.current) {
+          // Edit jump: play this beat only, then pause on the out-point.
+          try {
+            player.pauseVideo?.();
+            player.seekTo?.(step.sourceEndTime, true);
+          } catch {
+            /* ignore */
+          }
+          stop();
+          return;
+        }
         if (hasNextPass) {
           void cutToNext(stepIndexRef.current, stepIndexRef.current, pass + 1, seq);
           return;
@@ -1213,6 +1290,7 @@ const HighlightReelPlayer = forwardRef<
     finishReel,
     kickPlayback,
     maybeStageNext,
+    stop,
     syncScoreboardFromPlayback,
   ]);
 

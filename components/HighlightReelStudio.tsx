@@ -241,6 +241,8 @@ export default function HighlightReelStudio({
   const [name, setName] = useState("Highlight reel");
   const [visibility, setVisibility] = useState<CutVisibility>("private");
   const [moments, setMoments] = useState<HighlightMoment[]>([]);
+  /** Moment focused for preview jump / trim workflow. */
+  const [focusedMomentId, setFocusedMomentId] = useState<string | null>(null);
   const [soundtrack, setSoundtrack] = useState<HighlightSoundtrack | null>(
     null,
   );
@@ -314,6 +316,36 @@ export default function HighlightReelStudio({
   const previewSteps = useMemo(
     () => enrichReelStepsWithPlayerOverlays(steps, moments, playerNameForId),
     [steps, moments, playerNameForId],
+  );
+
+  const stepIndexForMoment = useCallback(
+    (momentId: string) =>
+      previewSteps.findIndex((s) => s.momentId === momentId),
+    [previewSteps],
+  );
+
+  const previewMoment = useCallback(
+    (momentId: string) => {
+      setFocusedMomentId(momentId);
+      const idx = stepIndexForMoment(momentId);
+      if (idx < 0) return;
+      playerRef.current?.playFromStep(idx, { stopAfter: true });
+    },
+    [stepIndexForMoment],
+  );
+
+  const previewAdjacentMoment = useCallback(
+    (delta: number) => {
+      if (moments.length === 0) return;
+      const currentId = focusedMomentId ?? moments[0]?.id;
+      if (!currentId) return;
+      const i = moments.findIndex((m) => m.id === currentId);
+      if (i < 0) return;
+      const next = moments[i + delta];
+      if (!next) return;
+      previewMoment(next.id);
+    },
+    [focusedMomentId, moments, previewMoment],
   );
   const titleCard = useMemo(
     () =>
@@ -513,7 +545,9 @@ export default function HighlightReelStudio({
   const loadReel = useCallback((reel: HighlightDraft) => {
     setEditingId(reel.id);
     setName(formatGameCapMogoDisplayName(reel.name));
-    setMoments(reel.moments.map((m) => ({ ...m })));
+    const nextMoments = reel.moments.map((m) => ({ ...m }));
+    setMoments(nextMoments);
+    setFocusedMomentId(nextMoments[0]?.id ?? null);
     setSoundtrack(reel.soundtrack ?? null);
     setSoundtrackMessage(null);
     setSponsors(reel.sponsors ? reel.sponsors.map((s) => ({ ...s })) : []);
@@ -1753,7 +1787,37 @@ export default function HighlightReelStudio({
               disabled={steps.length === 0 || recording}
               className={ghostBtn}
             >
-              ▶ Play preview
+              ▶ Play full reel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const id = focusedMomentId ?? moments[0]?.id;
+                if (id) previewMoment(id);
+              }}
+              disabled={steps.length === 0 || recording}
+              className={ghostBtn}
+              title="Play the selected highlight only"
+            >
+              ▶ Play this clip
+            </button>
+            <button
+              type="button"
+              onClick={() => previewAdjacentMoment(-1)}
+              disabled={steps.length === 0 || recording}
+              className={ghostBtn}
+              title="Previous highlight"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => previewAdjacentMoment(1)}
+              disabled={steps.length === 0 || recording}
+              className={ghostBtn}
+              title="Next highlight"
+            >
+              Next →
             </button>
             <button
               type="button"
@@ -1765,6 +1829,9 @@ export default function HighlightReelStudio({
               {openingRoom ? "Opening room…" : "Play in room"}
             </button>
           </div>
+          <p className="mt-1.5 text-[10px] text-zinc-500">
+            Click a reel event below to jump the preview there, trim, then Next.
+          </p>
           {shareMessage ? (
             <p
               className={`mt-2 text-[10px] ${
@@ -2194,15 +2261,27 @@ export default function HighlightReelStudio({
               const primary = group.moments[0]!;
               const multiBeat = isMultiBeatReelGroup(group);
               const groupPresetId = inferReelGroupPresetId(group);
+              const groupFocused = group.moments.some(
+                (m) => m.id === focusedMomentId,
+              );
               return (
                 <li
                   key={group.moments.map((m) => m.id).join("-")}
-                  className="rounded-lg border border-white/[0.06] bg-black/25 p-2.5"
+                  className={`rounded-lg border p-2.5 ${
+                    groupFocused
+                      ? "border-blue-500/45 bg-blue-950/20"
+                      : "border-white/[0.06] bg-black/25"
+                  }`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[10px] text-zinc-500">
-                      #{groupIndex + 1}
-                    </span>
+                    <button
+                      type="button"
+                      className="rounded border border-white/15 bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] text-zinc-200 hover:bg-white/[0.1]"
+                      title="Jump preview to this highlight"
+                      onClick={() => previewMoment(primary.id)}
+                    >
+                      #{groupIndex + 1} ▶
+                    </button>
                     <input
                       className={`${inputClass} w-36`}
                       value={reelGroupDisplayLabel(group)}
@@ -2283,14 +2362,24 @@ export default function HighlightReelStudio({
                         {group.moments.map((m, beatIndex) => (
                           <div
                             key={m.id}
-                            className="rounded-md border border-white/[0.04] bg-black/20 px-2 py-1.5"
+                            className={`rounded-md border px-2 py-1.5 ${
+                              focusedMomentId === m.id
+                                ? "border-blue-500/40 bg-blue-950/25"
+                                : "border-white/[0.04] bg-black/20"
+                            }`}
                           >
                             <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                              <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                              <button
+                                type="button"
+                                className="text-[10px] font-semibold uppercase tracking-wide text-zinc-300 hover:text-white"
+                                title="Jump preview here"
+                                onClick={() => previewMoment(m.id)}
+                              >
+                                ▶{" "}
                                 {beatIndex === 0
                                   ? "Live"
                                   : m.label?.trim() || `Beat ${beatIndex + 1}`}
-                              </span>
+                              </button>
                               <select
                                 className={inputClass}
                                 value={m.speed ?? 1}
@@ -2333,8 +2422,23 @@ export default function HighlightReelStudio({
                       </>
                     ) : (
                       group.moments.map((m) => (
-                        <div key={m.id}>
+                        <div
+                          key={m.id}
+                          className={
+                            focusedMomentId === m.id
+                              ? "rounded-md ring-1 ring-blue-500/30"
+                              : undefined
+                          }
+                        >
                           <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              className={ghostBtn}
+                              title="Jump preview to this clip"
+                              onClick={() => previewMoment(m.id)}
+                            >
+                              ▶ Preview
+                            </button>
                             <select
                               className={inputClass}
                               value={m.speed ?? 1}
