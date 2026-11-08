@@ -9,6 +9,8 @@ import UserYouTubeUploadConnect from "@/components/UserYouTubeUploadConnect";
 import PersonalCreditsCard from "@/components/PersonalCreditsCard";
 import { signInWithGoogle } from "@/lib/auth-google";
 import {
+  filmSourceThumbnailUrl,
+  filmSourceYouTubeVideoId,
   getUserDrivePublic,
   getUserYouTubeUploadPublic,
   listMyFilmSources,
@@ -92,6 +94,10 @@ export default function MyFilmPage() {
   /** Ordered selection for season highlight (YouTube clips only). */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [buildingSeason, setBuildingSeason] = useState(false);
+  const [preview, setPreview] = useState<{
+    videoId: string;
+    title: string;
+  } | null>(null);
 
   const loadList = useCallback(async () => {
     if (!user) return;
@@ -197,6 +203,15 @@ export default function MyFilmPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview]);
 
   const filteredSources = useMemo(() => {
     const rows = filterFilmSources(sources, {
@@ -443,6 +458,10 @@ export default function MyFilmPage() {
     const seasonClip = filmSourceToSeasonClip(source);
     const selected = selectedIds.includes(source.id);
     const selectIndex = selected ? selectedIds.indexOf(source.id) + 1 : 0;
+    const title =
+      formatGameCapMogoDisplayName(source.label) || source.label;
+    const ytId = filmSourceYouTubeVideoId(source);
+    const thumbUrl = filmSourceThumbnailUrl(source);
     return (
     <li
       key={source.id}
@@ -462,7 +481,7 @@ export default function MyFilmPage() {
                 checked={selected}
                 disabled={buildingSeason}
                 onChange={() => toggleSelect(source.id)}
-                aria-label={`Select ${formatGameCapMogoDisplayName(source.label) || source.label}`}
+                aria-label={`Select ${title}`}
               />
               {selectIndex > 0 ? (
                 <span className="min-w-[1.1rem] text-[10px] font-semibold tabular-nums text-blue-300">
@@ -477,9 +496,39 @@ export default function MyFilmPage() {
               aria-hidden
             />
           )}
-          <div className="min-w-0">
+          {thumbUrl && ytId ? (
+            <button
+              type="button"
+              className="group relative shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50"
+              onClick={() => setPreview({ videoId: ytId, title })}
+              aria-label={`Preview ${title}`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumbUrl}
+                alt=""
+                className="h-16 w-[7.1rem] object-cover sm:h-[4.5rem] sm:w-32"
+                loading="lazy"
+              />
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 transition group-hover:bg-black/45">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/90 shadow">
+                  <span
+                    className="ml-0.5 inline-block h-0 w-0 border-y-[5px] border-y-transparent border-l-[8px] border-l-zinc-950"
+                    aria-hidden
+                  />
+                </span>
+              </span>
+              {typeof source.durationSec === "number" &&
+              source.durationSec > 0 ? (
+                <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/75 px-1 py-0.5 text-[9px] font-medium tabular-nums text-white">
+                  {formatDurationShort(source.durationSec)}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">
-              {formatGameCapMogoDisplayName(source.label) || source.label}
+              {title}
             </p>
             <p className="mt-0.5 text-[11px] text-zinc-500">
               {reviewed ? "reviewed" : "unreviewed"}
@@ -522,17 +571,24 @@ export default function MyFilmPage() {
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
-        {source.kind === "youtube" ||
-        source.youtubeVideoId ||
-        source.videoId ? (
-          <a
-            className={ghostBtn}
-            href={`https://www.youtube.com/watch?v=${encodeURIComponent(source.youtubeVideoId || source.videoId || "")}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Open on YouTube
-          </a>
+        {ytId ? (
+          <>
+            <button
+              type="button"
+              className={ghostBtn}
+              onClick={() => setPreview({ videoId: ytId, title })}
+            >
+              Preview
+            </button>
+            <a
+              className={ghostBtn}
+              href={`https://www.youtube.com/watch?v=${encodeURIComponent(ytId)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open on YouTube
+            </a>
+          </>
         ) : source.url || source.driveFileId ? (
           <a
             className={ghostBtn}
@@ -921,6 +977,43 @@ export default function MyFilmPage() {
                   ? "Building…"
                   : "Make season highlight"}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {preview ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Preview ${preview.title}`}
+          onClick={() => setPreview(null)}
+        >
+          <div
+            className="w-full max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-zinc-950 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-medium text-white">
+                {preview.title}
+              </p>
+              <button
+                type="button"
+                className={ghostBtn}
+                onClick={() => setPreview(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="aspect-video w-full bg-black">
+              <iframe
+                title={preview.title}
+                src={`https://www.youtube.com/embed/${encodeURIComponent(preview.videoId)}?autoplay=1&rel=0`}
+                className="h-full w-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
             </div>
           </div>
         </div>

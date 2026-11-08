@@ -42,6 +42,8 @@ export type FilmSource = {
   driveFileId?: string;
   videoId?: string;
   youtubeVideoId?: string;
+  /** YouTube thumbnail (from channel sync) when available. */
+  thumbnailUrl?: string;
   angleSlot?: string;
   url?: string;
   marksImported?: number;
@@ -64,6 +66,27 @@ export type FilmSource = {
 
 function filmSourcesCol(uid: string) {
   return collection(firestore, "users", uid, "filmSources");
+}
+
+/** 11-char YouTube id from a film source, if present. */
+export function filmSourceYouTubeVideoId(
+  source: Pick<FilmSource, "youtubeVideoId" | "videoId">,
+): string | null {
+  const id = (source.youtubeVideoId || source.videoId || "").trim();
+  return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+}
+
+/**
+ * Thumbnail for a film row: stored sync URL, else YouTube hqdefault.
+ */
+export function filmSourceThumbnailUrl(
+  source: Pick<FilmSource, "youtubeVideoId" | "videoId" | "thumbnailUrl">,
+): string | null {
+  const stored = source.thumbnailUrl?.trim();
+  if (stored) return stored;
+  const id = filmSourceYouTubeVideoId(source);
+  if (!id) return null;
+  return `https://i.ytimg.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`;
 }
 
 function trimOrUndef(v: unknown): string | undefined {
@@ -107,6 +130,9 @@ export function parseFilmSource(
     ...(trimOrUndef(raw.videoId) ? { videoId: String(raw.videoId) } : {}),
     ...(trimOrUndef(raw.youtubeVideoId)
       ? { youtubeVideoId: String(raw.youtubeVideoId) }
+      : {}),
+    ...(trimOrUndef(raw.thumbnailUrl)
+      ? { thumbnailUrl: String(raw.thumbnailUrl) }
       : {}),
     ...(trimOrUndef(raw.angleSlot) ? { angleSlot: String(raw.angleSlot) } : {}),
     ...(trimOrUndef(raw.url) ? { url: String(raw.url) } : {}),
