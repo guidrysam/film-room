@@ -317,12 +317,13 @@ export default function MyFilmPage() {
       });
       setSelectedIds([]);
       setSyncNote(
-        `Season highlight ready — ${result.clipCount} clip${
+        `Season session ready — ${result.clipCount} clip${
           result.clipCount === 1 ? "" : "s"
-        }. Opening reel studio…`,
+        }, ${result.markCount} auto-marks (Live + Slow-mo). Opening Film Room…`,
       );
+      // Clip queue session first; reel studio is linked from the game / room.
       router.push(
-        `/game/${result.gameId}/reel?draft=${encodeURIComponent(result.draftId)}`,
+        `${result.roomUrl}&draft=${encodeURIComponent(result.draftId)}`,
       );
     } catch (e) {
       setError(
@@ -955,7 +956,8 @@ export default function MyFilmPage() {
                 {selectedCount} clip{selectedCount === 1 ? "" : "s"} selected
               </p>
               <p className="text-[11px] text-zinc-500">
-                Order = selection order. Team labels come later.
+                Opens a Film Room queue with Live + Slow-mo marks, then a
+                season reel.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

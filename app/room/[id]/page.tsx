@@ -1921,6 +1921,9 @@ function RoomContent() {
   const viewParam = searchParams.get("view");
   /** When present with `?gameId`, loads a saved highlight reel for shared room playback. */
   const reelIdFromUrl = searchParams.get("reel");
+  /** Season highlight banquet session: clip queue + Live/Slow-mo marks. */
+  const seasonHighlightMode = searchParams.get("season") === "1";
+  const seasonDraftId = searchParams.get("draft")?.trim() || null;
   const { user, loading: authLoading } = useAuth();
   const [copied, setCopied] = useState(false);
   const [syncViewerLinkCopied, setSyncViewerLinkCopied] = useState(false);
@@ -7797,7 +7800,18 @@ function RoomContent() {
         >
           ← Game
         </Link>
-        {teamRoomMode && isHost ? (
+        {seasonHighlightMode ? (
+          <Link
+            href={`/game/${gameIdFromUrl.trim()}/reel${
+              seasonDraftId
+                ? `?draft=${encodeURIComponent(seasonDraftId)}`
+                : ""
+            }`}
+            className="fixed left-4 top-[5.5rem] z-50 rounded-lg border border-blue-500/35 bg-blue-950/60 px-2.5 py-1 text-[11px] font-medium text-blue-100 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-blue-400/50 hover:bg-blue-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            Play season reel
+          </Link>
+        ) : teamRoomMode && isHost ? (
           <Link
             href={`/game/${gameIdFromUrl.trim()}/review`}
             className="fixed left-4 top-[5.5rem] z-50 rounded-lg border border-violet-500/30 bg-violet-950/55 px-2.5 py-1 text-[11px] font-medium text-violet-100 shadow-sm shadow-black/20 backdrop-blur-sm transition hover:border-violet-400/45 hover:bg-violet-900/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40"
