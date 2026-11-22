@@ -3,6 +3,7 @@
  */
 
 import {
+  Timestamp,
   collection,
   doc,
   getDoc,
@@ -11,7 +12,6 @@ import {
   orderBy,
   query,
   where,
-  type Timestamp,
 } from "firebase/firestore";
 import { firestore } from "@/lib/firebase";
 
