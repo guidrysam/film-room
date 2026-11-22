@@ -61,6 +61,9 @@ export type FilmSource = {
   playerId?: string;
   seasonId?: string;
   reviewGameId?: string;
+  /** Imported via film-share invite from another user's library. */
+  sharedFromUid?: string;
+  sharedFromSourceId?: string;
   createdAt: Timestamp | null;
 };
 
@@ -161,6 +164,12 @@ export function parseFilmSource(
       : {}),
     ...(trimOrUndef(raw.publishedAt)
       ? { publishedAt: String(raw.publishedAt) }
+      : {}),
+    ...(trimOrUndef(raw.sharedFromUid)
+      ? { sharedFromUid: String(raw.sharedFromUid) }
+      : {}),
+    ...(trimOrUndef(raw.sharedFromSourceId)
+      ? { sharedFromSourceId: String(raw.sharedFromSourceId) }
       : {}),
     createdAt:
       raw.createdAt && typeof raw.createdAt === "object"

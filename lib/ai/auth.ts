@@ -13,6 +13,18 @@ export async function requireBearerUid(request: Request): Promise<string> {
   return decoded.uid;
 }
 
+/** Bearer auth with email (needed for film-share invite accept matching). */
+export async function requireBearerUser(
+  request: Request,
+): Promise<{ uid: string; email?: string }> {
+  const authorization = request.headers.get("authorization");
+  const token = authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : "";
+  if (!token) throw new Error("AUTH_REQUIRED");
+  return verifyFirebaseIdTokenRest(token);
+}
+
 export async function requireCoachForGame(
   request: Request,
   gameId: string,

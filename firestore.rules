@@ -41,12 +41,36 @@ service cloud.firestore {
     }
 
     // My Film inbox sources (Game Cap upload without a game).
+    // Coaches with an active filmShares grant can read the owner's library (live browse).
+    function hasFilmShareFrom(ownerId) {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(ownerId)/filmShares/$(request.auth.uid));
+    }
+
     match /users/{userId}/filmSources/{sourceId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null &&
+        (request.auth.uid == userId || hasFilmShareFrom(userId));
+      allow write: if request.auth != null && request.auth.uid == userId;
 
       match /events/{eventId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null &&
+          (request.auth.uid == userId || hasFilmShareFrom(userId));
+        allow write: if request.auth != null && request.auth.uid == userId;
       }
+    }
+
+    // Active grants: owner shared My Film with a coach (Admin SDK writes).
+    match /users/{userId}/filmShares/{coachUid} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == userId || request.auth.uid == coachUid);
+      allow write: if false;
+    }
+
+    // Mirror so coaches can list who shared with them (Admin SDK writes).
+    match /users/{userId}/filmSharesReceived/{ownerUid} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == userId || request.auth.uid == ownerUid);
+      allow write: if false;
     }
 
     // Cleared channel-sync work items (don't re-stack from YouTube).
@@ -674,6 +698,12 @@ service cloud.firestore {
 
       allow update, delete: if request.auth != null
         && resource.data.createdBy == request.auth.uid;
+    }
+
+    // ---- Film library share invites (email → My Film access) ----------
+    match /filmShareInvites/{code} {
+      allow read: if true;
+      allow write: if false;
     }
 
     // ---- Games --------------------------------------------------------

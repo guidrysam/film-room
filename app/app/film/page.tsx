@@ -44,6 +44,8 @@ import {
 import { isAngleSlot } from "@/lib/drive/angle-slots";
 import { formatGameCapMogoDisplayName } from "@/lib/youtube/mogo-match";
 import ShareFilmWithCoach from "@/components/ShareFilmWithCoach";
+import InviteCoachToFilm from "@/components/InviteCoachToFilm";
+import SharedFilmWithMe from "@/components/SharedFilmWithMe";
 import { clubsFindUrl } from "@/lib/club-routes";
 
 const panelClass =
@@ -545,6 +547,7 @@ export default function MyFilmPage() {
               {reviewed ? "reviewed" : "unreviewed"}
               {" · "}
               {source.organizeKind}
+              {source.sharedFromUid ? " · shared with me" : ""}
               {source.captureDevice === "tripod"
                 ? " · Tripod"
                 : source.captureDevice === "mogo"
@@ -682,8 +685,9 @@ export default function MyFilmPage() {
             My Film
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Upload and gather film here. Share with coach sends a tagged game
-            onto a team in your club so the coach can open it with your marks.{" "}
+            Upload and gather film here. Invite a coach by email so they get
+            your library in their Film Room, or share a tagged clip onto a club
+            team.{" "}
             <Link href={clubsFindUrl()} className="text-blue-300 hover:underline">
               Find a club
             </Link>
@@ -701,6 +705,16 @@ export default function MyFilmPage() {
         />
         <PersonalCreditsCard />
         <UserDriveConnect drive={drive} onChanged={() => void refresh()} />
+
+        <InviteCoachToFilm
+          onMessage={setSyncNote}
+          onError={setError}
+        />
+        <SharedFilmWithMe
+          onMessage={setSyncNote}
+          onError={setError}
+          onSynced={() => void loadList()}
+        />
 
         <section className={panelClass}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
